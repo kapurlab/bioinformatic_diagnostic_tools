@@ -24,8 +24,18 @@ else
 fi
 log()  { printf '%s==>%s %s\n' "${_c_blu}" "${_c_rst}" "$*"; }
 ok()   { printf '  %sok%s %s\n' "${_c_grn}" "${_c_rst}" "$*"; }
+info() { printf '  %s\n' "$*"; }
 warn() { printf '  %s!!%s %s\n' "${_c_ylw}" "${_c_rst}" "$*" >&2; }
 die()  { printf '%sERROR%s %s\n' "${_c_red}" "${_c_rst}" "$*" >&2; exit 1; }
+
+# need_writable PATH PHASE — ensure PATH (or its nearest existing ancestor) is
+# writable; otherwise the phase needs sudo. Skipped under --dry-run.
+need_writable() {
+  [[ "${DRY_RUN:-0}" -eq 1 ]] && return 0
+  local p="$1"
+  while [[ ! -e "${p}" && "${p}" != "/" ]]; do p="$(dirname "${p}")"; done
+  [[ -w "${p}" ]] || die "phase '$2' must write ${1}, which is not writable as $(whoami) — run under sudo"
+}
 # run CMD... — execute, or just print under --dry-run.
 run()  { if [[ "${DRY_RUN}" -eq 1 ]]; then echo "  [dry-run] $*"; else "$@"; fi; }
 

@@ -1,9 +1,12 @@
 # Bare-metal Linux lab server (full stack)
 
-> **Status: DRAFT / pending the `install-server` increment.** The full four-layer
-> runbook already exists and is validated against the wgs3 reference install:
-> see `vsnp_gui/docs/deploy/INSTALL_OOD.md`. This umbrella version generalizes it
-> to install the whole suite from one manifest.
+> **Status: partial.** `bdtools install --server` (layers 3–4: tool env +
+> frontend + OOD app cards) is implemented. The lower layers (OS/storage) and
+> the one-time site bootstrap (OOD core, groups, quotas, dashboard branding) are
+> still driven by `ood-core/bootstrap_ood_core.sh` and the site-bootstrap phases
+> of `vsnp_gui/deploy/install_ood.sh` — validated against the wgs3 reference
+> install (`vsnp_gui/docs/deploy/INSTALL_OOD.md`). Promoting those site-bootstrap
+> phases into the umbrella is a later step.
 
 Use this when you control a fresh Linux box and there is **no Open OnDemand yet**.
 You install bottom-up; only the top layers are "ours".

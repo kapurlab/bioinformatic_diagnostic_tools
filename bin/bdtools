@@ -54,9 +54,10 @@ cmd_install() {
       --local)   mode="local";   shift;;
       --sandbox) mode="sandbox"; shift;;
       --server)  mode="server";  shift;;
-      --dry-run) DRY_RUN=1; export DRY_RUN; passthru+=(--dry-run); shift;;
-      --prefix)  export BDTOOLS_HOME="$2"; passthru+=(--prefix "$2"); shift 2;;
-      -*)        die "install: unknown option '$1'";;
+      --dry-run)   DRY_RUN=1; export DRY_RUN; passthru+=(--dry-run); shift;;
+      --prefix)    export BDTOOLS_HOME="$2"; passthru+=(--prefix "$2"); shift 2;;
+      --site-conf) passthru+=(--site-conf "$2"); shift 2;;
+      -*)          die "install: unknown option '$1'";;
       *)         raw+=("$1"); shift;;
     esac
   done

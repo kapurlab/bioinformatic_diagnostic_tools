@@ -1,8 +1,5 @@
 # Sysadmin guide — publishing the tools as system OOD apps
 
-> **Status: DRAFT / pending the `install-server` increment.** It generalizes the
-> proven `vsnp_gui/deploy/install_ood.sh` (layers 3–4) + `register_ood_apps.sh`.
-
 This guide is written so the install looks like **any other Open OnDemand app**
 you already manage — nothing exotic.
 
@@ -32,23 +29,38 @@ sudo bin/bdtools install --server all --dry-run   # review every change first
 sudo bin/bdtools install --server all
 ```
 
-## What it assumes about your site
+## What `install --server` does (per tool)
 
-- **You already run OOD core** — the installer does **not** touch Apache, PAM,
-  your scheduler, or auth. It installs only the app cards + their conda envs +
-  reference DBs (layers 3–4).
-- **Cluster name is data, not code** — set `CLUSTER_NAME` in `site.conf`; the app
-  forms are rendered with it. No hardcoded cluster.
-- **Scheduler** — the cards use a `basic` `batch_connect` template (single proxied
-  port). Slurm is assumed; other schedulers need the usual `clusters.d` adapter.
-- **Everything is idempotent and `--dry-run`-able**, per-phase, with preflight
-  checks — re-running is safe.
+Phases (`preflight toolchain app verify`, all idempotent, `--dry-run`-able):
 
-## Reference-database staging
+- **preflight** — checks OOD core is present, conda/npm available, the
+  `CLUSTER_NAME` cluster is defined, and the sys-apps dir is writable.
+- **toolchain** — checks out the pinned tool at `TOOLS_ROOT/<tool>` and builds
+  its conda env + frontend via the tool's own `deploy/install.sh`.
+- **app** — renders each `ood/apps/<app>` into the sys-apps dir, rewriting the
+  Kapur Lab literals (paths, cluster name, group names) from `site.conf`.
+- **verify** — confirms the env, frontend, and card are in place.
 
-Large/licensed reference sets are **not** bundled in the repos. The installer
-stages them into a site DBs root (set in `site.conf`) with a documented
-download/verify step per tool. Plan disk accordingly.
+## What it assumes / does NOT touch
+
+- **You already run OOD core** — it does **not** touch Apache, PAM, your
+  scheduler, auth, Unix groups, storage/quotas, or dashboard branding. Those are
+  one-time site bootstrap (institutional sites own them; a bare-metal lab server
+  uses `ood-core/bootstrap_ood_core.sh` + the site-bootstrap phases of
+  `vsnp_gui/deploy/install_ood.sh`).
+- **Cluster name is data, not code** — set `CLUSTER_NAME` in `site.conf`; each
+  app form is rendered with it. It does **not** create or overwrite your
+  `clusters.d/<cluster>.yml` (institutional sites already have one); preflight
+  just warns if the named cluster isn't defined.
+- **Scheduler** — the cards use a `basic` `batch_connect` template (single
+  proxied port). Slurm is assumed; other schedulers need the usual adapter.
+
+## Reference databases
+
+Large/licensed reference sets are **not** bundled and are **not** auto-staged by
+`install --server`. Stage them into your `DATABASES_ROOT` per each tool's own
+docs (some tools bundle their refs in the conda package; others need a download).
+Plan disk accordingly.
 
 ## Optional: Ansible
 

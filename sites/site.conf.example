@@ -1,151 +1,52 @@
-# site.conf — site-specific parameters for the vSNP GUI OOD install.
+# site.conf — site-specific values for `bdtools install --server`.
 #
-# Copy to site.conf and edit, then run:  sudo ./install_ood.sh --dry-run
+# Copy this file and pass it with --site-conf, or place it at sites/site.conf.
+# It is sourced as bash, so keep it valid shell: VAR=value, no spaces around '='.
+# It is the ONE place site-specific values live; the installer rewrites the
+# Kapur Lab literals (/srv/kapurlab, kapurlab-admins, wgs3, vxk1, ...) in each
+# tool's OOD app files from these values at install time.
 #
-# This file is sourced by install_ood.sh as bash. Keep it valid shell:
-# VAR=value, no spaces around '='. It is the ONE place site-specific
-# values live; every hardcoded /srv/kapurlab, kapurlab-admins, wgs3, vxk1
-# in the repo is replaced from here at install time.
-#
-# This is a TEMPLATE — copy it to site.conf and replace the YOURSITE / empty
-# values with your site's. The wgs3 (Kapur Lab) reference values are shown in
-# comments so you can diff against a known-good install. See
-# docs/deploy/WGS3_AUDIT.md §5 for the full literal→variable map.
+# Wgs3 (Kapur Lab) reference values are shown in comments to diff against.
 
-# ---- Site identity ---------------------------------------------------------
-
-# Short lowercase slug. Drives group prefixes, cluster name, script names,
-# and the default SITE_ROOT. [a-z][a-z0-9]* — no spaces, hyphens ok but
-# avoid (they collide with the group suffix convention).
-#   wgs3 reference: kapurlab        example new site: nivedi
+# ---- Site identity (used to rewrite branding/path literals) ----------------
+# Short lowercase slug; replaces the literal 'kapurlab'.
+#   wgs3 reference: kapurlab     example new site: nivedi
 SITE_NAME=yoursite
-
-# Human-readable name for portal branding / page titles / auth realm.
-#   wgs3 reference: "Kapur Lab"     example new site: "NIVEDI"
+# Human-readable display name; replaces the literal 'WGS3' in titles.
 SITE_DISPLAY="Your Site"
-
-# Shared lab root. Must be an existing mountpoint (ideally XFS + prjquota —
-# see the runbook). Default convention: /srv/<SITE_NAME>.
-#   wgs3 reference: /srv/kapurlab
+# Shared data/install root; replaces '/srv/kapurlab'.
 SITE_ROOT=/srv/${SITE_NAME}
 
-# ---- OS users & groups -----------------------------------------------------
+# ---- OOD cluster the app cards target --------------------------------------
+# Must match an existing /etc/ood/config/clusters.d/<CLUSTER_NAME>.yml.
+# Replaces the hardcoded 'wgs3' cluster in each tool's form.yml.
+# On an institutional cluster, set this to the site's cluster id (ask the OOD
+# admin). On a bare-metal lab server you create it (ood-core/ bootstrap).
+CLUSTER_NAME=yoursite
 
-# Unix groups for lab members and admins. Created by the installer if absent.
-MEMBERS_GROUP=${SITE_NAME}-members
+# ---- Where tool source + conda envs are installed (system-wide) ------------
+# Replaces '/srv/kapurlab/tools'. Each tool is checked out at TOOLS_ROOT/<tool>
+# and its conda env built at TOOLS_ROOT/<tool>/env.
+TOOLS_ROOT=${SITE_ROOT}/tools
+# Conda/mamba base used to build envs. Point at an existing miniforge.
+CONDA_BASE=${TOOLS_ROOT}/miniforge3
+
+# ---- OOD system-apps directory (where cards are registered) ----------------
+SYS_APPS_DIR=/var/www/ood/apps/sys
+
+# ---- Groups / admin (used to rewrite group + user literals; optional) ------
 ADMINS_GROUP=${SITE_NAME}-admins
-
-# Per-project group prefix. `proj-` matches the wgs3 convention and the
-# regexes in the backend / dashboard; keep it unless you have a reason.
-PROJ_PREFIX=proj-
-
-# The admin user that OWNS the provenance index and runs the cron jobs.
-# Must be a real login that is a member of ADMINS_GROUP. On wgs3 this is
-# vxk1. Set to your site's first admin account.
+MEMBERS_GROUP=${SITE_NAME}-members
+# Replaces the literal 'vxk1' if any tool references it. Optional.
 ADMIN_USER=
 
-# ---- OOD cluster / network -------------------------------------------------
-
-# OOD cluster id. Becomes /etc/ood/config/clusters.d/<CLUSTER_NAME>.yml and
-# the `cluster:` value in the app form.yml. Default = SITE_NAME.
-CLUSTER_NAME=${SITE_NAME}
-
-# The server name OOD/Apache answer on (IP or DNS name). Goes into the
-# linux_host adapter ssh_hosts and (for reference) ood_portal.yml.
+# ---- Optional --------------------------------------------------------------
+# Reference-DB root the tools' configs point at (staged separately, per tool).
+DATABASES_ROOT=${SITE_ROOT}/databases
+# Replaces the wgs3 reference IP (100.68.171.59) if present. Optional.
 SERVERNAME=
 
-# Extra ssh_hosts the linux_host adapter should accept beyond `localhost`
-# and SERVERNAME (space-separated). Usually empty; wgs3 listed an internal
-# short hostname here. The adapter SSHes to localhost to launch sessions.
-SSH_EXTRA_HOSTS=""
-
-# Singularity/Apptainer session image installed by OOD core. Stock path is
-# fine unless you built a custom image.
-SINGULARITY_IMAGE=/opt/ood/ondemand/ood_default.sif
-
-# Host paths bound INTO the session container. SITE_ROOT **must** be present
-# or the container can't see shared tools/refs. /run/systemd/resolve makes
-# in-container DNS work (SRA/NCBI/ENA fetches). Comma-separated.
-SINGULARITY_BINDPATH=/etc,/home,/tmp,/opt,/usr,/var,${SITE_ROOT},/run/systemd/resolve
-
-# ---- Toolchain -------------------------------------------------------------
-
-# Conda/mamba base used to create the vsnp3 env. The installer runs
-# `conda create -p ${VSNP3_PREFIX} -c bioconda -c conda-forge vsnp3`.
-# Point at an existing miniforge/conda, or install one first.
-CONDA_BASE=${SITE_ROOT}/tools/miniforge3
-
-# Where the vsnp3 conda env lives (also the prefix the OOD script.sh prefers).
-VSNP3_PREFIX=${SITE_ROOT}/tools/vsnp3
-
-# Pin the vsnp3 bioconda build. wgs3 runs 3.16. Empty = latest (then re-pin).
-VSNP3_VERSION=3.16
-
-# Where this repo is checked out on the server (the OOD card + cron read it).
-VSNP_GUI_DIR=${SITE_ROOT}/tools/vsnp_gui
-
-# System node/npm for the frontend build (NOT in the conda env on wgs3).
-NODE_BIN=/usr/bin/node
-NPM_BIN=/usr/bin/npm
-
-# ---- Quotas (XFS prjquota) -------------------------------------------------
-
-PROJID_LO=1000
-PROJID_HI=1999
-QUOTA_SOFT=5t
-QUOTA_HARD=7t
-
-# ---- OOD core bootstrap (used by bootstrap_ood_core.sh, layers 1-2) --------
-# Only needed when installing OOD core from scratch on a bare box. If the box
-# already has OOD (e.g. an institutional cluster), skip the bootstrap entirely.
-
-# OnDemand release line. wgs3 runs 3.1. The bootstrap fetches OSC's
-# ondemand-release-web .deb for this line + the OS codename.
+# ---- Bare-metal OOD-core bootstrap (only if standing up OOD from scratch) ---
+# Not used by `install --server` (which assumes OOD core exists). Consumed by
+# ood-core/bootstrap_ood_core.sh on a fresh lab server. See docs/INSTALL_BARE_METAL.md.
 OOD_VERSION=3.1
-
-# Apache basic-auth realm shown in the browser login prompt.
-AUTH_REALM="${SITE_DISPLAY} — Open OnDemand"
-
-# Apptainer: wgs3 has 1.5.0 from a local .deb (not an apt repo). The
-# bootstrap installs this version from the official GitHub release; any
-# 1.3+ works. Set empty to fall back to `apt install apptainer` (noble
-# universe, ~1.3.x).
-APPTAINER_VERSION=1.5.0
-
-# The minimal Singularity session image OOD batch_connect runs inside. It is
-# NOT shipped by the ondemand package; wgs3's was placed by hand. Easiest
-# reliable path: copy the proven 30 MB image from wgs3. Accepts a local path
-# or an scp source. Empty = bootstrap warns and you place it manually.
-#   OOD_SIF_SOURCE=vxk1@kapurlab-wgs3.tailf38ff4.ts.net:/opt/ood/ondemand/ood_default.sif
-OOD_SIF_SOURCE=
-
-# ---- Kraken ID Parse — optional second app (install_kraken.sh) -------------
-# Stand up the Kraken contamination-screening app alongside vSNP. Skip this
-# whole block if you don't want Kraken.
-
-# The app repo (private on GitHub). Run under sudo, the installer clones it as
-# the invoking user ($SUDO_USER) so YOUR GitHub creds are used (root has none) —
-# ~/.ssh keys, `gh auth`, or ~/.git-credentials all work. No access? Set
-# KRAKEN_RSYNC_SOURCE instead to mirror it from an existing install.
-KRAKEN_REPO_URL=https://github.com/kapurlab/kraken_id_parse_gui.git
-KRAKEN_RSYNC_SOURCE=        # e.g. vxk1@kapurlab-wgs3...:/srv/kapurlab/tools/kraken_id_parse_gui
-
-# kraken2 database. PREFERRED: download a *versioned* standard index from the
-# Langmead/AWS index — https://benlangmead.github.io/aws-indexes/k2 — and pin
-# the dated URL for reproducibility. ALTERNATIVELY set KRAKEN_DB_RSYNC_SOURCE to
-# mirror an existing install's exact DB (identical classifications to that site).
-KRAKEN_DB_NAME=k2_standard_08gb
-# NOTE: these dated indexes ROTATE — old dates 404. Confirm the current file at
-# https://benlangmead.github.io/aws-indexes/k2 (or list the bucket:
-#   curl -s 'https://genome-idx.s3.amazonaws.com/?list-type=2&prefix=kraken/k2_standard_08gb')
-# and pin a date that still exists. 20250402 was the latest as of 2026-06.
-KRAKEN_DB_URL=https://genome-idx.s3.amazonaws.com/kraken/k2_standard_08gb_20250402.tar.gz
-KRAKEN_DB_RSYNC_SOURCE=     # e.g. vxk1@kapurlab-wgs3...:/srv/kapurlab/databases/kraken2/k2_standard_08gb
-
-# ---- Reference data --------------------------------------------------------
-
-# Source to rsync the 27 reference sets + VCF DBs from. The installer does
-# NOT pull data by default (it's bulk, point-in-time); leaving this set just
-# prints the exact rsync command to run by hand. Example:
-#   REFS_RSYNC_SOURCE=vxk1@kapurlab-wgs3.tailf38ff4.ts.net:/srv/kapurlab/refs/vsnp3/
-REFS_RSYNC_SOURCE=

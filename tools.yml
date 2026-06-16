@@ -28,44 +28,44 @@ tools:
 
   - name: amr_plus_gui
     repo: https://github.com/kapurlab/amr_plus_gui.git
-    version: v0.1.0
+    version: v0.1.1
     ood_apps: [amr_plus_gui]
     env: amr_plus
     databases: [amrfinder_db]
 
   - name: irma_gui
     repo: https://github.com/kapurlab/irma_gui.git
-    version: v0.1.0
+    version: v0.1.1
     ood_apps: [irma_gui]
     env: irma_gui
 
   - name: genoflu_gui
     repo: https://github.com/kapurlab/genoflu_gui.git
-    version: v0.1.0
+    version: v0.1.1
     ood_apps: [genoflu_gui]
     env: genoflu_gui
 
   - name: mlst_gui
     repo: https://github.com/kapurlab/mlst_gui.git
-    version: v0.1.0
+    version: v0.1.1
     ood_apps: [mlst_gui]
     env: mlst
 
   - name: kraken_id_parse_gui
     repo: https://github.com/kapurlab/kraken_id_parse_gui.git
-    version: v0.1.0
+    version: v0.1.1
     ood_apps: [kraken_id_parse_gui]
     env: kraken_id_parse
     databases: [kraken2_db]
 
   - name: ksnp_gui
     repo: https://github.com/kapurlab/ksnp_gui.git
-    version: v0.1.0
+    version: v0.1.1
     ood_apps: [ksnp_gui]
     env: ksnp
 
   - name: ncbi_submit_gui
     repo: https://github.com/kapurlab/ncbi_submit_gui.git
-    version: v0.1.0
+    version: v0.1.1
     ood_apps: [ncbi_submit_gui]
     env: ncbi_submit

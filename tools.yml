@@ -1,7 +1,7 @@
 # tools.yml — the Kapur Lab tool suite manifest (single source of truth).
 #
 # Each entry pins one tool repo to a version (a git tag, or a branch until a
-# baseline tag is cut). The umbrella CLI (`kapurtools`) reads this file to
+# baseline tag is cut). The umbrella CLI (`bdtools`) reads this file to
 # install, update, and report on the suite. Tagging THIS repo (e.g.
 # `suite-2026.06`) pins the entire set for a fully reproducible deployment.
 #

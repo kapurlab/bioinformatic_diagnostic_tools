@@ -23,7 +23,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --run-only)   RUN_ONLY=1; shift;;
     --build-only) BUILD_ONLY=1; shift;;
-    --prefix)   export KAPURTOOLS_HOME="$2"; shift 2;;
+    --prefix)   export BDTOOLS_HOME="$2"; shift 2;;
     --port)     PORT="$2"; shift 2;;
     --dry-run)  DRY_RUN=1; export DRY_RUN; shift;;
     -h|--help)  sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
@@ -31,7 +31,7 @@ while [[ $# -gt 0 ]]; do
     *)          TOOL="$1"; shift;;
   esac
 done
-[[ -n "${TOOL}" ]] || die "name a tool (see: kapurtools list)"
+[[ -n "${TOOL}" ]] || die "name a tool (see: bdtools list)"
 manifest_has "${TOOL}" || die "unknown tool: ${TOOL}"
 
 DIR="$(tool_dir "${TOOL}")"
@@ -47,7 +47,7 @@ ensure_checkout() {
     ok "checkout present: ${DIR} ($(git -C "${DIR}" describe --tags --always 2>/dev/null || echo '?'))"
     return
   fi
-  [[ ${RUN_ONLY} -eq 1 ]] && die "${TOOL} is not installed at ${DIR} (run: kapurtools install ${TOOL})"
+  [[ ${RUN_ONLY} -eq 1 ]] && die "${TOOL} is not installed at ${DIR} (run: bdtools install ${TOOL})"
   log "cloning ${TOOL} @ ${VERSION}"
   run mkdir -p "$(dirname "${DIR}")"
   run git clone --branch "${VERSION}" --depth 1 "${REPO}" "${DIR}" \

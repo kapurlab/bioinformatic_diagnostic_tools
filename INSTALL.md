@@ -1,7 +1,7 @@
 # Install — pick your environment
 
 This page routes you to the right runbook. All paths use the same CLI
-(`bin/kapurtools`) and the same manifest ([`tools.yml`](tools.yml)).
+(`bin/bdtools`) and the same manifest ([`tools.yml`](tools.yml)).
 
 1. **Personal computer** (Linux, macOS, or Windows via WSL2) — you just want to
    run a tool on your own machine → [docs/INSTALL_LOCAL.md](docs/INSTALL_LOCAL.md)

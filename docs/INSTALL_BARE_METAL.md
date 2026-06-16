@@ -12,8 +12,8 @@ You install bottom-up; only the top layers are "ours".
 |---|---|---|
 | 1. OS + storage | Ubuntu + an XFS `prjquota` data disk | manual |
 | 2. OOD core | Open OnDemand, Apache+PAM, Apptainer, session image | `ood-core/bootstrap_ood_core.sh` |
-| 3. Toolchain | conda envs, reference DBs, frontends | `kapurtools install --server …` |
-| 4. OOD app layer | the app cards + cluster config + portal | `kapurtools install --server …` |
+| 3. Toolchain | conda envs, reference DBs, frontends | `bdtools install --server …` |
+| 4. OOD app layer | the app cards + cluster config + portal | `bdtools install --server …` |
 
 ```bash
 git clone https://github.com/kapurlab/bioinformatic_diagnostic_tools.git
@@ -23,8 +23,8 @@ cp sites/site.conf.example sites/site.conf && $EDITOR sites/site.conf
 sudo ood-core/bootstrap_ood_core.sh --dry-run     # layer 2 (skip if OOD already present)
 sudo ood-core/bootstrap_ood_core.sh
 
-sudo bin/kapurtools install --server all --dry-run # layers 3-4
-sudo bin/kapurtools install --server all
+sudo bin/bdtools install --server all --dry-run # layers 3-4
+sudo bin/bdtools install --server all
 ```
 
 Then browse to `http://<SERVERNAME>/`, log in, and launch a tool card.

@@ -3,7 +3,7 @@ sites/site.conf
 sites/*.conf
 !sites/site.conf.example
 
-# local tool checkouts, if a user points KAPURTOOLS_HOME inside the repo
+# local tool checkouts, if a user points BDTOOLS_HOME inside the repo
 checkouts/
 
 # editor / OS noise

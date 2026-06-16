@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# kapurtools — the Kapur Lab tool-suite manager.
+# bdtools — the Kapur Lab tool-suite manager.
 #
 # One entry point to install, run, and update the lab's bioinformatics GUIs
 # across environments. Reads the suite manifest (tools.yml) and dispatches to
 # the install-*.sh helpers.
 #
-#   kapurtools list                       show the tools in the manifest
-#   kapurtools status                      show what is installed vs. the manifest
-#   kapurtools install <tool|all> [opts]   install a tool (default mode: --local)
-#   kapurtools local   <tool>              run a locally-installed tool (standalone)
-#   kapurtools check-updates [tool|all]    report newer upstream versions
-#   kapurtools update  <tool|all> [opts]   move a tool to its latest version
+#   bdtools list                       show the tools in the manifest
+#   bdtools status                      show what is installed vs. the manifest
+#   bdtools install <tool|all> [opts]   install a tool (default mode: --local)
+#   bdtools local   <tool>              run a locally-installed tool (standalone)
+#   bdtools check-updates [tool|all]    report newer upstream versions
+#   bdtools update  <tool|all> [opts]   move a tool to its latest version
 #
 # Install modes (pass to `install`):
 #   --local      standalone: conda env + uvicorn + browser (Linux/macOS/WSL2). DEFAULT.
@@ -55,24 +55,24 @@ cmd_install() {
       --sandbox) mode="sandbox"; shift;;
       --server)  mode="server";  shift;;
       --dry-run) DRY_RUN=1; export DRY_RUN; passthru+=(--dry-run); shift;;
-      --prefix)  export KAPURTOOLS_HOME="$2"; passthru+=(--prefix "$2"); shift 2;;
+      --prefix)  export BDTOOLS_HOME="$2"; passthru+=(--prefix "$2"); shift 2;;
       -*)        die "install: unknown option '$1'";;
       *)         raw+=("$1"); shift;;
     esac
   done
-  [[ ${#raw[@]} -gt 0 ]] || die "install: name a tool or 'all' (see: kapurtools list)"
+  [[ ${#raw[@]} -gt 0 ]] || die "install: name a tool or 'all' (see: bdtools list)"
   local targets=() r n
   for r in "${raw[@]}"; do
     if [[ "$r" == all ]]; then
       while read -r n; do [[ -n "$n" ]] && targets+=("$n"); done < <(manifest_names)
     else
-      manifest_has "$r" || die "unknown tool: $r (see: kapurtools list)"
+      manifest_has "$r" || die "unknown tool: $r (see: bdtools list)"
       targets+=("$r")
     fi
   done
   local script="${KT_BIN_DIR}/install-${mode}.sh"
   [[ -x "$script" ]] || die "no installer for mode '${mode}' (${script})"
-  # install = build only (never auto-launch); `kapurtools local <tool>` launches.
+  # install = build only (never auto-launch); `bdtools local <tool>` launches.
   [[ "${mode}" == "local" ]] && passthru+=(--build-only)
   local rc=0
   for t in "${targets[@]}"; do
@@ -82,7 +82,7 @@ cmd_install() {
 }
 
 cmd_local() {
-  [[ $# -ge 1 ]] || die "usage: kapurtools local <tool>"
+  [[ $# -ge 1 ]] || die "usage: bdtools local <tool>"
   manifest_has "$1" || die "unknown tool: $1"
   # build-if-needed, then launch (the build steps are idempotent)
   "${KT_BIN_DIR}/install-local.sh" --run-only "$1"
@@ -91,7 +91,7 @@ cmd_local() {
 cmd_check_updates() { "${KT_BIN_DIR}/check-updates.sh" "${1:-all}"; }
 
 cmd_update() {
-  [[ $# -ge 1 ]] || die "usage: kapurtools update <tool|all> [--dry-run]"
+  [[ $# -ge 1 ]] || die "usage: bdtools update <tool|all> [--dry-run]"
   "${KT_BIN_DIR}/check-updates.sh" --apply "$@"
 }
 
@@ -106,7 +106,7 @@ main() {
     check-updates)      cmd_check_updates "$@";;
     update)             cmd_update "$@";;
     -h|--help|help)     usage;;
-    *) die "unknown command: ${cmd} (see: kapurtools --help)";;
+    *) die "unknown command: ${cmd} (see: bdtools --help)";;
   esac
 }
 main "$@"

@@ -28,8 +28,8 @@ The umbrella wraps the whole suite so you don't repeat this by hand:
 git clone https://github.com/kapurlab/bioinformatic_diagnostic_tools.git
 cd bioinformatic_diagnostic_tools
 cp sites/site.conf.example sites/site.conf   # set CLUSTER_NAME, paths, groups, branding
-sudo bin/kapurtools install --server all --dry-run   # review every change first
-sudo bin/kapurtools install --server all
+sudo bin/bdtools install --server all --dry-run   # review every change first
+sudo bin/bdtools install --server all
 ```
 
 ## What it assumes about your site

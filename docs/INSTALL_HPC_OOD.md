@@ -19,7 +19,7 @@ What the install will do (per `setup-sandbox.sh`):
 Intended command:
 
 ```bash
-bin/kapurtools install --sandbox <tool>
+bin/bdtools install --sandbox <tool>
 ```
 
 The tool then runs as a normal `batch_connect` session on the institution's

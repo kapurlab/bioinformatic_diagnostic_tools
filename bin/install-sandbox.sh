@@ -23,5 +23,5 @@ warn "install-sandbox is not implemented yet (planned increment)."
 warn "Promote vsnp_gui/deploy/setup-sandbox.sh here, parameterized by tool."
 [[ -n "${TOOL}" ]] && manifest_has "${TOOL}" \
   && echo "Would install '${TOOL}' as an OOD sandbox app for $(whoami) under ~/ondemand/dev/."
-echo "For now, on a personal machine use:  kapurtools install --local ${TOOL:-<tool>}"
+echo "For now, on a personal machine use:  bdtools install --local ${TOOL:-<tool>}"
 exit 2

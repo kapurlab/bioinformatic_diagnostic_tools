@@ -47,7 +47,7 @@ apply_one() {
   dir="$(tool_dir "$name")"; repo="$(manifest_get "$name" repo)"; pinned="$(manifest_get "$name" version)"
   latest="$(latest_tag "$repo")"
   target="${latest:-$pinned}"   # newest tag, else stay on the pinned branch
-  [[ -d "${dir}/.git" ]] || die "${name} not installed at ${dir} (run: kapurtools install ${name})"
+  [[ -d "${dir}/.git" ]] || die "${name} not installed at ${dir} (run: bdtools install ${name})"
 
   log "updating ${name} -> ${target}"
   run git -C "$dir" fetch --tags --depth 1 origin "${target}"

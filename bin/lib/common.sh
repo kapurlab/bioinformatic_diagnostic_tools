@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# common.sh — shared helpers for the kapurtools CLI.
-# Sourced by kapurtools and the install-*.sh scripts. Promoted/condensed from
+# common.sh — shared helpers for the bdtools CLI.
+# Sourced by bdtools and the install-*.sh scripts. Promoted/condensed from
 # the proven vsnp_gui/deploy helpers (same logging + dry-run idiom).
 
 # ---- repo + manifest locations --------------------------------------------
 # REPO_DIR is the umbrella checkout root (parent of bin/).
 KT_BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_DIR="$(cd "${KT_BIN_DIR}/.." && pwd)"
-MANIFEST="${KAPURTOOLS_MANIFEST:-${REPO_DIR}/tools.yml}"
+MANIFEST="${BDTOOLS_MANIFEST:-${REPO_DIR}/tools.yml}"
 MANIFEST_PY="${KT_BIN_DIR}/lib/manifest.py"
 
 # Where tool checkouts live for non-system installs. Override with --prefix or
-# $KAPURTOOLS_HOME. Defaults to an XDG-friendly per-user location.
-KAPURTOOLS_HOME="${KAPURTOOLS_HOME:-${XDG_DATA_HOME:-${HOME}/.local/share}/kapurlab-tools}"
+# $BDTOOLS_HOME. Defaults to an XDG-friendly per-user location.
+BDTOOLS_HOME="${BDTOOLS_HOME:-${XDG_DATA_HOME:-${HOME}/.local/share}/bdtools}"
 
 DRY_RUN="${DRY_RUN:-0}"
 
@@ -37,19 +37,19 @@ manifest_get()           { _need_python; python3 "${MANIFEST_PY}" "${MANIFEST}" 
 manifest_set()           { _need_python; python3 "${MANIFEST_PY}" "${MANIFEST}" set "$1" "$2" "$3"; }
 manifest_has() { manifest_names | grep -qxF "$1"; }
 
-# Resolve a tool's checkout dir: explicit $KAPURTOOLS_TOOLSDIR wins (e.g. the
+# Resolve a tool's checkout dir: explicit $BDTOOLS_TOOLSDIR wins (e.g. the
 # lab's existing /srv/kapurlab/tools tree), else the per-user home.
 tool_dir() {
   local name="$1"
-  if [[ -n "${KAPURTOOLS_TOOLSDIR:-}" && -d "${KAPURTOOLS_TOOLSDIR}/${name}" ]]; then
-    echo "${KAPURTOOLS_TOOLSDIR}/${name}"
+  if [[ -n "${BDTOOLS_TOOLSDIR:-}" && -d "${BDTOOLS_TOOLSDIR}/${name}" ]]; then
+    echo "${BDTOOLS_TOOLSDIR}/${name}"
   else
-    echo "${KAPURTOOLS_HOME}/checkouts/${name}"
+    echo "${BDTOOLS_HOME}/checkouts/${name}"
   fi
 }
 
 # ---- misc -----------------------------------------------------------------
-# Pick a free TCP port on localhost (used by `kapurtools local`).
+# Pick a free TCP port on localhost (used by `bdtools local`).
 find_free_port() {
   _need_python
   python3 - <<'PY'

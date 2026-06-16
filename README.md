@@ -34,9 +34,10 @@ bin/bdtools local irma_gui       # re-launch a tool you've installed
 | **Institutional HPC OOD — as a sysadmin** | `bdtools install --server <tool>` | System app under `/var/www/ood/apps/sys`. See [docs/SYSADMIN.md](docs/SYSADMIN.md). |
 | **Bare-metal Linux lab server** | `bdtools install --server all` (+ ood-core) | Full stack incl. OOD core. See [docs/INSTALL_BARE_METAL.md](docs/INSTALL_BARE_METAL.md). |
 
-> **Status:** `--local` is implemented. `--sandbox` and `--server` are being
-> promoted from the proven `vsnp_gui/deploy/` scripts (`setup-sandbox.sh`,
-> `install_ood.sh`) into manifest-driven, multi-tool installers.
+> **Status:** `--local` and `--sandbox` are implemented. `--sandbox` delegates
+> to a tool's own `deploy/setup-sandbox.sh` when present (e.g. vsnp_gui) and
+> otherwise runs a generic per-user build + card-link. `--server` (system OOD
+> install) is being promoted from `vsnp_gui/deploy/install_ood.sh`.
 
 ## Updating
 

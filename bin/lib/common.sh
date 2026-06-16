@@ -48,6 +48,21 @@ tool_dir() {
   fi
 }
 
+# Ensure a tool is checked out at its manifest-pinned version (clones if absent).
+# Honors DRY_RUN. Echoes nothing; callers use tool_dir to get the path.
+ensure_checkout() {
+  local name="$1" dir repo version
+  dir="$(tool_dir "$name")"; repo="$(manifest_get "$name" repo)"; version="$(manifest_get "$name" version)"
+  if [[ -d "${dir}/.git" ]]; then
+    ok "checkout present: ${dir} ($(git -C "${dir}" describe --tags --always 2>/dev/null || echo '?'))"
+    return 0
+  fi
+  log "cloning ${name} @ ${version}"
+  run mkdir -p "$(dirname "${dir}")"
+  run git clone --branch "${version}" --depth 1 "${repo}" "${dir}" \
+    || die "git clone failed (${repo} @ ${version})"
+}
+
 # ---- misc -----------------------------------------------------------------
 # Pick a free TCP port on localhost (used by `bdtools local`).
 find_free_port() {

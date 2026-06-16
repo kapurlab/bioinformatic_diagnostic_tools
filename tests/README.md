@@ -24,17 +24,19 @@ Each tool reports **PASS / FAIL / SKIP**:
 
 | Tool | Status | Sample | Headline validated |
 |---|---|---|---|
-| `mlst_gui` | ✅ validated | *E. coli* K-12 MG1655 (`GCF_000005845.2`) | scheme `ecoli`, ST `10` |
-| `amr_plus_gui` | ✅ validated | *K. pneumoniae* HS11286 (`GCF_000240185.1`) | organism + acquired AMR genes detected |
-| `irma_gui` | ✅ validated | influenza-A Illumina paired SRA | module `FLU`, subtype, ≥7 segments |
-| `genoflu_gui` | ✅ validated | H5N1 2.3.4.4b isolate (8 GenBank segments) | genotype `2.3.4.4b…`, 8/8 segments |
-| `ksnp_gui` | ⏳ no spec → SKIP | — | needs multi-genome fetch (≥2 inputs) |
-| `vsnp_gui` | ⏳ no spec → SKIP | — | needs an Excel→JSON adapter + vsnp3 refs gating |
-| `kraken_id_parse_gui` | ⏳ no spec → SKIP | — | writes to CWD; needs Kraken2 + BLAST DB gating |
-| `ncbi_submit_gui` | — not tested by design | — | submission tool — no diagnostic output |
+| `mlst_gui` | ✅ tier 1 | *E. coli* K-12 MG1655 (`GCF_000005845.2`) | scheme `ecoli`, ST `10` |
+| `amr_plus_gui` | ✅ tier 1 | *K. pneumoniae* HS11286 (`GCF_000240185.1`) | organism + acquired AMR genes (blaKPC/SHV/CTX-M/rmtB) |
+| `irma_gui` | ✅ tier 1 | influenza-A Illumina paired SRA (`SRR39145037`) | module `FLU`, subtype `H5N1`, 8 segments |
+| `genoflu_gui` | ✅ tier 1 | H5N1 2.3.4.4b cattle isolate (8 GenBank segments) | genotype `B3.13`, 8/8 segments |
+| `ksnp_gui` | ✅ tier 1 | 3 *Listeria monocytogenes* genomes (EGD-e/F2365/10403S) | snps_all ~44309, core ~34713 |
+| `kraken_id_parse_gui` | ✅ tier 2 (Kraken2 DB) | *M. tuberculosis* reads (`SRR28623786`) | genus `Mycobacterium` ≥90% |
+| `vsnp_gui` | ✅ tier 2 (vsnp3 refs) | *M. bovis* reads (`SRR1791695`) | best-ref `Mycobacterium_AF2122`, spoligotype `SB0673` |
+| `ncbi_submit_gui` | — not tested by design | — | SRA/GenBank submission tool — no diagnostic output |
 
-The four ⏳ tools currently print `SKIP <tool>: no test spec`. Adding them is the
-next increment — see *Extending the suite*.
+All seven diagnostic GUIs are validated. The tier-2 tools need an external
+reference DB (Kraken2/BLAST, or the vsnp3 reference set) and SKIP cleanly when it
+is absent — so on a fresh laptop they SKIP while the tier-1 tools PASS, and on a
+machine with the DBs all seven PASS.
 
 ## Spec format — `tests/<tool>/test.yml`
 
@@ -99,22 +101,31 @@ On Apple Silicon the env is built as **osx-64 and run under Rosetta 2** (see
 [docs/INSTALL_LOCAL.md](../docs/INSTALL_LOCAL.md)) — a different execution
 environment than the Linux box these goldens were recorded on. For **real
 diagnostic use on a Mac**, treat `bdtools test all` as the parity check: after
-installing, run it and confirm the four covered tools **PASS**. The headline
-calls are deterministic and arch-independent (MLST ST 10; GenoFLU B3.13; IRMA
-FLU/H5N1; AMR gene stems with a `>=` count), so a PASS confirms the Rosetta env
-reproduces the validated baseline. A FAIL on a Mac is a real signal — surface
-it, don't relax the golden. (Expect Rosetta runs to be slower than native; the
-calls, not the wall-clock, are what's validated.)
+installing, run it and confirm the covered tools **PASS**. The headline calls are
+deterministic and arch-independent (MLST ST 10; GenoFLU B3.13; IRMA FLU/H5N1; AMR
+gene stems with a `>=` count; kSNP SNP counts; vSNP spoligotype SB0673), so a
+PASS confirms the Rosetta env reproduces the validated baseline. A FAIL on a Mac
+is a real signal — surface it, don't relax the golden. (Expect Rosetta runs to be
+slower than native; the calls, not the wall-clock, are what's validated.)
 
-## Extending the suite (the ⏳ tools)
+## Adapters (non-JSON tool output)
 
-- **ksnp_gui** — kSNP needs ≥2 genomes. Add a `fetch: genomes` (plural) path that
-  fetches each accession in an `accession: [a, b, c]` list and passes them as
-  `--inputs`; validate `run_manifest.json` `results.snps_all`.
-- **vsnp_gui** — vSNP3 step1 emits an Excel stats workbook, not JSON, and needs
-  the vsnp3 reference set. Add a small Excel→JSON adapter (like
-  `lib/amr_summarize.py`) emitting the reference/spoligotype call, and a
-  `db_check` on `/srv/kapurlab/refs/vsnp3/reference_options`.
-- **kraken_id_parse_gui** — writes outputs to the CWD (no `--outdir`) and needs a
-  Kraken2 + BLAST DB. Run it inside `{out}`, add `db_check`/`db_hint` for both
-  DBs, and validate `run_manifest.json`.
+Some tools don't emit a single JSON, so a small adapter (run as the last step of
+the spec's `run_cmd`) reduces their output to a comparable JSON:
+
+- `lib/amr_summarize.py` — AMRFinderPlus `amrfinder.tsv` + `organism_detection.json`
+  → `amr_result.json` (organism, AMR gene count + symbols).
+- `lib/kraken_top.py` — the Kraken2 report → `kraken_top.json` (top genus/species,
+  classified %). Validated at genus level because Kraken2 cannot resolve the
+  near-identical MTB-complex species.
+- `lib/vsnp_excel.py` — the vSNP3 step1 stats workbook (headers row / values row)
+  → `vsnp_result.json` (best reference, spoligotype octal/SB, group). Run it with
+  the vsnp3 env Python (needs `openpyxl`).
+
+## Gotchas worth knowing
+
+- **kSNP4** crashes (`inline_frequency_check`: `mean()` of `None`) on atypically
+  large/bloated assemblies whose k-mer coverage histogram has no valley — use
+  clean, normally-sized reference genomes (the spec uses ~3 Mb *Listeria* refs).
+- **Multi-genome fetch** isolates each accession's NCBI Datasets extraction in its
+  own dir; a shared `ncbi_dataset/` dir would let the cat-glob mix sibling genomes.

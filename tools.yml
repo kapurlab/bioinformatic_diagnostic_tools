@@ -9,7 +9,12 @@
 #   name      tool id and default checkout dir name
 #   repo      git clone URL (https for public, unauthenticated installs)
 #   version   git ref to deploy — a tag (preferred) or a branch
-#   ood_apps  the batch_connect app dir name(s) under <tool>/ood/apps/
+#   ood_apps  the PRODUCTION batch_connect app dir name(s) under <tool>/ood/apps/
+#             — these are what every user sees in the dashboard (the only cards
+#             a normal `install --server` renders).
+#   dev_apps  the DEVELOPER-only card(s) (the git branch-picker `<tool>_dev`).
+#             Never installed by default; only with `install --server --with-dev`.
+#             Optional — omit for tools that ship no dev card.
 #   env       the conda env name the tool builds (informational)
 #   databases named reference-DB requirements the installer stages (optional)
 #
@@ -23,6 +28,7 @@ tools:
     repo: https://github.com/kapurlab/vsnp_gui.git
     version: v0.2.0
     ood_apps: [vsnp_gui]
+    dev_apps: [vsnp_gui_dev]
     env: vsnp3
     databases: [vsnp3_refs]
 
@@ -30,6 +36,7 @@ tools:
     repo: https://github.com/kapurlab/amr_plus_gui.git
     version: v0.1.1
     ood_apps: [amr_plus_gui]
+    dev_apps: [amr_plus_gui_dev]
     env: amr_plus
     databases: [amrfinder_db]
 
@@ -37,24 +44,28 @@ tools:
     repo: https://github.com/kapurlab/irma_gui.git
     version: v0.1.1
     ood_apps: [irma_gui]
+    dev_apps: [irma_gui_dev]
     env: irma_gui
 
   - name: genoflu_gui
     repo: https://github.com/kapurlab/genoflu_gui.git
     version: v0.1.1
     ood_apps: [genoflu_gui]
+    dev_apps: [genoflu_gui_dev]
     env: genoflu_gui
 
   - name: mlst_gui
     repo: https://github.com/kapurlab/mlst_gui.git
     version: v0.1.1
     ood_apps: [mlst_gui]
+    dev_apps: [mlst_gui_dev]
     env: mlst
 
   - name: kraken_id_parse_gui
     repo: https://github.com/kapurlab/kraken_id_parse_gui.git
     version: v0.1.1
     ood_apps: [kraken_id_parse_gui]
+    dev_apps: [kraken_id_parse_gui_dev]
     env: kraken_id_parse
     databases: [kraken2_db]
 
@@ -62,10 +73,12 @@ tools:
     repo: https://github.com/kapurlab/ksnp_gui.git
     version: v0.1.1
     ood_apps: [ksnp_gui]
+    dev_apps: [ksnp_gui_dev]
     env: ksnp
 
   - name: ncbi_submit_gui
     repo: https://github.com/kapurlab/ncbi_submit_gui.git
     version: v0.1.1
     ood_apps: [ncbi_submit_gui]
+    dev_apps: [ncbi_submit_gui_dev]
     env: ncbi_submit

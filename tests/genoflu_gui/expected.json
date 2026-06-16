@@ -1,0 +1,8 @@
+{
+  "__sample": "A/cattle/Texas/24-008749-001/2024(H5N1), GenBank PP755669-PP755676",
+  "__note": "First US dairy-cattle H5N1 (clade 2.3.4.4b). GenoFLU assigns USDA genotype B3.13 from the 8-segment lineage constellation.",
+  "genotype": "B3.13",
+  "segments_matched": 8,
+  "complete": true,
+  "list_used": ["PB2:am2.2", "PB1:am4", "PA:ea1", "HA:ea1", "NP:am8", "NA:ea1", "MP:ea1", "NS:am1.1"]
+}

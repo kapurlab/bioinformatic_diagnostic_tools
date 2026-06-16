@@ -1,0 +1,7 @@
+{
+  "__sample": "Klebsiella pneumoniae HS11286 (GCF_000240185.1) — carbapenem-resistant reference",
+  "__note": "Gene stems (not full alleles) so a DB version bump that renames blaKPC-2->blaKPC-x still matches via substring. Recorded DB 2026-05-15.1 found 20 AMR genes.",
+  "organism": "Klebsiella_pneumoniae",
+  "amr_gene_count": ">=10",
+  "genes": ["blaKPC", "blaSHV", "blaCTX-M", "rmtB"]
+}

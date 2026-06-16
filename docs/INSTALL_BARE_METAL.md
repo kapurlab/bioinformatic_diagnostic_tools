@@ -31,6 +31,11 @@ sudo bin/bdtools install --server all --site-conf sites/site.conf
 
 Then browse to `http://<SERVERNAME>/`, log in, and launch a tool card.
 
+> **Production cards only, by default.** `install --server` registers only the
+> production card every user sees — the developer branch-picker (`<tool>_dev`)
+> cards stay hidden. Add `--with-dev` to a per-tool install only if this box is
+> for developers. See [SYSADMIN.md](SYSADMIN.md#production-vs-developer-cards).
+
 > **Still manual / out of scope for the umbrella:** OS install, disk/XFS+quota
 > provisioning (layer 1), the scheduler + auth, and deep dashboard prose/logo
 > branding. `site-init` writes a correct *starter* branding snippet; the full

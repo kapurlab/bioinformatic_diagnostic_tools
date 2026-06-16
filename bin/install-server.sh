@@ -6,13 +6,18 @@
 # the Kapur Lab literals (paths, cluster name, groups) from the site config.
 # Run as root (it writes /var/www/ood/apps/sys). Always --dry-run first.
 #
-#   install-server.sh <tool> [--site-conf PATH] [--dry-run] [phase ...]
+#   install-server.sh <tool> [--site-conf PATH] [--with-dev] [--dry-run] [phase ...]
 #
 # Phases (default: all): preflight toolchain app verify
 #   preflight  OOD core present? conda/node? cluster defined? sys-apps writable?
 #   toolchain  checkout the pinned tool at TOOLS_ROOT/<tool>; build env+frontend
 #   app        render ood/apps/<tool>/* into SYS_APPS_DIR/<tool> (site subst)
 #   verify     card + env + frontend present
+#
+# By default ONLY the production card(s) (tools.yml `ood_apps`) are installed —
+# that is all a normal user sees in the dashboard. Pass --with-dev to ALSO
+# install the developer branch-picker card(s) (`dev_apps`, e.g. <tool>_dev).
+# Developers only; do not use on a site meant for routine diagnostic users.
 #
 # SCOPE: this installs the *app* (the reusable, multi-tool part). It does NOT
 # manage OOD core, the scheduler, auth, Unix groups, storage/quotas, dashboard
@@ -23,12 +28,13 @@ set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
 
 SITE_CONF="${REPO_DIR}/sites/site.conf"
-TOOL=""; PHASES=()
+TOOL=""; PHASES=(); WITH_DEV=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --site-conf) SITE_CONF="$2"; shift 2;;
+    --with-dev)  WITH_DEV=1; shift;;
     --dry-run)   DRY_RUN=1; export DRY_RUN; shift;;
-    -h|--help)   sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
+    -h|--help)   sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
     -*)          die "unknown option: $1";;
     *)           if [[ -z "${TOOL}" ]] && manifest_has "$1"; then TOOL="$1"; else PHASES+=("$1"); fi; shift;;
   esac
@@ -52,7 +58,12 @@ DIR="${TOOLS_ROOT}/${TOOL}"
 REPO="$(manifest_get "${TOOL}" repo)"
 VERSION="$(manifest_get "${TOOL}" version)"
 APP_DST_BASE="${SYS_APPS_DIR}"
+# Production cards always; developer (branch-picker) cards only with --with-dev.
 OOD_APPS=( $(manifest_get "${TOOL}" ood_apps) )
+DEV_APPS=( $(manifest_get "${TOOL}" dev_apps) )
+if [[ ${WITH_DEV} -eq 1 ]]; then
+  OOD_APPS+=( "${DEV_APPS[@]}" )
+fi
 
 # subst — rewrite Kapur Lab literals to this site's values. Longest-match first
 # so /srv/kapurlab/tools and the group names are consumed before bare 'kapurlab'.
@@ -74,6 +85,15 @@ subst() {
 # ---------------------------------------------------------------------------
 phase_preflight() {
   log "preflight — ${TOOL}"
+  if [[ ${WITH_DEV} -eq 1 ]]; then
+    if [[ ${#DEV_APPS[@]} -gt 0 ]]; then
+      warn "--with-dev: ALSO installing developer card(s): ${DEV_APPS[*]} (developers only)"
+    else
+      info "--with-dev given but ${TOOL} declares no dev_apps — production card(s) only"
+    fi
+  else
+    ok "production card(s) only: ${OOD_APPS[*]} (dev cards hidden; use --with-dev to add them)"
+  fi
   [[ -d /etc/ood/config ]] && ok "OOD core present (/etc/ood/config)" \
     || warn "OOD core not detected — institutional sites have it; bare-metal: run ood-core/bootstrap_ood_core.sh"
   if [[ -f "/etc/ood/config/clusters.d/${CLUSTER_NAME}.yml" ]]; then

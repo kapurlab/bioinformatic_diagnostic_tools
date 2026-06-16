@@ -1,0 +1,13 @@
+# genoflu_gui validation spec — see tests/README.md
+# Sample: A/cattle/Texas/24-008749-001/2024(H5N1) — the first US dairy-cattle
+# H5N1 isolate (clade 2.3.4.4b, USDA genotype B3.13). Its 8 gene-segment GenBank
+# records (PB2,PB1,PA,HA,NP,NA,MP,NS) are concatenated into one FASTA (GenoFLU
+# expects all 8 segments). GenoFLU ships its reference set + genotype key inside
+# the conda env, so this tool needs no external reference download. We validate
+# the genotype call and that all 8 segments matched.
+tier: 1
+summary: H5N1 2.3.4.4b cattle genome -> GenoFLU genotype, 8/8 segments matched
+fetch: genbank
+accession: [PP755676.1, PP755675.1, PP755674.1, PP755669.1, PP755672.1, PP755671.1, PP755670.1, PP755673.1]
+run_cmd: {python} {tooldir}/bin/genoflu_pipeline.py --sample genoflu_test --outdir {out} --fasta {fasta}
+result_file: genoflu_result.json

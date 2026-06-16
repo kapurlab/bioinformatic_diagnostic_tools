@@ -1,0 +1,13 @@
+# amr_plus_gui validation spec — see tests/README.md
+# Sample: Klebsiella pneumoniae HS11286 reference assembly — a carbapenem-
+# resistant reference strain that carries multiple acquired beta-lactamases
+# (incl. a blaKPC carbapenemase). Organism is forced so no Kraken2 DB is needed;
+# AMRFinderPlus ships its own DB in the conda env, so this tool needs no
+# external reference download. A post-step (tests/lib/amr_summarize.py) reduces
+# amrfinder.tsv + organism_detection.json to amr_result.json for comparison.
+tier: 1
+summary: K. pneumoniae HS11286 -> AMRFinderPlus detects acquired AMR genes
+fetch: genome
+accession: GCF_000240185.1
+run_cmd: {python} {tooldir}/bin/amr_pipeline.py --sample amr_test --outdir {out} --assembly {fasta} --force-organism Klebsiella_pneumoniae --no-kraken --no-mlst && python3 {testsdir}/lib/amr_summarize.py {out}
+result_file: amr_result.json

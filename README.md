@@ -15,7 +15,30 @@ bioinformatic_diagnostic_tools/
 └── docs/              per-environment runbooks + sysadmin guide
 ```
 
-## Quick start
+## Install with a Claude agent (recommended)
+
+The easiest path: let a [Claude Code](https://claude.com/claude-code) agent
+detect your system and install the right way. Clone the repo and point the agent
+at [`AGENTS.md`](AGENTS.md):
+
+```bash
+git clone https://github.com/kapurlab/bioinformatic_diagnostic_tools.git
+cd bioinformatic_diagnostic_tools
+claude "Follow AGENTS.md to install the Kapur Lab diagnostic tools suite on this system."
+```
+
+The agent figures out whether you're on a personal computer, an Open OnDemand
+cluster (as a user or an admin), and installs accordingly — production build
+only, no developer cards. After installing it can also validate the deployment:
+
+```bash
+claude "Follow AGENTS.md to validate this deployment with bdtools test all and report PASS/FAIL/SKIP."
+```
+
+> No agent? The same steps by hand are in [INSTALL.md](INSTALL.md) and the
+> per-environment runbooks below.
+
+## Quick start (manual)
 
 ```bash
 git clone https://github.com/kapurlab/bioinformatic_diagnostic_tools.git
@@ -33,6 +56,13 @@ bin/bdtools local irma_gui       # re-launch a tool you've installed
 | **Institutional HPC OOD — as a user** | `bdtools install --sandbox <tool>` | Per-user app in `~/ondemand/dev/`, no sysadmin needed. See [docs/INSTALL_HPC_OOD.md](docs/INSTALL_HPC_OOD.md). |
 | **Institutional HPC OOD — as a sysadmin** | `bdtools install --server <tool>` | System app under `/var/www/ood/apps/sys`. See [docs/SYSADMIN.md](docs/SYSADMIN.md). |
 | **Bare-metal Linux lab server** | `ood-core` → `bdtools site-init` → `bdtools install --server all` | Full stack: OOD core, then groups/storage/branding, then every tool. See [docs/INSTALL_BARE_METAL.md](docs/INSTALL_BARE_METAL.md). |
+
+> **Production vs developer cards:** every tool ships a production card (what
+> users see), a developer branch-picker (`<tool>_dev`), and a per-user sandbox.
+> A normal `install --server` registers **only the production card** — dev cards
+> stay hidden. Developers opt in per tool with `install --server --with-dev`, or
+> use the no-admin per-user `install --sandbox`. Typical users never see or need
+> the dev path.
 
 > **Status:** `--local`, `--sandbox`, and `--server` are implemented.
 > `--sandbox` delegates to a tool's own `deploy/setup-sandbox.sh` when present
@@ -53,6 +83,25 @@ The manifest is the source of truth: tagging this repo (`suite-YYYY.MM`) pins
 the entire set, so any site can reproduce an exact deployment. Maintainers: see
 [docs/RELEASING.md](docs/RELEASING.md) for cutting tags and publishing GitHub
 Releases (`bin/make-releases.sh`).
+
+## Validating a deployment
+
+After installing or updating, confirm the tools still produce correct diagnostic
+output on known public samples:
+
+```bash
+bdtools test all          # download known SRA/GenBank samples, run, diff vs expected
+bdtools test mlst_gui     # one tool
+```
+
+Each test downloads a fixed SRA/GenBank accession, runs the tool headlessly, and
+compares the result to a committed expected (golden) result. `mlst_gui`,
+`amr_plus_gui`, `irma_gui`, and `genoflu_gui` are validated today; the remaining
+tools **SKIP** cleanly (no spec yet, not installed, or a required reference DB is
+absent) and a SKIP is not a failure. The accessions and expected values are in
+[`tests/`](tests/) — see [tests/README.md](tests/README.md) for the coverage
+table and how the golden results were established. These are the suite's
+diagnostic-validation baseline.
 
 ## How it relates to the tool repos
 

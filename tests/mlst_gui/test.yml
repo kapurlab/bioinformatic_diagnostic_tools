@@ -1,0 +1,9 @@
+# mlst_gui validation spec — see tests/README.md
+# Sample: Escherichia coli K-12 substr. MG1655 reference assembly.
+# A textbook, unchanging result: PubMLST Achtman scheme, sequence type ST 10.
+tier: 1
+summary: E. coli K-12 MG1655 -> MLST scheme ecoli, ST 10
+fetch: genome
+accession: GCF_000005845.2
+run_cmd: {python} {tooldir}/bin/mlst_pipeline.py --assembly {fasta} --outdir {out} --label mlst_test
+result_file: mlst_result.json

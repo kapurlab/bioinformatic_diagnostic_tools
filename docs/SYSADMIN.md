@@ -41,6 +41,26 @@ Phases (`preflight toolchain app verify`, all idempotent, `--dry-run`-able):
   Kapur Lab literals (paths, cluster name, group names) from `site.conf`.
 - **verify** — confirms the env, frontend, and card are in place.
 
+## Production vs developer cards
+
+Each tool ships three OOD cards: the **production** card (`<tool>`), a
+**developer** branch-picker (`<tool>_dev`), and a per-user **sandbox**
+(`<tool>_sandbox`). `install --server` registers **only the production card**
+(the `ood_apps` entry in `tools.yml`) — that is all a normal diagnostic user
+sees in the dashboard.
+
+To also publish the developer branch-picker card system-wide, pass `--with-dev`:
+
+```bash
+sudo bin/bdtools install --server <tool> --with-dev --site-conf sites/site.conf
+```
+
+This is **developer-only** — the dev card lets you launch arbitrary git branches
+and is not meant for routine diagnostic use. Leave it off for a production site.
+Individual developers who only need their own copy should instead use the
+per-user sandbox (no admin): `bdtools install --sandbox <tool>` (see
+[INSTALL_HPC_OOD.md](INSTALL_HPC_OOD.md)).
+
 ## What it assumes / does NOT touch
 
 - **You already run OOD core** — it does **not** touch Apache, PAM, your

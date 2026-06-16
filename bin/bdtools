@@ -12,18 +12,23 @@
 #   bdtools check-updates [tool|all]    report newer upstream versions
 #   bdtools update  <tool|all> [opts]   move a tool to its latest version
 #   bdtools site-init [opts]            one-time bare-metal site bootstrap
+#   bdtools test    <tool|all> [opts]   validate a deployment on a known sample
 #
 # Install modes (pass to `install`):
 #   --local      standalone: conda env + uvicorn + browser (Linux/macOS/WSL2). DEFAULT.
 #   --sandbox    per-user OOD sandbox app in ~/ondemand/dev   (institutional OOD)
 #   --server     system OOD app install                       (sysadmin / bare-metal)
 #
+# By default --server installs ONLY the production card a normal user sees.
+#   --with-dev   (server only) ALSO install the developer branch-picker card(s).
+#                Developers only — keep off for routine diagnostic sites.
+#
 # Common options: --prefix DIR, --site-conf PATH (server/site-init), --dry-run, -h|--help
 set -euo pipefail
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
 
-usage() { sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; }
 
 cmd_list() {
   printf '%-22s %-26s %s\n' "TOOL" "VERSION (pinned)" "OOD APP(S)"
@@ -49,7 +54,7 @@ cmd_status() {
 }
 
 cmd_install() {
-  local mode="local"; local raw=() passthru=()
+  local mode="local"; local raw=() passthru=() with_dev=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --local)   mode="local";   shift;;
@@ -58,10 +63,16 @@ cmd_install() {
       --dry-run)   DRY_RUN=1; export DRY_RUN; passthru+=(--dry-run); shift;;
       --prefix)    export BDTOOLS_HOME="$2"; passthru+=(--prefix "$2"); shift 2;;
       --site-conf) passthru+=(--site-conf "$2"); shift 2;;
+      --with-dev)  with_dev=1; shift;;
       -*)          die "install: unknown option '$1'";;
       *)         raw+=("$1"); shift;;
     esac
   done
+  # --with-dev is a server-only opt-in (developer branch-picker cards).
+  if [[ ${with_dev} -eq 1 ]]; then
+    [[ "${mode}" == "server" ]] || die "--with-dev only applies to --server installs"
+    passthru+=(--with-dev)
+  fi
   [[ ${#raw[@]} -gt 0 ]] || die "install: name a tool or 'all' (see: bdtools list)"
   local targets=() r n
   for r in "${raw[@]}"; do
@@ -99,6 +110,11 @@ cmd_update() {
 
 cmd_site_init() { "${KT_BIN_DIR}/site-init.sh" "$@"; }
 
+cmd_test() {
+  [[ $# -ge 1 ]] || die "usage: bdtools test <tool|all> [--record] [--keep]"
+  "${KT_BIN_DIR}/test.sh" "$@"
+}
+
 main() {
   [[ $# -ge 1 ]] || { usage; exit 0; }
   local cmd="$1"; shift
@@ -110,6 +126,7 @@ main() {
     check-updates)      cmd_check_updates "$@";;
     update)             cmd_update "$@";;
     site-init)          cmd_site_init "$@";;
+    test)               cmd_test "$@";;
     -h|--help|help)     usage;;
     *) die "unknown command: ${cmd} (see: bdtools --help)";;
   esac

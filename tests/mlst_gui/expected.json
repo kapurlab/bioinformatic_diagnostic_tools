@@ -1,0 +1,16 @@
+{
+  "__sample": "Escherichia coli K-12 MG1655 (GCF_000005845.2)",
+  "__note": "Textbook Achtman-scheme result: ST 10. Allele profile is invariant for this reference.",
+  "scheme": "/ecoli/",
+  "st": 10,
+  "organism_token": "Escherichia",
+  "novel": false,
+  "partial": false,
+  "alleles.adk": 10,
+  "alleles.fumC": 11,
+  "alleles.gyrB": 4,
+  "alleles.icd": 8,
+  "alleles.mdh": 8,
+  "alleles.purA": 8,
+  "alleles.recA": 2
+}

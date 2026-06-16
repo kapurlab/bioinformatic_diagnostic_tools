@@ -1,0 +1,11 @@
+# irma_gui validation spec — see tests/README.md
+# Sample: SRR39145037 — "WGS of Influenza A" (Illumina NextSeq 2000, paired-end,
+# ~117 Mbases). IRMA + GenoFLU ship their reference modules inside the conda env,
+# so this tool needs no external reference download. We assemble with the FLU
+# module and validate the module, subtype call, and segment count.
+tier: 1
+summary: influenza-A reads -> IRMA FLU assembly, subtype + segments
+fetch: sra
+accession: SRR39145037
+run_cmd: {python} {tooldir}/bin/irma_pipeline.py --sample irma_test --outdir {out} -r1 {r1} -r2 {r2} --module FLU --no-genoflu
+result_file: assembly_stats.json

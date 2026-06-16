@@ -1,0 +1,8 @@
+{
+  "__sample": "SRR39145037 — WGS of Influenza A (Illumina NextSeq, paired)",
+  "__note": "IRMA FLU module assembles all 8 segments at high depth; this run is an H5N1. Subtype call is deterministic for this fixed input.",
+  "module": "FLU",
+  "subtype": "H5N1",
+  "segment_count": 8,
+  "overall_verdict": "pass"
+}

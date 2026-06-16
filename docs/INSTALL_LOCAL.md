@@ -39,13 +39,37 @@ git clone https://github.com/kapurlab/bioinformatic_diagnostic_tools.git
 cd bioinformatic_diagnostic_tools
 
 bin/bdtools list                    # see available tools
-bin/bdtools install irma_gui        # clone + build env + build frontend
-                                       # (delegates to the tool's deploy/install.sh)
+bin/bdtools install all             # clone + build env + frontend for every tool
+                                       # (or name one, e.g. `install irma_gui`)
 ```
 
-The installer clones the tool (pinned version from `tools.yml`) into
-`~/.local/share/bdtools/checkouts/<tool>/`, builds its conda env and
-frontend, then launches it and opens your browser.
+The installer clones each tool (pinned version from `tools.yml`) into
+`~/.local/share/bdtools/checkouts/<tool>/` and builds its conda env and frontend.
+When it finishes it prints your access point and — when run in a terminal — opens
+the **local dashboard**.
+
+## Access point: the dashboard
+
+```bash
+bin/bdtools dashboard               # opens http://127.0.0.1:8080/
+```
+
+The dashboard is your local landing page (the equivalent of the OOD dashboard):
+it lists the GUIs installed on this machine, and clicking one starts that tool's
+server and opens it in a new browser tab. Each tool runs on its own `localhost`
+port, exactly as `bdtools local` runs it — the dashboard is just the launcher.
+
+To launch a single tool directly instead:
+
+```bash
+bin/bdtools local mlst_gui --port 8080      # then open http://127.0.0.1:8080/
+```
+
+After installing, validate against known samples (see [tests/README.md](../tests/README.md)):
+
+```bash
+bin/bdtools test all                # PASS / FAIL / SKIP per tool
+```
 
 Re-launch later without rebuilding:
 

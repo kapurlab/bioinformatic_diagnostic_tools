@@ -18,11 +18,13 @@
 set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
 
-TOOL=""; RUN_ONLY=0; BUILD_ONLY=0; PORT=""
+TOOL=""; RUN_ONLY=0; BUILD_ONLY=0; PORT=""; NO_BROWSER=0; PRINT_PYTHON=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --run-only)   RUN_ONLY=1; shift;;
     --build-only) BUILD_ONLY=1; shift;;
+    --no-browser) NO_BROWSER=1; shift;;        # launch but don't open a browser (used by the dashboard)
+    --print-python) PRINT_PYTHON=1; shift;;     # print the tool's env python if built, else exit 1; no build/launch
     --prefix)   export BDTOOLS_HOME="$2"; shift 2;;
     --port)     PORT="$2"; shift 2;;
     --dry-run)  DRY_RUN=1; export DRY_RUN; shift;;
@@ -148,13 +150,21 @@ launch() {
   log "starting ${TOOL} at ${url}  (Ctrl-C to stop)"
   echo "  python: ${py}"
   if [[ ${DRY_RUN} -eq 1 ]]; then echo "  [dry-run] would exec uvicorn on ${PORT}"; return; fi
-  ( sleep 2; open_url "${url}" ) &
+  [[ ${NO_BROWSER} -eq 1 ]] || ( sleep 2; open_url "${url}" ) &
   cd "${DIR}/backend"
   PATH="${envbin}:${PATH}" PYTHONPATH="${DIR}/bin:${PYTHONPATH:-}" \
     exec "${py}" -m uvicorn app.main:app --host 127.0.0.1 --port "${PORT}" --log-level info
 }
 
 ensure_checkout
+
+# --print-python: report the tool's env python if it is built (no build/launch).
+# Used by the dashboard to detect which tools are installed and how to run them.
+if [[ ${PRINT_PYTHON} -eq 1 ]]; then
+  have_python || exit 1
+  resolve_python
+  exit 0
+fi
 
 DO_BUILD=1; DO_LAUNCH=1
 [[ ${RUN_ONLY} -eq 1 ]]   && DO_BUILD=0

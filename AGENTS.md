@@ -65,8 +65,12 @@ Notes:
   `CLUSTER_NAME`, paths, groups). Run with `--dry-run` first; it writes
   system paths and needs sudo. Bare-metal-from-scratch (no OOD yet) is a bigger
   job — point the user at [docs/INSTALL_BARE_METAL.md](docs/INSTALL_BARE_METAL.md).
-- `--local` is build-only by default; launch a built tool with
-  `bin/bdtools local <tool>` (opens the GUI at `http://127.0.0.1:<port>/`).
+- `--local` is build-only by default. After a local install, `bdtools install`
+  prints the access point and (when run in a terminal) opens the **local
+  dashboard** — a landing page that lists the installed GUIs and launches the one
+  the user picks. Re-open it any time with `bin/bdtools dashboard` (serves
+  `http://127.0.0.1:8080/`). To launch one tool directly:
+  `bin/bdtools local <tool> --port 8080` then open `http://127.0.0.1:8080/`.
 - **macOS Apple Silicon (arm64):** bioconda has no native arm64 builds for the
   pipeline toolchain (IRMA's `blat`, shovill/spades/mash/skesa, etc.), so a
   native solve fails for `mlst_gui`, `amr_plus_gui`, and `irma_gui`. `--local`
@@ -124,13 +128,35 @@ Report results as **PASS / FAIL / SKIP** per tool:
   (name the missing DB so the user can stage it, then re-run), or the tool has
   no validation spec yet. A SKIP is not a failure.
 
-Coverage today: `mlst_gui`, `amr_plus_gui`, `irma_gui`, and `genoflu_gui` have
-recorded golden results and are validated. `ksnp_gui`, `vsnp_gui`, and
-`kraken_id_parse_gui` have **no spec yet** and SKIP cleanly; `ncbi_submit_gui`
-(the submission tool) has no validation test by design. So `bdtools test all`
-PASSing the four covered tools and SKIPping the rest is the expected good result.
+Coverage today: all seven diagnostic GUIs are validated — `mlst_gui`,
+`amr_plus_gui`, `irma_gui`, `genoflu_gui`, `ksnp_gui`, `vsnp_gui`, and
+`kraken_id_parse_gui` have recorded golden results. The last three are **tier 2**
+(they need an external reference DB — Kraken2/BLAST or the vsnp3 reference set)
+and SKIP cleanly when that DB is absent. `ncbi_submit_gui` (the SRA/GenBank
+submission tool) has no validation test by design. So on a machine with the DBs,
+`bdtools test all` PASSing all seven is the expected good result; on a fresh
+laptop the tier-2 tools SKIP and the rest PASS.
 
-The accession, run command, and expected headline result for each covered tool
-live in [`tests/<tool>/test.yml`](tests/) and `tests/<tool>/expected.json`. Pick
-the sample from there — never from memory. See [tests/README.md](tests/README.md)
-for how the golden results were established and how to re-validate by hand.
+The accession, run command, and expected headline result for each tool live in
+[`tests/<tool>/test.yml`](tests/) and `tests/<tool>/expected.json`. Pick the
+sample from there — never from memory. See [tests/README.md](tests/README.md) for
+how the golden results were established and how to re-validate by hand.
+
+---
+
+## 6. Hand off the access point
+
+Finish by telling the user how to get to their tools — this is the whole point
+of the install:
+
+```bash
+bin/bdtools dashboard          # local landing page; pick a GUI -> it opens in a tab
+# or one tool directly:
+bin/bdtools local <tool> --port 8080   # then open http://127.0.0.1:8080/
+```
+
+On a personal machine the standard build flow is **install → validate → dashboard**:
+`bdtools install <tool|all>` (prints the access point), `bdtools test all`
+(report PASS/FAIL/SKIP), then `bdtools dashboard` (or tell the user the command).
+On an OOD deployment the access point is the institution's OOD dashboard, where
+the production tool cards now appear.

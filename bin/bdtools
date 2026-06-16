@@ -8,7 +8,8 @@
 #   bdtools list                       show the tools in the manifest
 #   bdtools status                      show what is installed vs. the manifest
 #   bdtools install <tool|all> [opts]   install a tool (default mode: --local)
-#   bdtools local   <tool>              run a locally-installed tool (standalone)
+#   bdtools local   <tool> [--port N]   run a locally-installed tool (standalone)
+#   bdtools dashboard [--port N]         local landing page: pick + launch a GUI
 #   bdtools check-updates [tool|all]    report newer upstream versions
 #   bdtools update  <tool|all> [opts]   move a tool to its latest version
 #   bdtools site-init [opts]            one-time bare-metal site bootstrap
@@ -28,7 +29,7 @@ set -euo pipefail
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
 
-usage() { sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; }
 
 cmd_list() {
   printf '%-22s %-26s %s\n' "TOOL" "VERSION (pinned)" "OOD APP(S)"
@@ -54,7 +55,7 @@ cmd_status() {
 }
 
 cmd_install() {
-  local mode="local"; local raw=() passthru=() with_dev=0
+  local mode="local"; local raw=() passthru=() with_dev=0 no_dashboard=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --local)   mode="local";   shift;;
@@ -64,6 +65,7 @@ cmd_install() {
       --prefix)    export BDTOOLS_HOME="$2"; passthru+=(--prefix "$2"); shift 2;;
       --site-conf) passthru+=(--site-conf "$2"); shift 2;;
       --with-dev)  with_dev=1; shift;;
+      --no-dashboard) no_dashboard=1; shift;;   # local: don't auto-open the dashboard at the end
       -*)          die "install: unknown option '$1'";;
       *)         raw+=("$1"); shift;;
     esac
@@ -91,14 +93,46 @@ cmd_install() {
   for t in "${targets[@]}"; do
     if ! "$script" "$t" "${passthru[@]}"; then warn "install failed: ${t}"; rc=1; fi
   done
+
+  # Local installs: tell the user their access point, then open the dashboard.
+  if [[ "${mode}" == "local" && ${rc} -eq 0 && ${DRY_RUN:-0} -eq 0 ]]; then
+    local first="${targets[0]}"
+    echo
+    ok "Install complete."
+    cat <<EOF
+
+  Your tools are here:   ${REPO_DIR}
+
+  Open the dashboard (pick any installed GUI):
+      bin/bdtools dashboard
+      # then open http://127.0.0.1:8080/
+
+  …or launch a single tool directly:
+      bin/bdtools local ${first} --port 8080
+      # then open http://127.0.0.1:8080/
+
+  Validate the deployment against known samples:
+      bin/bdtools test all
+EOF
+    if [[ ${no_dashboard} -eq 0 && -t 1 ]]; then
+      echo; info "opening the dashboard (Ctrl-C to stop; re-open later with 'bin/bdtools dashboard')…"
+      cmd_dashboard
+    fi
+  fi
   return $rc
 }
 
 cmd_local() {
-  [[ $# -ge 1 ]] || die "usage: bdtools local <tool>"
+  [[ $# -ge 1 ]] || die "usage: bdtools local <tool> [--port N] [--no-browser]"
   manifest_has "$1" || die "unknown tool: $1"
-  # build-if-needed, then launch (the build steps are idempotent)
-  "${KT_BIN_DIR}/install-local.sh" --run-only "$1"
+  # build-if-needed, then launch (the build steps are idempotent). Forward the
+  # rest of the args (--port, --no-browser, ...) to the launcher.
+  "${KT_BIN_DIR}/install-local.sh" --run-only "$@"
+}
+
+cmd_dashboard() {
+  # Local landing page: lists installed GUIs and launches the one you pick.
+  exec python3 "${KT_BIN_DIR}/dashboard.py" "$@"
 }
 
 cmd_check_updates() { "${KT_BIN_DIR}/check-updates.sh" "${1:-all}"; }
@@ -123,6 +157,7 @@ main() {
     status)             cmd_status "$@";;
     install)            cmd_install "$@";;
     local)              cmd_local "$@";;
+    dashboard)          cmd_dashboard "$@";;
     check-updates)      cmd_check_updates "$@";;
     update)             cmd_update "$@";;
     site-init)          cmd_site_init "$@";;

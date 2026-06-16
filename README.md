@@ -29,7 +29,9 @@ claude "Follow AGENTS.md to install the Kapur Lab diagnostic tools suite on this
 
 The agent figures out whether you're on a personal computer, an Open OnDemand
 cluster (as a user or an admin), and installs accordingly — production build
-only, no developer cards. After installing it can also validate the deployment:
+only, no developer cards. The build flow is **install → validate → dashboard**:
+after building it validates against known samples and then hands you the access
+point (the local dashboard, or your OOD dashboard). To validate on demand:
 
 ```bash
 claude "Follow AGENTS.md to validate this deployment with bdtools test all and report PASS/FAIL/SKIP."
@@ -44,9 +46,16 @@ claude "Follow AGENTS.md to validate this deployment with bdtools test all and r
 git clone https://github.com/kapurlab/bioinformatic_diagnostic_tools.git
 cd bioinformatic_diagnostic_tools
 bin/bdtools list                 # what's in the suite
-bin/bdtools install irma_gui     # local mode (default) — Linux / macOS / WSL2
-bin/bdtools local irma_gui       # re-launch a tool you've installed
+bin/bdtools install all          # local mode (default) — Linux / macOS / WSL2
+bin/bdtools dashboard            # landing page: pick a GUI -> opens at http://127.0.0.1:8080/
+bin/bdtools test all             # validate against known samples (PASS/FAIL/SKIP)
 ```
+
+On a personal machine, `bdtools install` ends by printing your access point and
+(in a terminal) opening the **local dashboard** — a home page listing the
+installed GUIs where you pick the one to run. Re-open it any time with
+`bdtools dashboard`, or launch a single tool with
+`bdtools local <tool> --port 8080`.
 
 ## The five deployment targets
 

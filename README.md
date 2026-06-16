@@ -50,7 +50,9 @@ bdtools update <tool|all>      # move to the newest tag + rebuild
 ```
 
 The manifest is the source of truth: tagging this repo (`suite-YYYY.MM`) pins
-the entire set, so any site can reproduce an exact deployment.
+the entire set, so any site can reproduce an exact deployment. Maintainers: see
+[docs/RELEASING.md](docs/RELEASING.md) for cutting tags and publishing GitHub
+Releases (`bin/make-releases.sh`).
 
 ## How it relates to the tool repos
 

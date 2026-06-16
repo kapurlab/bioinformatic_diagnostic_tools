@@ -67,6 +67,15 @@ Notes:
   job — point the user at [docs/INSTALL_BARE_METAL.md](docs/INSTALL_BARE_METAL.md).
 - `--local` is build-only by default; launch a built tool with
   `bin/bdtools local <tool>` (opens the GUI at `http://127.0.0.1:<port>/`).
+- **macOS Apple Silicon (arm64):** bioconda has no native arm64 builds for the
+  pipeline toolchain (IRMA's `blat`, shovill/spades/mash/skesa, etc.), so a
+  native solve fails for `mlst_gui`, `amr_plus_gui`, and `irma_gui`. `--local`
+  handles this automatically by building the env as **osx-64 under Rosetta 2**.
+  Do **not** "fix" this by editing a tool's `conda_setup/environment.yml` — the
+  packages don't exist for arm64; removing them would break the tool. If the
+  installer reports Rosetta 2 is missing, run
+  `softwareupdate --install-rosetta --agree-to-license` and re-run. To force a
+  native attempt anyway, set `BDTOOLS_NATIVE_ARM=1` (expect solve failures).
 
 Which `<tool>`? Use a name from `bin/bdtools list`, or `all`. If the user didn't
 say, ask which tool(s) they want. The tools are: `vsnp_gui`, `amr_plus_gui`,

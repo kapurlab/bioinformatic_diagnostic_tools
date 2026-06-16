@@ -81,7 +81,30 @@ generic_build() {
   fi
 }
 
+# On Apple Silicon (macOS arm64), most of the bioinformatics dependency closure
+# has NO native osx-arm64 conda build — e.g. IRMA needs `blat`, and shovill pulls
+# spades/mash/skesa — none fully built for arm64 on bioconda. A native solve just
+# fails. The standard fix is to build the env as osx-64 and let Rosetta 2 run it
+# (the complete, mature osx-64 package set resolves cleanly). Exporting
+# CONDA_SUBDIR here is inherited by each tool's deploy/install.sh. Opt out with
+# BDTOOLS_NATIVE_ARM=1 (expect solve failures) or by pre-setting CONDA_SUBDIR.
+ensure_conda_subdir() {
+  [[ "$(uname -s)" == "Darwin" && "$(uname -m)" == "arm64" ]] || return 0
+  [[ -n "${CONDA_SUBDIR:-}" ]] && { info "CONDA_SUBDIR preset to ${CONDA_SUBDIR} — honoring it."; return 0; }
+  [[ "${BDTOOLS_NATIVE_ARM:-0}" == "1" ]] && {
+    warn "BDTOOLS_NATIVE_ARM=1 — attempting a native osx-arm64 env; bioconda lacks arm64 builds for the assembler/blat toolchain, so expect a solve failure."
+    return 0; }
+  if ! /usr/bin/arch -x86_64 /usr/bin/true >/dev/null 2>&1; then
+    die "Apple Silicon detected, but Rosetta 2 is not installed. These tools' bioinformatics dependencies have no native arm64 build, so the conda env must be x86-64 under Rosetta. Install it once with:
+    softwareupdate --install-rosetta --agree-to-license
+then re-run this install."
+  fi
+  export CONDA_SUBDIR=osx-64
+  ok "Apple Silicon: building the conda env as osx-64 under Rosetta 2 (native arm64 bioconda builds are incomplete). Override with BDTOOLS_NATIVE_ARM=1."
+}
+
 build() {
+  ensure_conda_subdir
   if [[ -x "${DIR}/deploy/install.sh" ]]; then
     log "delegating env+frontend build to ${TOOL}/deploy/install.sh"
     local args=(); [[ ${DRY_RUN} -eq 1 ]] && args+=(--dry-run)

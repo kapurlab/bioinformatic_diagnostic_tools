@@ -16,8 +16,16 @@ same backend that OOD proxies in production; only the front door differs.
 ## Platform notes
 
 - **Linux** — works directly.
-- **macOS** — works; most bioconda tools have macOS builds. A few are
-  Linux-only — for those, use the OOD deployment or a container.
+- **macOS (Intel)** — works directly.
+- **macOS (Apple Silicon, M1/M2/M3…)** — bioconda has no native arm64 builds for
+  the pipeline toolchain (IRMA's `blat`, shovill/spades/mash/skesa), so a native
+  solve fails for `mlst_gui`, `amr_plus_gui`, and `irma_gui`. `bdtools install`
+  detects Apple Silicon and **builds the env as osx-64 under Rosetta 2**
+  automatically — you don't edit any `environment.yml`. One-time prerequisite:
+  `softwareupdate --install-rosetta --agree-to-license` (the installer tells you
+  if it's missing). `genoflu_gui` happens to resolve natively, but all four use
+  the Rosetta env for consistency. Force a native attempt with
+  `BDTOOLS_NATIVE_ARM=1` (expect solve failures).
 - **Windows** — use **WSL2** (a real Linux). Install miniforge *inside* WSL2 and
   run the commands there; WSL2 forwards `localhost` to your Windows browser, so
   the Web GUI opens normally on Windows. (Native Windows is not supported because

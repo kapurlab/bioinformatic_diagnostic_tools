@@ -32,7 +32,7 @@ bin/bdtools local irma_gui       # re-launch a tool you've installed
 | **Personal Linux / macOS / Windows (WSL2)** | `bdtools install --local <tool>` | Standalone: conda env + uvicorn + browser at `localhost`. No OOD. See [docs/INSTALL_LOCAL.md](docs/INSTALL_LOCAL.md). |
 | **Institutional HPC OOD — as a user** | `bdtools install --sandbox <tool>` | Per-user app in `~/ondemand/dev/`, no sysadmin needed. See [docs/INSTALL_HPC_OOD.md](docs/INSTALL_HPC_OOD.md). |
 | **Institutional HPC OOD — as a sysadmin** | `bdtools install --server <tool>` | System app under `/var/www/ood/apps/sys`. See [docs/SYSADMIN.md](docs/SYSADMIN.md). |
-| **Bare-metal Linux lab server** | `bdtools install --server all` (+ ood-core) | Full stack incl. OOD core. See [docs/INSTALL_BARE_METAL.md](docs/INSTALL_BARE_METAL.md). |
+| **Bare-metal Linux lab server** | `ood-core` → `bdtools site-init` → `bdtools install --server all` | Full stack: OOD core, then groups/storage/branding, then every tool. See [docs/INSTALL_BARE_METAL.md](docs/INSTALL_BARE_METAL.md). |
 
 > **Status:** `--local`, `--sandbox`, and `--server` are implemented.
 > `--sandbox` delegates to a tool's own `deploy/setup-sandbox.sh` when present

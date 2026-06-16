@@ -11,13 +11,14 @@
 #   bdtools local   <tool>              run a locally-installed tool (standalone)
 #   bdtools check-updates [tool|all]    report newer upstream versions
 #   bdtools update  <tool|all> [opts]   move a tool to its latest version
+#   bdtools site-init [opts]            one-time bare-metal site bootstrap
 #
 # Install modes (pass to `install`):
 #   --local      standalone: conda env + uvicorn + browser (Linux/macOS/WSL2). DEFAULT.
 #   --sandbox    per-user OOD sandbox app in ~/ondemand/dev   (institutional OOD)
 #   --server     system OOD app install                       (sysadmin / bare-metal)
 #
-# Common options: --prefix DIR  (checkout location), --dry-run, -h|--help
+# Common options: --prefix DIR, --site-conf PATH (server/site-init), --dry-run, -h|--help
 set -euo pipefail
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
@@ -96,6 +97,8 @@ cmd_update() {
   "${KT_BIN_DIR}/check-updates.sh" --apply "$@"
 }
 
+cmd_site_init() { "${KT_BIN_DIR}/site-init.sh" "$@"; }
+
 main() {
   [[ $# -ge 1 ]] || { usage; exit 0; }
   local cmd="$1"; shift
@@ -106,6 +109,7 @@ main() {
     local)              cmd_local "$@";;
     check-updates)      cmd_check_updates "$@";;
     update)             cmd_update "$@";;
+    site-init)          cmd_site_init "$@";;
     -h|--help|help)     usage;;
     *) die "unknown command: ${cmd} (see: bdtools --help)";;
   esac

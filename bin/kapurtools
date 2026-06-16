@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+# kapurtools — the Kapur Lab tool-suite manager.
+#
+# One entry point to install, run, and update the lab's bioinformatics GUIs
+# across environments. Reads the suite manifest (tools.yml) and dispatches to
+# the install-*.sh helpers.
+#
+#   kapurtools list                       show the tools in the manifest
+#   kapurtools status                      show what is installed vs. the manifest
+#   kapurtools install <tool|all> [opts]   install a tool (default mode: --local)
+#   kapurtools local   <tool>              run a locally-installed tool (standalone)
+#   kapurtools check-updates [tool|all]    report newer upstream versions
+#   kapurtools update  <tool|all> [opts]   move a tool to its latest version
+#
+# Install modes (pass to `install`):
+#   --local      standalone: conda env + uvicorn + browser (Linux/macOS/WSL2). DEFAULT.
+#   --sandbox    per-user OOD sandbox app in ~/ondemand/dev   (institutional OOD)
+#   --server     system OOD app install                       (sysadmin / bare-metal)
+#
+# Common options: --prefix DIR  (checkout location), --dry-run, -h|--help
+set -euo pipefail
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
+
+usage() { sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; }
+
+cmd_list() {
+  printf '%-22s %-26s %s\n' "TOOL" "VERSION (pinned)" "OOD APP(S)"
+  while read -r name; do
+    [[ -n "$name" ]] || continue
+    printf '%-22s %-26s %s\n' "$name" "$(manifest_get "$name" version)" "$(manifest_get "$name" ood_apps)"
+  done < <(manifest_names)
+  echo
+  echo "suite_version: $(manifest_suite_version)   manifest: ${MANIFEST}"
+}
+
+cmd_status() {
+  printf '%-22s %-18s %-18s %s\n' "TOOL" "PINNED" "INSTALLED" "CHECKOUT"
+  while read -r name; do
+    [[ -n "$name" ]] || continue
+    local dir installed="(not installed)"
+    dir="$(tool_dir "$name")"
+    if [[ -d "${dir}/.git" ]]; then
+      installed="$(git -C "$dir" describe --tags --always 2>/dev/null || echo '?')"
+    fi
+    printf '%-22s %-18s %-18s %s\n' "$name" "$(manifest_get "$name" version)" "$installed" "$dir"
+  done < <(manifest_names)
+}
+
+cmd_install() {
+  local mode="local"; local raw=() passthru=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --local)   mode="local";   shift;;
+      --sandbox) mode="sandbox"; shift;;
+      --server)  mode="server";  shift;;
+      --dry-run) DRY_RUN=1; export DRY_RUN; passthru+=(--dry-run); shift;;
+      --prefix)  export KAPURTOOLS_HOME="$2"; passthru+=(--prefix "$2"); shift 2;;
+      -*)        die "install: unknown option '$1'";;
+      *)         raw+=("$1"); shift;;
+    esac
+  done
+  [[ ${#raw[@]} -gt 0 ]] || die "install: name a tool or 'all' (see: kapurtools list)"
+  local targets=() r n
+  for r in "${raw[@]}"; do
+    if [[ "$r" == all ]]; then
+      while read -r n; do [[ -n "$n" ]] && targets+=("$n"); done < <(manifest_names)
+    else
+      manifest_has "$r" || die "unknown tool: $r (see: kapurtools list)"
+      targets+=("$r")
+    fi
+  done
+  local script="${KT_BIN_DIR}/install-${mode}.sh"
+  [[ -x "$script" ]] || die "no installer for mode '${mode}' (${script})"
+  # install = build only (never auto-launch); `kapurtools local <tool>` launches.
+  [[ "${mode}" == "local" ]] && passthru+=(--build-only)
+  local rc=0
+  for t in "${targets[@]}"; do
+    if ! "$script" "$t" "${passthru[@]}"; then warn "install failed: ${t}"; rc=1; fi
+  done
+  return $rc
+}
+
+cmd_local() {
+  [[ $# -ge 1 ]] || die "usage: kapurtools local <tool>"
+  manifest_has "$1" || die "unknown tool: $1"
+  # build-if-needed, then launch (the build steps are idempotent)
+  "${KT_BIN_DIR}/install-local.sh" --run-only "$1"
+}
+
+cmd_check_updates() { "${KT_BIN_DIR}/check-updates.sh" "${1:-all}"; }
+
+cmd_update() {
+  [[ $# -ge 1 ]] || die "usage: kapurtools update <tool|all> [--dry-run]"
+  "${KT_BIN_DIR}/check-updates.sh" --apply "$@"
+}
+
+main() {
+  [[ $# -ge 1 ]] || { usage; exit 0; }
+  local cmd="$1"; shift
+  case "$cmd" in
+    list)               cmd_list "$@";;
+    status)             cmd_status "$@";;
+    install)            cmd_install "$@";;
+    local)              cmd_local "$@";;
+    check-updates)      cmd_check_updates "$@";;
+    update)             cmd_update "$@";;
+    -h|--help|help)     usage;;
+    *) die "unknown command: ${cmd} (see: kapurtools --help)";;
+  esac
+}
+main "$@"

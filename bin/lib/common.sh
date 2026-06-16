@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# common.sh — shared helpers for the kapurtools CLI.
+# Sourced by kapurtools and the install-*.sh scripts. Promoted/condensed from
+# the proven vsnp_gui/deploy helpers (same logging + dry-run idiom).
+
+# ---- repo + manifest locations --------------------------------------------
+# REPO_DIR is the umbrella checkout root (parent of bin/).
+KT_BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_DIR="$(cd "${KT_BIN_DIR}/.." && pwd)"
+MANIFEST="${KAPURTOOLS_MANIFEST:-${REPO_DIR}/tools.yml}"
+MANIFEST_PY="${KT_BIN_DIR}/lib/manifest.py"
+
+# Where tool checkouts live for non-system installs. Override with --prefix or
+# $KAPURTOOLS_HOME. Defaults to an XDG-friendly per-user location.
+KAPURTOOLS_HOME="${KAPURTOOLS_HOME:-${XDG_DATA_HOME:-${HOME}/.local/share}/kapurlab-tools}"
+
+DRY_RUN="${DRY_RUN:-0}"
+
+# ---- logging (matches vsnp_gui/deploy) ------------------------------------
+if [[ -t 1 ]]; then
+  _c_blu=$'\e[1;34m'; _c_grn=$'\e[1;32m'; _c_ylw=$'\e[1;33m'; _c_red=$'\e[1;31m'; _c_rst=$'\e[0m'
+else
+  _c_blu=""; _c_grn=""; _c_ylw=""; _c_red=""; _c_rst=""
+fi
+log()  { printf '%s==>%s %s\n' "${_c_blu}" "${_c_rst}" "$*"; }
+ok()   { printf '  %sok%s %s\n' "${_c_grn}" "${_c_rst}" "$*"; }
+warn() { printf '  %s!!%s %s\n' "${_c_ylw}" "${_c_rst}" "$*" >&2; }
+die()  { printf '%sERROR%s %s\n' "${_c_red}" "${_c_rst}" "$*" >&2; exit 1; }
+# run CMD... — execute, or just print under --dry-run.
+run()  { if [[ "${DRY_RUN}" -eq 1 ]]; then echo "  [dry-run] $*"; else "$@"; fi; }
+
+# ---- manifest access ------------------------------------------------------
+_need_python() { command -v python3 >/dev/null 2>&1 || die "python3 is required to read tools.yml"; }
+manifest_suite_version() { _need_python; python3 "${MANIFEST_PY}" "${MANIFEST}" suite_version; }
+manifest_names()         { _need_python; python3 "${MANIFEST_PY}" "${MANIFEST}" names; }
+manifest_get()           { _need_python; python3 "${MANIFEST_PY}" "${MANIFEST}" get "$1" "$2"; }
+manifest_set()           { _need_python; python3 "${MANIFEST_PY}" "${MANIFEST}" set "$1" "$2" "$3"; }
+manifest_has() { manifest_names | grep -qxF "$1"; }
+
+# Resolve a tool's checkout dir: explicit $KAPURTOOLS_TOOLSDIR wins (e.g. the
+# lab's existing /srv/kapurlab/tools tree), else the per-user home.
+tool_dir() {
+  local name="$1"
+  if [[ -n "${KAPURTOOLS_TOOLSDIR:-}" && -d "${KAPURTOOLS_TOOLSDIR}/${name}" ]]; then
+    echo "${KAPURTOOLS_TOOLSDIR}/${name}"
+  else
+    echo "${KAPURTOOLS_HOME}/checkouts/${name}"
+  fi
+}
+
+# ---- misc -----------------------------------------------------------------
+# Pick a free TCP port on localhost (used by `kapurtools local`).
+find_free_port() {
+  _need_python
+  python3 - <<'PY'
+import socket
+s = socket.socket()
+s.bind(("127.0.0.1", 0))
+print(s.getsockname()[1])
+s.close()
+PY
+}
+
+# Open a URL in the user's browser, best-effort, cross-platform.
+open_url() {
+  local url="$1"
+  if command -v xdg-open >/dev/null 2>&1; then xdg-open "$url" >/dev/null 2>&1 &
+  elif command -v open   >/dev/null 2>&1; then open "$url" >/dev/null 2>&1 &        # macOS
+  elif command -v wslview >/dev/null 2>&1; then wslview "$url" >/dev/null 2>&1 &     # WSL
+  else warn "open ${url} in your browser"; fi
+}
+
+# Detect a usable conda/mamba base; prefer mamba (conda's classic solver hangs).
+detect_conda() {
+  local base="${CONDA_BASE:-${HOME}/miniforge3}"
+  if [[ -x "${base}/bin/conda" ]]; then echo "${base}/bin/conda"; return 0; fi
+  command -v mamba 2>/dev/null && return 0
+  command -v conda 2>/dev/null && return 0
+  return 1
+}

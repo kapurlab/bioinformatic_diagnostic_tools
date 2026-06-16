@@ -1,0 +1,13 @@
+# per-site config (copy sites/site.conf.example -> sites/site.conf)
+sites/site.conf
+sites/*.conf
+!sites/site.conf.example
+
+# local tool checkouts, if a user points KAPURTOOLS_HOME inside the repo
+checkouts/
+
+# editor / OS noise
+*.swp
+.DS_Store
+__pycache__/
+*.pyc

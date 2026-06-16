@@ -81,28 +81,36 @@ run_one() {  # tool -> prints a status; sets RC_FAIL on FAIL
   py="${pybin%%|*}"; envbin="${pybin##*|}"
 
   # 1. fetch sample
-  local work="${WORKDIR}/${tool}" inputs_dir="${WORKDIR}/${tool}/inputs" primary
+  local work="${WORKDIR}/${tool}" inputs_dir="${WORKDIR}/${tool}/inputs" primary="" inputs_list=""
   mkdir -p "${inputs_dir}"
   log "fetching ${fetch} ${acc}"
   case "${fetch}" in
     genome)  primary="$(fetch_genome  "${acc}" "${inputs_dir}")" || { echo "FAIL  ${tool}: download failed (${acc})"; RC_FAIL=1; return 0; };;
     genbank) primary="$(fetch_genbank "${acc}" "${inputs_dir}")" || { echo "FAIL  ${tool}: download failed (${acc})"; RC_FAIL=1; return 0; };;
     sra)     primary="$(fetch_sra     "${acc}" "${inputs_dir}")" || { echo "FAIL  ${tool}: download failed (${acc})"; RC_FAIL=1; return 0; };;
+    genomes) # space-separated list of assembly accessions -> {inputs}
+      local a g
+      for a in ${acc}; do
+        g="$(fetch_genome "${a}" "${inputs_dir}")" || { echo "FAIL  ${tool}: download failed (${a})"; RC_FAIL=1; return 0; }
+        inputs_list+="${g} "
+      done
+      inputs_list="${inputs_list% }"; primary="${inputs_list%% *}";;
     *)       echo "FAIL  ${tool}: unknown fetch method '${fetch}'"; RC_FAIL=1; return 0;;
   esac
-  ok "input: ${primary}"
+  ok "input: ${inputs_list:-${primary}}"
 
   # 2. build run command (placeholder substitution)
   local out="${work}/out"; rm -rf "${out}"; mkdir -p "${out}"
   local fasta="" r1="" r2=""
   if [[ "${fetch}" == "genome" || "${fetch}" == "genbank" ]]; then fasta="${primary}"
-  else r1="${primary}"; r2="${primary/_1.fastq.gz/_2.fastq.gz}"; [[ -s "${r2}" ]] || r2=""; fi
+  elif [[ "${fetch}" == "sra" ]]; then r1="${primary}"; r2="${primary/_1.fastq.gz/_2.fastq.gz}"; [[ -s "${r2}" ]] || r2=""; fi
   local cmd="${run_cmd}"
   cmd="${cmd//\{python\}/${py}}"
   cmd="${cmd//\{tooldir\}/${dir}}"
   cmd="${cmd//\{testsdir\}/${TESTS_DIR}}"
   cmd="${cmd//\{out\}/${out}}"
   cmd="${cmd//\{fasta\}/${fasta}}"
+  cmd="${cmd//\{inputs\}/${inputs_list}}"
   cmd="${cmd//\{r1\}/${r1}}"
   cmd="${cmd//\{r2\}/${r2}}"
 

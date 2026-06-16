@@ -1,0 +1,9 @@
+{
+  "__sample": "3 Listeria monocytogenes genomes: EGD-e (GCF_000196035.1), F2365 (GCF_000008285.1), 10403S (GCF_000168695.2)",
+  "__note": "kSNP4 at k=21. SNP counts are deterministic for these genomes; approx matchers tolerate minor kSNP-version drift. fck>0.1 is kSNP's own 'reliable tree' threshold.",
+  "return_code": 0,
+  "genome_count": 3,
+  "results.snps_all": "~44309",
+  "results.core_snps": "~34713",
+  "kchooser.fck": ">0.1"
+}

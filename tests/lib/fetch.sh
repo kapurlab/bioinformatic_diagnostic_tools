@@ -20,24 +20,25 @@ fetch_genome() {
   local acc="$1" out="$2" fna="${2}/${1}.fna"
   mkdir -p "${out}"
   if [[ -s "${fna}" ]]; then echo "${fna}"; return 0; fi
+  command -v unzip >/dev/null 2>&1 || { echo "unzip not found" >&2; return 1; }
 
+  # Extract each accession into its OWN dir so the cat glob can't pick up a
+  # sibling genome left behind by a previous fetch into the same OUTDIR
+  # (matters when several genomes are fetched for one tool, e.g. ksnp).
+  local zip="${out}/${acc}.zip" xdir="${out}/.x_${acc}"
+  rm -rf "${xdir}"; mkdir -p "${xdir}"
   if command -v datasets >/dev/null 2>&1; then
-    local zip="${out}/${acc}.zip"
     datasets download genome accession "${acc}" --include genome --filename "${zip}" >/dev/null 2>&1 \
       || { echo "datasets download failed for ${acc}" >&2; return 1; }
-    ( cd "${out}" && unzip -o -q "${zip}" )
-    cat "${out}"/ncbi_dataset/data/"${acc}"*/*.fna > "${fna}" 2>/dev/null \
-      || cat "${out}"/ncbi_dataset/data/*/*.fna > "${fna}" 2>/dev/null
   else
     # REST fallback: the download endpoint returns a zip of the dataset.
-    local zip="${out}/${acc}.zip"
     curl -sS -L -m 600 \
       "https://api.ncbi.nlm.nih.gov/datasets/v2alpha/genome/accession/${acc}/download?include_annotation_type=GENOME_FASTA" \
       -o "${zip}" || { echo "NCBI API download failed for ${acc}" >&2; return 1; }
-    command -v unzip >/dev/null 2>&1 || { echo "unzip not found" >&2; return 1; }
-    ( cd "${out}" && unzip -o -q "${zip}" )
-    cat "${out}"/ncbi_dataset/data/*/*.fna > "${fna}" 2>/dev/null
   fi
+  ( cd "${xdir}" && unzip -o -q "${zip}" )
+  cat "${xdir}"/ncbi_dataset/data/*/*.fna > "${fna}" 2>/dev/null
+  rm -rf "${xdir}" "${zip}"
   [[ -s "${fna}" ]] || { echo "no FASTA extracted for ${acc}" >&2; return 1; }
   echo "${fna}"
 }

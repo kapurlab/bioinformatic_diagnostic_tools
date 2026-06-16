@@ -1,0 +1,13 @@
+# ksnp_gui validation spec — see tests/README.md
+# Sample: three classic complete Listeria monocytogenes reference genomes —
+# EGD-e (1/2a), F2365 (4b), and 10403S (1/2a) — all ~3 Mb. kSNP4 is reference-
+# free and alignment-free (no external DB); its binaries are vendored under the
+# tool, so the run_cmd prepends them to PATH (the OOD launcher does this in
+# production). k is pinned for a deterministic SNP count. (Avoid atypically large
+# assemblies: kSNP4's k-mer coverage filter crashes on a bloated >5 Mb genome.)
+tier: 1
+summary: 3 Listeria monocytogenes genomes -> kSNP4 SNP discovery + trees
+fetch: genomes
+accession: [GCF_000196035.1, GCF_000008285.1, GCF_000168695.2]
+run_cmd: PATH={tooldir}/vendor/kSNP4-bin:$PATH {python} {tooldir}/bin/ksnp_pipeline.py --label ksnp_test --outdir {out} --inputs {inputs} --k 21 --threads 4
+result_file: run_manifest.json

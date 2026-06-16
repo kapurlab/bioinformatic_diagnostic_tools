@@ -1,0 +1,7 @@
+{
+  "__sample": "SRR28623786 — Mycobacterium tuberculosis complex (M. bovis-group) Illumina reads",
+  "__note": "Validated at genus level: Kraken2 places ~96% of reads in Mycobacterium (M. tuberculosis complex, 94.9%). Species-rank reads fragment across the near-identical MTBC members (M. orygis/tuberculosis/...), so species is not asserted — that's a known Kraken limitation, not a tool fault.",
+  "top_genus": "Mycobacterium",
+  "top_genus_pct": ">=90",
+  "classified_pct": ">=90"
+}

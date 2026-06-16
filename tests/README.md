@@ -93,6 +93,19 @@ the golden without review — the golden is a diagnostic claim.
 `--keep` keeps the per-tool download/work dir (under `~/.local/share/bdtools/testwork`)
 for inspection; `--workdir DIR` relocates it.
 
+## Validating on macOS Apple Silicon (Rosetta)
+
+On Apple Silicon the env is built as **osx-64 and run under Rosetta 2** (see
+[docs/INSTALL_LOCAL.md](../docs/INSTALL_LOCAL.md)) — a different execution
+environment than the Linux box these goldens were recorded on. For **real
+diagnostic use on a Mac**, treat `bdtools test all` as the parity check: after
+installing, run it and confirm the four covered tools **PASS**. The headline
+calls are deterministic and arch-independent (MLST ST 10; GenoFLU B3.13; IRMA
+FLU/H5N1; AMR gene stems with a `>=` count), so a PASS confirms the Rosetta env
+reproduces the validated baseline. A FAIL on a Mac is a real signal — surface
+it, don't relax the golden. (Expect Rosetta runs to be slower than native; the
+calls, not the wall-clock, are what's validated.)
+
 ## Extending the suite (the ⏳ tools)
 
 - **ksnp_gui** — kSNP needs ≥2 genomes. Add a `fetch: genomes` (plural) path that

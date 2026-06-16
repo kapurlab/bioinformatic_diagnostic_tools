@@ -1,0 +1,8 @@
+{
+  "__sample": "SRR1791695 — Mycobacterium bovis WGS (Illumina MiSeq)",
+  "__note": "vSNP3 step1 with sourmash auto best-reference (no -t): correctly selects the M. bovis reference (Mycobacterium_AF2122) and computes the spoligotype. Spoligotype octal/SB and the group call are deterministic for this sample. Reference matched as regex to tolerate the ' by Best Reference' suffix.",
+  "reference": "/Mycobacterium_AF2122/",
+  "spoligo_octal": "/264073777777600/",
+  "spoligo_sb": "SB0673",
+  "group": "Mbovis-24"
+}

@@ -25,17 +25,25 @@ LABELS = {
     "reference": "Reference",
     "spoligo_octal": "Spoligotype Octal Code",
     "spoligo_sb": "Spoligotype SB Number",
+    "group": "Groups",
 }
+_LABEL_SET = set(LABELS.values())
 
 
 def find_value(ws, label):
+    """The stats sheet is headers-in-row-1 / values-in-row-2, so the value is the
+    cell BELOW the label. Fall back to the cell to the right for a label/value
+    column layout. Skip a candidate that is itself another header label."""
     for row in ws.iter_rows():
         for cell in row:
             if isinstance(cell.value, str) and cell.value.strip() == label:
+                below = ws.cell(row=cell.row + 1, column=cell.column).value
+                if below not in (None, "") and str(below).strip() not in _LABEL_SET:
+                    return below
                 right = ws.cell(row=cell.row, column=cell.column + 1).value
-                if right not in (None, ""):
+                if right not in (None, "") and str(right).strip() not in _LABEL_SET:
                     return right
-                return ws.cell(row=cell.row + 1, column=cell.column).value
+                return below
     return None
 
 

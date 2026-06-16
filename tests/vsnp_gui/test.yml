@@ -1,0 +1,16 @@
+# vsnp_gui validation spec — see tests/README.md
+# Sample: SRR1791695 — Mycobacterium bovis WGS (Illumina MiSeq). We run vSNP3
+# step1 with NO forced reference, so sourmash auto-selects the best reference
+# (tests species identification), plus -spoligo for the TB spoligotype. vSNP3
+# writes an Excel stats workbook (no JSON), so an adapter (tests/lib/vsnp_excel.py,
+# run with the vsnp3 env python for openpyxl) extracts the reference + spoligotype
+# call. vsnp3_step1.py is on the env PATH. Tool writes to CWD -> run inside {out}.
+# Tier 2: needs the vsnp3 reference set -> SKIPs cleanly when absent.
+tier: 2
+summary: M. bovis reads -> vSNP3 best-reference selection + spoligotype
+fetch: sra
+accession: SRR1791695
+db_check: /srv/kapurlab/refs/vsnp3/reference_options
+db_hint: Stage the vsnp3 reference_options dir + dependencies/ref_db.sbt.zip (see vsnp_gui deploy/install_ood.sh).
+run_cmd: cd {out} && vsnp3_step1.py -n vsnp_test -r1 {r1} -r2 {r2} -spoligo && {python} {testsdir}/lib/vsnp_excel.py {out}
+result_file: vsnp_result.json

@@ -10,6 +10,7 @@
 #   bdtools install <tool|all> [opts]   install a tool (default mode: --local)
 #   bdtools local   <tool> [--port N]   run a locally-installed tool (standalone)
 #   bdtools dashboard [--port N]         local landing page: pick + launch a GUI
+#                     [--restart|--stop] restart (after a pull) or stop it + tools
 #   bdtools check-updates [tool|all]    report newer upstream versions
 #   bdtools update  <tool|all> [opts]   move a tool to its latest version
 #   bdtools site-init [opts]            one-time bare-metal site bootstrap
@@ -29,7 +30,7 @@ set -euo pipefail
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
 
-usage() { sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'; }
 
 cmd_list() {
   printf '%-22s %-26s %s\n' "TOOL" "VERSION (pinned)" "OOD APP(S)"
@@ -146,7 +147,24 @@ cmd_local() {
 
 cmd_dashboard() {
   # Local landing page: lists installed GUIs and launches the one you pick.
-  exec python3 "${KT_BIN_DIR}/dashboard.py" "$@"
+  #   --restart  stop the running dashboard + any tools, then start fresh
+  #              (use this after a `git pull` so new code takes effect)
+  #   --stop     stop the running dashboard + any tools, and exit
+  local mode=serve rest=() a
+  for a in "$@"; do
+    case "$a" in
+      --restart) mode=restart;;
+      --stop)    mode=stop;;
+      *)         rest+=("$a");;
+    esac
+  done
+  if [[ "${mode}" != serve ]]; then
+    pkill -f "${KT_BIN_DIR}/dashboard.py" 2>/dev/null || true   # the dashboard server
+    pkill -f "uvicorn app.main:app"       2>/dev/null || true   # any tool servers it launched
+    ok "stopped the dashboard and any running tools."
+    [[ "${mode}" == stop ]] && return 0
+  fi
+  exec python3 "${KT_BIN_DIR}/dashboard.py" ${rest[@]+"${rest[@]}"}
 }
 
 cmd_check_updates() { "${KT_BIN_DIR}/check-updates.sh" "${1:-all}"; }

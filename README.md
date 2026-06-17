@@ -204,6 +204,52 @@ accessions and expected values are in [`tests/`](tests/) — see
 [tests/README.md](tests/README.md) for the coverage table and how the golden
 results were established. These are the suite's diagnostic-validation baseline.
 
+## Troubleshooting (local installs)
+
+**After updating, the tools still behave like the old version.** The dashboard
+and any open tools keep running until you stop them — closing the browser tab
+does *not* stop the servers. After a `git pull`, restart them so the new code
+takes effect:
+
+```bash
+bin/bdtools dashboard --restart      # stops the running dashboard + tools, starts fresh
+```
+
+(`--stop` stops everything without restarting.) Re-open a tool from the dashboard
+afterward so it relaunches on the new code. You'll know the old one is still up if
+you see *"The dashboard is already running"* when you expected a fresh start.
+
+**`git pull` says "Your local changes would be overwritten by merge."** Something
+edited a tracked file locally. Set those edits aside and pull:
+
+```bash
+git stash && git pull                # then: bin/bdtools dashboard --restart
+```
+
+(Don't `git stash pop` afterward — the stashed edits are superseded by what you
+pulled. If you don't care about local edits at all, `git fetch origin && git
+reset --hard origin/main` forces an exact match; your downloaded data and conda
+envs live outside the repo and are untouched.)
+
+**vsnp_gui Step 1 fails: "reference folder not found: /srv/kapurlab/refs/…".**
+You're on an older build or a stale server/config that points at the lab server
+instead of your machine. Update and rebuild:
+
+```bash
+git stash && git pull
+bin/bdtools install vsnp_gui          # must print: "configured local vsnp site: …/vsnp3-site"
+rm -f ~/.config/vsnp_gui/config.json  # clears any frozen /srv paths (rebuilt correctly on next launch)
+bin/bdtools dashboard --restart
+```
+
+Then run Step 1 with **`Mycobacterium_H37`** (M. tuberculosis) or
+**`Mycobacterium_AF2122`** (M. bovis). `mtbc0_v1.1` is a lab-private reference and
+is not in the public set.
+
+**Nothing happens when I double-click `Open Dashboard.command` (macOS).** The
+first time, right-click it → **Open** → **Open** to clear the one-time security
+prompt; after that a normal double-click works.
+
 ## How it relates to the tool repos
 
 The tool repos stay independent and individually releasable. This umbrella only

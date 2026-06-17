@@ -161,9 +161,15 @@ of the install:
 
 ```bash
 bin/bdtools dashboard          # local landing page; pick a GUI -> it opens in a tab
+bin/bdtools dashboard --restart  # after an update/`git pull`: stop stale servers, start fresh
 # or one tool directly:
 bin/bdtools local <tool> --port 8080   # then open http://127.0.0.1:8080/
 ```
+
+> After you `git pull`/update on a machine that already had the dashboard open,
+> tell the user to run `bin/bdtools dashboard --restart` — the old dashboard and
+> tool servers keep running old code until restarted (closing the browser doesn't
+> stop them).
 
 On a personal machine the standard build flow is **install → validate → dashboard**:
 `bdtools install <tool|all>` (prints the access point), `bdtools test all`

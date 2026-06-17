@@ -91,7 +91,7 @@ cmd_install() {
   [[ "${mode}" == "local" ]] && passthru+=(--build-only)
   local rc=0 skipped=()
   for t in "${targets[@]}"; do
-    if "$script" "$t" "${passthru[@]}"; then :; else
+    if "$script" "$t" ${passthru[@]+"${passthru[@]}"}; then :; else
       local ec=$?
       if [[ ${ec} -eq 3 ]]; then skipped+=("$t");   # no local-build path (OOD-only) — not a failure
       else warn "install failed: ${t}"; rc=1; fi
@@ -106,7 +106,7 @@ cmd_install() {
     # Example tool = first target that actually installed locally (skip OOD-only).
     local first="" t2
     for t2 in "${targets[@]}"; do
-      [[ " ${skipped[*]} " == *" ${t2} "* ]] || { first="${t2}"; break; }
+      [[ " ${skipped[*]-} " == *" ${t2} "* ]] || { first="${t2}"; break; }
     done
     [[ -n "${first}" ]] || first="mlst_gui"
     echo

@@ -57,13 +57,24 @@ run_one() {  # tool -> prints a status; sets RC_FAIL on FAIL
   yml="${sdir}/test.yml"; exp="${sdir}/expected.json"
   if [[ ! -f "${yml}" ]]; then echo "SKIP  ${tool}: no test spec (tests/${tool}/test.yml)"; return 0; fi
 
-  local tier summary fetch acc run_cmd result_file db_check db_hint
+  local tier summary fetch acc run_cmd result_file db_check db_hint req_os
   tier="$(spec "${yml}" tier)"; summary="$(spec "${yml}" summary)"
   fetch="$(spec "${yml}" fetch)"; acc="$(spec "${yml}" accession)"
   run_cmd="$(spec "${yml}" run_cmd)"; result_file="$(spec "${yml}" result_file)"
   db_check="$(spec "${yml}" db_check)"; db_hint="$(spec "${yml}" db_hint)"
+  req_os="$(spec "${yml}" requires_os)"
 
   log "${tool}  (tier ${tier:-?}) — ${summary}"
+
+  # OS constraint: some tools ship platform-specific binaries (e.g. ksnp_gui's
+  # kSNP4 is a Linux-only ELF and cannot run on macOS, even under Rosetta).
+  if [[ -n "${req_os}" ]]; then
+    local host_os; host_os="$(uname -s | tr 'A-Z' 'a-z')"
+    if [[ "${host_os}" != "${req_os}" ]]; then
+      echo "SKIP  ${tool}: requires ${req_os} (this host is ${host_os}) — its analysis binaries are ${req_os}-only"
+      return 0
+    fi
+  fi
 
   local dir; dir="$(tool_dir "${tool}")"
   [[ -d "${dir}/.git" ]] || { echo "SKIP  ${tool}: not installed at ${dir} (run: bdtools install ${tool})"; return 0; }
@@ -97,7 +108,15 @@ run_one() {  # tool -> prints a status; sets RC_FAIL on FAIL
   case "${fetch}" in
     genome)  primary="$(fetch_genome  "${acc}" "${inputs_dir}")" || { echo "FAIL  ${tool}: download failed (${acc})"; RC_FAIL=1; return 0; };;
     genbank) primary="$(fetch_genbank "${acc}" "${inputs_dir}")" || { echo "FAIL  ${tool}: download failed (${acc})"; RC_FAIL=1; return 0; };;
-    sra)     primary="$(fetch_sra     "${acc}" "${inputs_dir}")" || { echo "FAIL  ${tool}: download failed (${acc})"; RC_FAIL=1; return 0; };;
+    sra)
+      if primary="$(fetch_sra "${acc}" "${inputs_dir}")"; then :; else
+        local frc=$?
+        if [[ ${frc} -eq 2 ]]; then
+          echo "SKIP  ${tool}: sra-tools not found — install it to validate (e.g. 'conda install -n base -c bioconda sra-tools')"
+          return 0
+        fi
+        echo "FAIL  ${tool}: download failed (${acc})"; RC_FAIL=1; return 0
+      fi ;;
     genomes) # space-separated list of assembly accessions -> {inputs}
       local a g
       for a in ${acc}; do

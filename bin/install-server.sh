@@ -61,7 +61,7 @@ APP_DST_BASE="${SYS_APPS_DIR}"
 # Production cards always; developer (branch-picker) cards only with --with-dev.
 OOD_APPS=( $(manifest_get "${TOOL}" ood_apps) )
 DEV_APPS=( $(manifest_get "${TOOL}" dev_apps) )
-if [[ ${WITH_DEV} -eq 1 ]]; then
+if [[ ${WITH_DEV} -eq 1 && ${#DEV_APPS[@]} -gt 0 ]]; then
   OOD_APPS+=( "${DEV_APPS[@]}" )
 fi
 
@@ -124,7 +124,7 @@ phase_toolchain() {
   if [[ -x "${DIR}/deploy/install.sh" ]]; then
     local a=(); [[ ${DRY_RUN} -eq 1 ]] && a+=(--dry-run)
     [[ -n "${CONDA_BASE:-}" ]] && a+=(--conda-base "${CONDA_BASE}")
-    run "${DIR}/deploy/install.sh" "${a[@]}" || die "${TOOL} deploy/install.sh failed"
+    run "${DIR}/deploy/install.sh" ${a[@]+"${a[@]}"} || die "${TOOL} deploy/install.sh failed"
   else
     warn "${TOOL} has no deploy/install.sh — build its env+frontend manually,"
     warn "  or (for vsnp_gui) use vsnp_gui/deploy/install_ood.sh which builds the vsnp3 env."

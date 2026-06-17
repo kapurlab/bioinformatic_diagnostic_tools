@@ -43,13 +43,31 @@ fetch_genome() {
   echo "${fna}"
 }
 
+# Make sra-tools (prefetch + fasterq-dump) available on PATH. On macOS there is
+# usually no system sra-tools, so look inside the conda envs too — `[[ -x ]]`
+# follows symlinks (conda often symlinks these into <env>/bin), unlike
+# `find -type f`. Returns 0 if usable, non-zero if sra-tools can't be found.
+_ensure_sra_tools() {
+  command -v prefetch >/dev/null 2>&1 && command -v fasterq-dump >/dev/null 2>&1 && return 0
+  local conda envroot; conda="$(detect_conda 2>/dev/null || true)"
+  if [[ -n "${conda}" ]]; then
+    while read -r envroot; do
+      [[ -n "${envroot}" ]] || continue
+      if [[ -x "${envroot}/bin/prefetch" && -x "${envroot}/bin/fasterq-dump" ]]; then
+        export PATH="${envroot}/bin:${PATH}"; return 0
+      fi
+    done < <("${conda}" env list 2>/dev/null | awk '{print $NF}' | grep '^/')
+  fi
+  command -v prefetch >/dev/null 2>&1 && command -v fasterq-dump >/dev/null 2>&1
+}
+
 fetch_sra() {
   local acc="$1" out="$2"
   mkdir -p "${out}"
   local r1="${out}/${acc}_1.fastq.gz" r2="${out}/${acc}_2.fastq.gz"
   if [[ -s "${r1}" ]]; then echo "${r1}"; return 0; fi
-  command -v prefetch    >/dev/null 2>&1 || { echo "sra-tools 'prefetch' not found" >&2; return 1; }
-  command -v fasterq-dump >/dev/null 2>&1 || { echo "sra-tools 'fasterq-dump' not found" >&2; return 1; }
+  # exit 2 = sra-tools missing (caller SKIPs); exit 1 = a real download failure.
+  _ensure_sra_tools || { echo "SRATOOLS_MISSING: prefetch/fasterq-dump not found on PATH or in any conda env" >&2; return 2; }
   ( cd "${out}" && prefetch -O . "${acc}" >/dev/null 2>&1 \
        && fasterq-dump --split-files -O . "${acc}" >/dev/null 2>&1 ) \
     || { echo "SRA download failed for ${acc}" >&2; return 1; }

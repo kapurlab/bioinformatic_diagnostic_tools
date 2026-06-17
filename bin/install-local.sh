@@ -159,7 +159,7 @@ build() {
     local args=(); [[ ${DRY_RUN} -eq 1 ]] && args+=(--dry-run)
     # Prefer a personal/standalone env if the tool's installer supports it.
     if grep -q -- '--personal' "${DIR}/deploy/install.sh" 2>/dev/null; then args+=(--personal); fi
-    run "${DIR}/deploy/install.sh" "${args[@]}" || die "${TOOL} deploy/install.sh failed"
+    run "${DIR}/deploy/install.sh" ${args[@]+"${args[@]}"} || die "${TOOL} deploy/install.sh failed"
   elif [[ -f "${DIR}/conda_setup/environment.yml" ]]; then
     log "no deploy/install.sh in ${TOOL}; using generic build"
     generic_build
@@ -230,6 +230,15 @@ if [[ ${DO_BUILD} -eq 0 ]] && ! have_python; then
 fi
 
 [[ ${DO_BUILD} -eq 1 ]]  && build
+
+# Heads-up for tools with Linux-only vendored binaries (e.g. ksnp_gui's kSNP4):
+# they install fine but the analysis can't run off Linux (Rosetta translates
+# macOS x86_64, not Linux ELF).
+if [[ ${DO_BUILD} -eq 1 && "$(uname -s)" != "Linux" && -d "${DIR}/vendor/kSNP4-bin" ]]; then
+  warn "${TOOL}: its kSNP4 analysis binaries are Linux-only and will NOT run on $(uname -s)."
+  info "  The GUI installs, but run the kSNP pipeline on a Linux machine or an OOD deployment."
+fi
+
 [[ ${DO_LAUNCH} -eq 1 ]] && launch
 [[ ${DO_LAUNCH} -eq 0 ]] && ok "${TOOL} built (not launched)"
 exit 0

@@ -24,8 +24,14 @@ at [`AGENTS.md`](AGENTS.md):
 ```bash
 git clone https://github.com/kapurlab/bioinformatic_diagnostic_tools.git
 cd bioinformatic_diagnostic_tools
-claude "Follow AGENTS.md to install the Kapur Lab diagnostic tools suite on this system."
+claude -p "Follow AGENTS.md to install the Kapur Lab diagnostic tools suite on this system."
 ```
+
+> **About `-p`:** it runs the agent autonomously — it carries out the whole
+> install without stopping to ask you, and prints what it did. **Drop the `-p`**
+> (just `claude "…"`) to run interactively instead, where the agent pauses so you
+> can watch and approve each step. Use interactive mode the first time if you'd
+> rather see what's happening.
 
 The agent figures out whether you're on a personal computer, an Open OnDemand
 cluster (as a user or an admin), and installs accordingly — production build
@@ -34,7 +40,7 @@ after building it validates against known samples and then hands you the access
 point (the local dashboard, or your OOD dashboard). To validate on demand:
 
 ```bash
-claude "Follow AGENTS.md to validate this deployment with bdtools test all and report PASS/FAIL/SKIP."
+claude -p "Follow AGENTS.md to validate this deployment with bdtools test all and report PASS/FAIL/SKIP."
 ```
 
 > No agent? The same steps by hand are in [INSTALL.md](INSTALL.md) and the

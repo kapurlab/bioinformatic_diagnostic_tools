@@ -277,6 +277,15 @@ def main():
     ap.add_argument("--no-browser", action="store_true")
     args = ap.parse_args()
 
+    # If the dashboard is already running on the default port, don't start a
+    # second copy — just reopen the browser to it (handles double-clicking twice).
+    if args.port is None and _is_dashboard(args.host, 8080):
+        url = f"http://{args.host}:8080/"
+        print(f"The dashboard is already running — opening {url}")
+        if not args.no_browser:
+            _open(url)
+        return
+
     port = args.port
     if port is None:
         port = 8080 if not port_open(args.host, 8080) else free_port()
@@ -284,19 +293,44 @@ def main():
     SUITE = Suite()
     httpd = ThreadingHTTPServer((args.host, port), Handler)
     url = f"http://{args.host}:{port}/"
-    print(f"Kapur Lab dashboard: {url}  (Ctrl-C to stop)")
     n_installed = sum(1 for t in SUITE.tools if t["installed"])
-    print(f"  {n_installed}/{len(SUITE.tools)} tools installed and ready to launch.")
+    bar = "=" * 64
+    print(f"""
+{bar}
+  Kapur Lab Diagnostic Tools — your dashboard is running.
+
+  Open this in your web browser:
+      {url}
+
+  {n_installed} of {len(SUITE.tools)} tools are installed and ready. Click a tool to launch it.
+
+  Keep this window open while you work.
+  To stop everything: close this window (or press Control-C).
+  To start it again later, just re-open the dashboard (see the README).
+{bar}
+""", flush=True)
     if not args.no_browser:
         threading.Thread(target=lambda: (time.sleep(1), _open(url)), daemon=True).start()
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
-        print("\nstopping dashboard.")
+        print("\nDashboard stopped. Re-open it any time with 'bin/bdtools dashboard'.")
+
+
+def _is_dashboard(host, port):
+    """True if our dashboard is already serving on host:port."""
+    if not port_open(host, port):
+        return False
+    try:
+        import urllib.request
+        body = urllib.request.urlopen(f"http://{host}:{port}/", timeout=2).read(400).decode("utf-8", "replace")
+        return "Kapur Lab Diagnostic Tools" in body
+    except Exception:
+        return False
 
 
 def _open(url):
-    for cmd in (["xdg-open", url], ["open", url], ["wslview", url]):
+    for cmd in (["open", url], ["xdg-open", url], ["wslview", url]):
         try:
             subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             return

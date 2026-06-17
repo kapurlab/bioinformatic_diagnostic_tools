@@ -115,15 +115,17 @@ cmd_install() {
 
   Your tools are here:   ${REPO_DIR}
 
-  Open the dashboard (pick any installed GUI):
-      bin/bdtools dashboard
-      # then open http://127.0.0.1:8080/
+  The dashboard opens in your browser now. Pick a tool and it opens in a tab.
+  Keep the dashboard window open while you work.
 
-  …or launch a single tool directly:
-      bin/bdtools local ${first} --port 8080
-      # then open http://127.0.0.1:8080/
+  To open the dashboard again later (e.g. after restarting your computer):
+      • macOS: double-click  "Open Dashboard.command"  in the folder above
+      • or run:  bin/bdtools dashboard      (then open http://127.0.0.1:8080/)
 
-  Validate the deployment against known samples:
+  Launch a single tool instead:
+      bin/bdtools local ${first} --port 8080      # then open http://127.0.0.1:8080/
+
+  Validate against known samples (optional):
       bin/bdtools test all
 EOF
     if [[ ${no_dashboard} -eq 0 && -t 1 ]]; then

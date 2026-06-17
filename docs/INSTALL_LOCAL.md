@@ -65,6 +65,14 @@ it lists the GUIs installed on this machine, and clicking one starts that tool's
 server and opens it in a new browser tab. Each tool runs on its own `localhost`
 port, exactly as `bdtools local` runs it — the dashboard is just the launcher.
 
+**Lifecycle / re-opening after a restart.** The dashboard runs while its window
+is open; restarting your computer stops it (normal). To bring it back, **macOS
+users can double-click `Open Dashboard.command`** in the repo folder (first time:
+right-click → Open to clear the one-time security prompt; drag it to the Dock for
+one-click access). Anyone can instead `cd` into the folder and run
+`bin/bdtools dashboard` again. Running it when it's already up just re-opens the
+browser tab — it won't start a second copy.
+
 To launch a single tool directly instead:
 
 ```bash

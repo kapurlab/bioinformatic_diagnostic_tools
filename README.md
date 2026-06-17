@@ -51,11 +51,43 @@ bin/bdtools dashboard            # landing page: pick a GUI -> opens at http://1
 bin/bdtools test all             # validate against known samples (PASS/FAIL/SKIP)
 ```
 
-On a personal machine, `bdtools install` ends by printing your access point and
-(in a terminal) opening the **local dashboard** — a home page listing the
-installed GUIs where you pick the one to run. Re-open it any time with
-`bdtools dashboard`, or launch a single tool with
-`bdtools local <tool> --port 8080`.
+## Opening your tools — the dashboard
+
+You don't need to be a "command-line person." After installing, a **dashboard**
+opens in your web browser automatically — a home page listing your tools. Click
+a tool and it opens in a new tab. That's it.
+
+**How it works (plain version):**
+
+1. When the install finishes, your browser opens to the dashboard at
+   **http://127.0.0.1:8080/** (that address means "this computer," nothing is on
+   the internet). A small window also stays open in the background — that window
+   *is* the dashboard. **Leave it open while you work.**
+2. In the dashboard, click **Launch / Open** next to a tool. It opens in a new
+   browser tab. Use as many tools as you like.
+3. When you're done you can just leave it, or close that small window to stop.
+
+**Re-opening it later (e.g. after you restart your computer):**
+
+Restarting your computer stops the dashboard — this is normal, nothing broke.
+To get it back, pick whichever is easiest:
+
+- **Easiest (macOS / double-click):** open the `bioinformatic_diagnostic_tools`
+  folder and double-click **`Open Dashboard.command`**. Your browser opens to the
+  dashboard again. *(The very first time on macOS, right-click the file → **Open**
+  → **Open** to get past a one-time security prompt. After that, double-click
+  works. Tip: drag it to your Dock or Desktop for one-click access.)*
+- **Or type one line** (Terminal on macOS/Linux, or your WSL window):
+  ```bash
+  cd ~/bioinformatic_diagnostic_tools   # the folder you installed into
+  bin/bdtools dashboard
+  ```
+  This re-opens the dashboard in your browser. To stop it, close that window or
+  press **Control-C**. (If it's already running, this just re-opens the tab.)
+
+You only ever need to remember one thing: **open the dashboard, then click your
+tool.** Single tool instead? `bin/bdtools local <tool> --port 8080`, then open
+http://127.0.0.1:8080/.
 
 ## The five deployment targets
 

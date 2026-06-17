@@ -56,20 +56,39 @@ if [[ -z "${ROOT}" ]]; then
       echo "Where should reference databases be installed?"
       echo "  1) Home    (${HOME_ROOT_DEFAULT})        — just this user"
       echo "  2) Shared  (${SHARED_ROOT_DEFAULT})  — one copy for the whole machine/lab"
-      read -r -p "Choose [1/2] (default 1): " ans
-      case "${ans}" in 2) LOC="shared";; *) LOC="home";; esac
+      echo "  3) Custom  (you type the path)"
+      read -r -p "Choose [1/2/3] (default 1): " ans
+      case "${ans}" in 2) LOC="shared";; 3) LOC="custom";; *) LOC="home";; esac
     else
       LOC="home"   # non-interactive default
     fi
   fi
   case "${LOC}" in
     home)   ROOT="${HOME_ROOT_DEFAULT}";;
-    shared) ROOT="${SHARED_ROOT_DEFAULT}";;
+    # "Shared" is editable: the baked-in /srv/kapurlab path only exists on the
+    # lab servers, so on a laptop/other host let the user point it anywhere.
+    shared) if [[ -t 0 && -t 1 ]]; then
+              read -r -p "Shared location [${SHARED_ROOT_DEFAULT}]: " sp
+              ROOT="${sp:-${SHARED_ROOT_DEFAULT}}"
+            else ROOT="${SHARED_ROOT_DEFAULT}"; fi;;
+    custom) read -r -p "Database directory: " ROOT
+            [[ -n "${ROOT}" ]] || die "no path given";;
   esac
 fi
+ROOT="${ROOT/#\~/${HOME}}"   # expand a leading ~ the user typed
 ROOT="${ROOT%/}"
 log "database root: ${ROOT}"
-[[ ${DRY_RUN} -eq 0 ]] && { mkdir -p "${ROOT}" 2>/dev/null || die "cannot create ${ROOT} (need sudo for a shared root?)"; }
+# Pre-check writability with a plain-language message instead of a raw mkdir
+# error. Walk up to the nearest existing ancestor and test it.
+if [[ ${DRY_RUN} -eq 0 ]]; then
+  _anc="${ROOT}"; while [[ ! -e "${_anc}" && "${_anc}" != "/" ]]; do _anc="$(dirname "${_anc}")"; done
+  if [[ ! -w "${_anc}" ]]; then
+    die "Can't write to ${ROOT} (blocked at ${_anc}).
+    • For a shared location like /srv/..., re-run with sudo, or
+    • choose a folder you own — e.g. your home: bin/bdtools setup-databases --home"
+  fi
+  mkdir -p "${ROOT}" 2>/dev/null || die "could not create ${ROOT}"
+fi
 # Persist the chosen root so vsnp_gui's local build (install-local.sh) and
 # re-runs of this script find the same databases.
 if [[ ${DRY_RUN} -eq 0 ]]; then

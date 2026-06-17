@@ -89,14 +89,26 @@ cmd_install() {
   [[ -x "$script" ]] || die "no installer for mode '${mode}' (${script})"
   # install = build only (never auto-launch); `bdtools local <tool>` launches.
   [[ "${mode}" == "local" ]] && passthru+=(--build-only)
-  local rc=0
+  local rc=0 skipped=()
   for t in "${targets[@]}"; do
-    if ! "$script" "$t" "${passthru[@]}"; then warn "install failed: ${t}"; rc=1; fi
+    if "$script" "$t" "${passthru[@]}"; then :; else
+      local ec=$?
+      if [[ ${ec} -eq 3 ]]; then skipped+=("$t");   # no local-build path (OOD-only) — not a failure
+      else warn "install failed: ${t}"; rc=1; fi
+    fi
   done
+  if [[ ${#skipped[@]} -gt 0 ]]; then
+    warn "skipped (no local install — OOD-only): ${skipped[*]}"
+  fi
 
   # Local installs: tell the user their access point, then open the dashboard.
   if [[ "${mode}" == "local" && ${rc} -eq 0 && ${DRY_RUN:-0} -eq 0 ]]; then
-    local first="${targets[0]}"
+    # Example tool = first target that actually installed locally (skip OOD-only).
+    local first="" t2
+    for t2 in "${targets[@]}"; do
+      [[ " ${skipped[*]} " == *" ${t2} "* ]] || { first="${t2}"; break; }
+    done
+    [[ -n "${first}" ]] || first="mlst_gui"
     echo
     ok "Install complete."
     cat <<EOF

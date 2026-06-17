@@ -117,7 +117,12 @@ build() {
     log "no deploy/install.sh in ${TOOL}; using generic build"
     generic_build
   else
-    die "${TOOL} has no standalone local-build path (no deploy/install.sh, no conda_setup/environment.yml). Its env is built by its OOD installer — use --sandbox or --server."
+    # Not an error: some tools (e.g. vsnp_gui) have no local-build path — their
+    # env + large reference DBs are provisioned only by their OOD installer.
+    # Skip cleanly with a sentinel exit so `install all` isn't marked failed.
+    warn "${TOOL} has no local-build path — its conda env and reference databases are provisioned by its OOD installer, not in local mode."
+    info "  Run it on an OOD deployment: 'bdtools install --sandbox ${TOOL}' (user) or '--server' (admin)."
+    exit 3
   fi
 }
 

@@ -26,6 +26,10 @@ same backend that OOD proxies in production; only the front door differs.
   if it's missing). `genoflu_gui` happens to resolve natively, but all four use
   the Rosetta env for consistency. Force a native attempt with
   `BDTOOLS_NATIVE_ARM=1` (expect solve failures).
+- **`vsnp_gui` is OOD-only** — it has no local-build path (its env + multi-GB
+  TB/Brucella reference sets are provisioned by its OOD installer). `bdtools
+  install --local` skips it cleanly; the other seven GUIs install locally. Run
+  vsnp_gui via the OOD paths (`--sandbox` / `--server`).
 - **Windows** — use **WSL2** (a real Linux). Install miniforge *inside* WSL2 and
   run the commands there; WSL2 forwards `localhost` to your Windows browser, so
   the Web GUI opens normally on Windows. (Native Windows is not supported because

@@ -86,6 +86,13 @@ say, ask which tool(s) they want. The tools are: `vsnp_gui`, `amr_plus_gui`,
 `irma_gui`, `genoflu_gui`, `mlst_gui`, `kraken_id_parse_gui`, `ksnp_gui`,
 `ncbi_submit_gui`.
 
+> **`vsnp_gui` is OOD-only.** It has no local-build path — its conda env and its
+> large TB/Brucella reference sets are provisioned only by its OOD installer. In
+> `--local` mode `bdtools install` **skips it cleanly** (not a failure; `install
+> all` stays green and still shows the dashboard). The other seven GUIs install
+> locally. To run vsnp_gui, use `--sandbox` (OOD user) or `--server` (OOD admin).
+> This is expected — report it as a skip, don't treat it as broken.
+
 ---
 
 ## 3. Reference databases

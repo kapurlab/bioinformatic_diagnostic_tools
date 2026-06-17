@@ -127,14 +127,25 @@ build_vsnp_local() {
   # 3. Kapur Lab vsnp3 patches (idempotent; safe on the packaged version)
   [[ -x "${DIR}/deploy/vsnp3-patches/apply.sh" ]] && \
     { run "${DIR}/deploy/vsnp3-patches/apply.sh" "${DIR}/env" || warn "vsnp3 patch step reported an issue (continuing)"; }
-  # 4. reference_options (USDA-VS) + register the path vsnp3 reads at runtime
-  local refs="${BDTOOLS_HOME}/vsnp3-refs/vSNP_reference_options"
-  if [[ -n "$(ls -A "${refs}" 2>/dev/null)" ]]; then
-    ok "reference options present: ${refs}"
+  # 4. reference_options (USDA-VS) + register the path vsnp3 reads at runtime.
+  #    Prefer a database-setup-managed reference set (bdtools setup-databases
+  #    writes BDTOOLS_HOME/db-root) so we don't clone a second copy; otherwise
+  #    fall back to a vsnp_gui-private clone.
+  local refs db_root="" vsnp_deps=""
+  [[ -f "${BDTOOLS_HOME}/db-root" ]] && db_root="$(cat "${BDTOOLS_HOME}/db-root" 2>/dev/null || true)"
+  if [[ -n "${db_root}" && -n "$(ls -A "${db_root}/vsnp3/reference_options" 2>/dev/null)" ]]; then
+    refs="${db_root}/vsnp3/reference_options"
+    ok "using database-setup reference options: ${refs}"
+    [[ -d "${db_root}/vsnp3/vsnp_dependencies" ]] && vsnp_deps="${db_root}/vsnp3/vsnp_dependencies"
   else
-    log "downloading vSNP reference options (USDA-VS) -> ${refs}"
-    run mkdir -p "$(dirname "${refs}")"
-    run git clone --depth 1 "${VSNP_REFS_REPO}" "${refs}"
+    refs="${BDTOOLS_HOME}/vsnp3-refs/vSNP_reference_options"
+    if [[ -n "$(ls -A "${refs}" 2>/dev/null)" ]]; then
+      ok "reference options present: ${refs}"
+    else
+      log "downloading vSNP reference options (USDA-VS) -> ${refs}"
+      run mkdir -p "$(dirname "${refs}")"
+      run git clone --depth 1 "${VSNP_REFS_REPO}" "${refs}"
+    fi
   fi
   # 4b. Local "site root" so the GUI backend (config.py keys everything off
   #     VSNP_GUI_SITE_ROOT, default /srv/kapurlab) resolves the reference root,
@@ -150,6 +161,9 @@ build_vsnp_local() {
     local refpath="${site}/refs/vsnp3/reference_options"
     mkdir -p "${site}/tools/vsnp3/dependencies"
     grep -qxF "${refpath}" "${rop}" 2>/dev/null || { echo "${refpath}" >> "${rop}"; }
+    # Register the USDA vsnp_dependencies reference set too, when database-setup
+    # provided it (extra references like the Brucella/MTBC test references).
+    [[ -n "${vsnp_deps}" ]] && { grep -qxF "${vsnp_deps}" "${rop}" 2>/dev/null || echo "${vsnp_deps}" >> "${rop}"; }
     ok "configured local vsnp site: ${site} (references + vcf_db_folders + env link)"
     info "  Step 2's curated VCF databases are lab-private and are NOT downloaded; add your own"
     info "  VCF folders under ${site}/refs/vsnp3/vcf_db_folders or via the GUI settings."

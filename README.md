@@ -97,6 +97,65 @@ You only ever need to remember one thing: **open the dashboard, then click your
 tool.** Single tool instead? `bin/bdtools local <tool> --port 8080`, then open
 http://127.0.0.1:8080/.
 
+## Reference databases
+
+A few tools need large third-party **reference databases** that aren't shipped
+with the code (they're tens of GB and maintained upstream). The installer
+**offers to set these up for you** at the end of a local install — just answer
+**y** when asked. You can also run it anytime:
+
+```bash
+bin/bdtools setup-databases
+```
+
+It first asks **where** to put the databases:
+
+- **Home** (`~/databases`) — a personal copy, good for a laptop.
+- **Shared** (`/srv/kapurlab/databases`) — one copy the whole machine/lab uses.
+
+then downloads each database and **points the relevant GUIs at it automatically**
+(no manual path editing). Re-running is safe — anything already present is
+skipped. Restart a running tool afterward to pick up the new paths:
+`bin/bdtools dashboard --restart`.
+
+| Database | Used by | Installs to | Source |
+|---|---|---|---|
+| Kraken2 `k2_standard_08gb` (~8 GB) | kraken_id_parse_gui | `<root>/kraken2/k2_standard_08gb` | [genome-idx.s3](https://genome-idx.s3.amazonaws.com/kraken/k2_standard_08_GB_20260226.tar.gz) |
+| BLAST `ref_prok_rep_genomes` | kraken_id_parse_gui | `<root>/blast/ref_prok_rep_genomes` | NCBI (`update_blastdb.pl`) |
+| vSNP reference options | vsnp_gui | `<root>/vsnp3/reference_options` | [USDA-VS/vSNP_reference_options](https://github.com/USDA-VS/vSNP_reference_options) |
+| vsnp dependencies | vsnp_gui | `<root>/vsnp3/vsnp_dependencies` | [USDA-VS/vsnp3_test_dataset](https://github.com/USDA-VS/vsnp3_test_dataset) (`vsnp_dependencies/`) |
+
+Set up only some of them by naming which: `bin/bdtools setup-databases kraken vsnp-refs`
+(choices: `kraken blast vsnp-refs vsnp-deps`). Pick the location non-interactively
+with `--home`, `--shared`, or `--root DIR`.
+
+**Doing it by hand instead.** If you'd rather manage the databases yourself,
+download them to any location and set the path in each tool's **Settings** page
+(or its `~/.config/<tool>/config.json`):
+
+```bash
+# Kraken2 (kraken_id_parse_gui → config key "kraken_db")
+mkdir -p ~/databases/kraken2/k2_standard_08gb
+curl -fL https://genome-idx.s3.amazonaws.com/kraken/k2_standard_08_GB_20260226.tar.gz \
+  | tar -xz -C ~/databases/kraken2/k2_standard_08gb
+
+# BLAST ref_prok_rep_genomes (kraken_id_parse_gui → config key "blast_db")
+mkdir -p ~/databases/blast && cd ~/databases/blast
+update_blastdb.pl --decompress ref_prok_rep_genomes   # ships with the kraken_id_parse_gui env
+
+# vSNP reference options (vsnp_gui → Reference Locations / "vsnp3_reference_options_root")
+git clone --depth 1 https://github.com/USDA-VS/vSNP_reference_options.git \
+  ~/databases/vsnp3/reference_options
+
+# vsnp dependencies (vsnp_gui → add as a Reference Location)
+git clone --depth 1 https://github.com/USDA-VS/vsnp3_test_dataset.git /tmp/vsnp3_test_dataset
+mv /tmp/vsnp3_test_dataset/vsnp_dependencies ~/databases/vsnp3/vsnp_dependencies
+```
+
+> The curated Step-2 **VCF databases** in vsnp_gui (e.g. `mtbc0_v1.1`) are
+> lab-private and are not part of this setup — add them under
+> `vcf_db_folders` in vsnp_gui's settings if you have access to them.
+
 ## Installing on Open OnDemand (HPC)
 
 The same `bdtools` CLI installs onto an Open OnDemand cluster — but **not** with

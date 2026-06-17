@@ -100,14 +100,31 @@ say, ask which tool(s) they want. The tools are: `vsnp_gui`, `amr_plus_gui`,
 
 ## 3. Reference databases
 
-Some tools need large external reference databases that are **not** auto-staged:
-- `kraken_id_parse_gui`, `amr_plus_gui` → a Kraken2 DB (and BLAST DB for kraken).
-- `vsnp_gui` → vsnp3 references.
+Some tools need large external reference databases that are **not** bundled:
+- `kraken_id_parse_gui` → Kraken2 `k2_standard_08gb` + BLAST `ref_prok_rep_genomes`.
+- `vsnp_gui` → vSNP reference options + vsnp dependencies.
 
-The other tools (`mlst_gui`, `ksnp_gui`, `genoflu_gui`, `irma_gui`) bundle their
-references in their conda env and need no download. If a DB-dependent tool's
-install or validation fails for a missing DB, tell the user exactly which DB and
-where it's configured — do not download multi-GB databases without asking.
+`bdtools setup-databases` downloads these and wires each GUI's config to them.
+**Ask the user whether to set them up, and where** (they're tens of GB):
+
+```bash
+bin/bdtools setup-databases --home      # ~/databases (per-user laptop)
+bin/bdtools setup-databases --shared    # /srv/kapurlab/databases (whole machine/lab)
+```
+
+A local `bdtools install` already prompts for this interactively at the end; in
+an agent/non-interactive run, ask the user first, then run the command with the
+chosen location. Name specific DBs to limit scope:
+`bin/bdtools setup-databases kraken vsnp-refs` (`kraken blast vsnp-refs vsnp-deps`).
+Re-running is safe (present DBs are skipped).
+
+The other diagnostic GUIs (`mlst_gui`, `ksnp_gui`, `genoflu_gui`, `irma_gui`)
+bundle their references in their conda env and need no download
+(`amr_plus_gui` manages its own AMRFinder DB, separate from `setup-databases`). The
+curated Step-2 VCF databases in `vsnp_gui` (e.g. `mtbc0_v1.1`) are lab-private
+and not part of `setup-databases`. If a DB-dependent tool's install or validation
+fails for a missing DB, tell the user exactly which DB and offer
+`setup-databases` — do not download multi-GB databases without asking.
 
 ---
 

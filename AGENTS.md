@@ -98,25 +98,32 @@ say, ask which tool(s) they want. The tools are: `vsnp_gui`, `amr_plus_gui`,
 
 ---
 
-## 3. Reference databases
+## 3. Reference databases — REQUIRED install step (don't skip)
 
 Some tools need large external reference databases that are **not** bundled:
 - `kraken_id_parse_gui` → Kraken2 `k2_standard_08gb` + BLAST `ref_prok_rep_genomes`.
 - `vsnp_gui` → vSNP reference options + vsnp dependencies.
 
-`bdtools setup-databases` downloads these and wires each GUI's config to them.
-**Ask the user whether to set them up, and where** (they're tens of GB):
+**You (the agent) MUST handle this — the installer cannot.** `bdtools install`'s
+own database prompt only fires on an interactive TTY; when you run `bdtools` as a
+subprocess it is NOT a TTY, so that prompt is skipped and the databases are left
+unset (tools then fail at run time for a missing DB). So after installing, do
+this yourself as a step in the flow:
+
+1. **Ask the user** whether to set up the databases and **where** — they're tens
+   of GB: Home (`~/databases`, a laptop) or Shared (`/srv/kapurlab/databases`,
+   one copy for the machine/lab). Ask in the chat; do not assume.
+2. Run it with their choice (re-running is safe — present DBs are skipped):
 
 ```bash
 bin/bdtools setup-databases --home      # ~/databases (per-user laptop)
 bin/bdtools setup-databases --shared    # /srv/kapurlab/databases (whole machine/lab)
+bin/bdtools setup-databases --root DIR  # a custom location
 ```
 
-A local `bdtools install` already prompts for this interactively at the end; in
-an agent/non-interactive run, ask the user first, then run the command with the
-chosen location. Name specific DBs to limit scope:
-`bin/bdtools setup-databases kraken vsnp-refs` (`kraken blast vsnp-refs vsnp-deps`).
-Re-running is safe (present DBs are skipped).
+Name specific DBs to limit scope: `bin/bdtools setup-databases kraken vsnp-refs`
+(`kraken blast vsnp-refs vsnp-deps`). Then run `bdtools doctor` (§3a) — any tool
+still showing a missing DB means this step was skipped or a download failed.
 
 The other diagnostic GUIs (`mlst_gui`, `ksnp_gui`, `genoflu_gui`, `irma_gui`)
 bundle their references in their conda env and need no download
@@ -212,8 +219,11 @@ bin/bdtools local <tool> --port 8080   # then open http://127.0.0.1:8080/
 > tool servers keep running old code until restarted (closing the browser doesn't
 > stop them).
 
-On a personal machine the standard build flow is **install → validate → dashboard**:
-`bdtools install <tool|all>` (prints the access point), `bdtools test all`
-(report PASS/FAIL/SKIP), then `bdtools dashboard` (or tell the user the command).
+On a personal machine the standard build flow is
+**install → set up databases (§3) → doctor (§3a) → validate → dashboard**:
+`bdtools install <tool|all>` (prints the access point), then **ask the user and
+run `bdtools setup-databases`** (§3 — the installer can't prompt for this from an
+agent), `bdtools doctor` (confirm all ✓), `bdtools test all` (report
+PASS/FAIL/SKIP), then `bdtools dashboard` (or tell the user the command).
 On an OOD deployment the access point is the institution's OOD dashboard, where
 the production tool cards now appear.

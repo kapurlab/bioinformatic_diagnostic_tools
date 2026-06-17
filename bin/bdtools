@@ -144,6 +144,13 @@ EOF
       else
         info "Skipped. Set them up anytime with:  bin/bdtools setup-databases"
       fi
+    else
+      # Non-interactive (e.g. a Claude agent runs bdtools as a subprocess, so
+      # stdin isn't a TTY and we can't prompt). Don't silently skip — make the
+      # next step explicit so it's surfaced in the agent's output and acted on.
+      echo
+      warn "Reference databases (Kraken2, BLAST, vSNP) are NOT set up yet — some tools need them."
+      info "  ACTION: run  bin/bdtools setup-databases   (asks Home vs Shared), or pass --home / --shared."
     fi
     # Readiness summary: confirm each install can actually run, with fixes for
     # anything missing (a dependency or an un-set-up database). Non-fatal.

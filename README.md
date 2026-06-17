@@ -265,6 +265,21 @@ results were established. These are the suite's diagnostic-validation baseline.
 
 ## Troubleshooting (local installs)
 
+**First stop for any "it won't run" problem — ask the doctor.** It checks every
+installed tool (its environment, the programs it needs, and its reference
+databases) and prints, in plain language, exactly what to run to fix anything
+that's wrong:
+
+```bash
+bin/bdtools doctor               # all installed tools
+bin/bdtools doctor vsnp_gui      # just one
+```
+
+A healthy tool shows all ✓; anything broken shows a ✗ with the fix command right
+under it (e.g. `bin/bdtools setup-databases kraken` for a missing database, or
+`bin/bdtools update <tool>` to rebuild an incomplete environment). The installer
+runs this for you at the end of an install, too.
+
 **After updating, the tools still behave like the old version.** The dashboard
 and any open tools keep running until you stop them — closing the browser tab
 does *not* stop the servers. After a `git pull`, restart them so the new code

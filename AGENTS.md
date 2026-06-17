@@ -128,6 +128,23 @@ fails for a missing DB, tell the user exactly which DB and offer
 
 ---
 
+## 3a. Check an install is runnable — `bdtools doctor`
+
+After installing (and after `setup-databases`), run the readiness check. It
+verifies each installed tool's env, the programs it shells out to, and its
+databases — and prints the exact fix for anything missing. The installer runs
+it automatically at the end; run it on demand when diagnosing a problem:
+
+```bash
+bin/bdtools doctor            # all installed tools
+bin/bdtools doctor <tool>     # one tool
+```
+
+A non-zero exit means something needs attention; relay the ✗ lines and their
+suggested fix commands to the user verbatim — they're written for non-technical
+users. The per-tool contract lives in `bin/lib/requirements.py` (modules,
+binaries, databases); extend it when a tool gains a dependency.
+
 ## 4. Update an existing install
 
 ```bash

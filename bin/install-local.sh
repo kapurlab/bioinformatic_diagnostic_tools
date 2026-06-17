@@ -290,6 +290,20 @@ fi
 
 [[ ${DO_BUILD} -eq 1 ]]  && build
 
+# Self-check the env we just built: confirm the tool's required python modules
+# import and its programs are on PATH (scope=env skips database checks — those
+# are handled by `bdtools setup-databases`). This turns a silent-but-broken env
+# (e.g. a missing 'humanize' that would crash mid-run) into an actionable
+# message at install time. Non-fatal: a usable-but-incomplete install is still
+# worth launching, and `bdtools doctor` gives the authoritative report.
+if [[ ${DO_BUILD} -eq 1 && ${DRY_RUN} -eq 0 ]] && have_python; then
+  py_chk="$(resolve_python 2>/dev/null || true)"
+  if [[ -n "${py_chk}" ]] && ! python3 "${KT_BIN_DIR}/lib/check.py" \
+        --tool "${TOOL}" --dir "${DIR}" --python "${py_chk}" --scope env; then
+    warn "${TOOL}: the build finished but the self-check above found problems — run the suggested fix."
+  fi
+fi
+
 # Heads-up for tools with Linux-only vendored binaries (e.g. ksnp_gui's kSNP4):
 # they install fine but the analysis can't run off Linux (Rosetta translates
 # macOS x86_64, not Linux ELF).

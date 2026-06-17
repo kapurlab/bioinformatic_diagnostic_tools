@@ -15,6 +15,7 @@
 #   bdtools update  <tool|all> [opts]   move a tool to its latest version
 #   bdtools site-init [opts]            one-time bare-metal site bootstrap
 #   bdtools setup-databases [opts]      download shared reference DBs + wire the GUIs
+#   bdtools doctor  [tool ...]          check installs are runnable; print fixes
 #   bdtools test    <tool|all> [opts]   validate a deployment on a known sample
 #
 # Install modes (pass to `install`):
@@ -143,6 +144,10 @@ EOF
         info "Skipped. Set them up anytime with:  bin/bdtools setup-databases"
       fi
     fi
+    # Readiness summary: confirm each install can actually run, with fixes for
+    # anything missing (a dependency or an un-set-up database). Non-fatal.
+    echo; info "checking your installs are ready to run…"
+    "${KT_BIN_DIR}/doctor.sh" || true
     if [[ ${no_dashboard} -eq 0 && -t 1 ]]; then
       echo; info "opening the dashboard (Ctrl-C to stop; re-open later with 'bin/bdtools dashboard')…"
       cmd_dashboard
@@ -192,6 +197,8 @@ cmd_site_init() { "${KT_BIN_DIR}/site-init.sh" "$@"; }
 
 cmd_setup_databases() { "${KT_BIN_DIR}/setup-databases.sh" "$@"; }
 
+cmd_doctor() { "${KT_BIN_DIR}/doctor.sh" "$@"; }
+
 cmd_test() {
   [[ $# -ge 1 ]] || die "usage: bdtools test <tool|all> [--record] [--keep]"
   "${KT_BIN_DIR}/test.sh" "$@"
@@ -210,6 +217,7 @@ main() {
     update)             cmd_update "$@";;
     site-init)          cmd_site_init "$@";;
     setup-databases)    cmd_setup_databases "$@";;
+    doctor)             cmd_doctor "$@";;
     test)               cmd_test "$@";;
     -h|--help|help)     usage;;
     *) die "unknown command: ${cmd} (see: bdtools --help)";;

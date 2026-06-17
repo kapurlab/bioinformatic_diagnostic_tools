@@ -27,15 +27,10 @@ cd bioinformatic_diagnostic_tools
 claude "Follow AGENTS.md to install the Kapur Lab diagnostic tools suite on this system."
 ```
 
-> **Approving steps vs. running hands-off:** by default the agent pauses to ask
-> permission before running install commands — click **Allow** (or *Allow for
-> this session*) to approve each one. To run the whole install **without** being
-> prompted, add `--dangerously-skip-permissions`:
-> ```bash
-> claude --dangerously-skip-permissions "Follow AGENTS.md to install the Kapur Lab diagnostic tools suite on this system."
-> ```
-> Don't use `-p` for this — that's headless/print mode, which can't answer the
-> install's approval prompts and will stall.
+> **You'll be asked to approve steps.** The agent pauses for permission before
+> running install commands — click **Allow** (or *Allow for this session*) to
+> approve each one. (Don't add `-p` — that's headless/print mode, which can't
+> answer these prompts and will stall.)
 
 The agent figures out whether you're on a personal computer, an Open OnDemand
 cluster (as a user or an admin), and installs accordingly — production build

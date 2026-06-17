@@ -231,20 +231,29 @@ pulled. If you don't care about local edits at all, `git fetch origin && git
 reset --hard origin/main` forces an exact match; your downloaded data and conda
 envs live outside the repo and are untouched.)
 
-**vsnp_gui Step 1 fails: "reference folder not found: /srv/kapurlab/refs/…".**
-You're on an older build or a stale server/config that points at the lab server
-instead of your machine. Update and rebuild:
+**vsnp_gui Step 1 fails: "reference folder not found: …".** Get the latest
+vsnp_gui, then restart:
 
 ```bash
 git stash && git pull
-bin/bdtools install vsnp_gui          # must print: "configured local vsnp site: …/vsnp3-site"
+bin/bdtools update vsnp_gui           # moves to v0.2.1+ (env preserved)
 rm -f ~/.config/vsnp_gui/config.json  # clears any frozen /srv paths (rebuilt correctly on next launch)
 bin/bdtools dashboard --restart
 ```
 
-Then run Step 1 with **`Mycobacterium_H37`** (M. tuberculosis) or
-**`Mycobacterium_AF2122`** (M. bovis). `mtbc0_v1.1` is a lab-private reference and
-is not in the public set.
+Which path is in the error tells you which case it is:
+- **`/srv/kapurlab/refs/…`** — an old build/config pointing at the lab server.
+  The `update` + config reset above fixes it. (If you build by hand, the install
+  must print `configured local vsnp site: …/vsnp3-site`.)
+- **`…/vsnp3-site/refs/…/<your-reference>`** — the reference lives in a folder you
+  added under **Reference Locations**, not the default set. vsnp_gui **v0.2.1+**
+  searches all your added locations; `bin/bdtools update vsnp_gui` gets it.
+
+Built-in references for Step 1: **`Mycobacterium_H37`** (M. tuberculosis) or
+**`Mycobacterium_AF2122`** (M. bovis). `mtbc0_v1.1` isn't in the public set — to
+use it, add the folder that contains it under **Reference Locations** (e.g. a
+downloaded vsnp3 test dataset's `vsnp_dependencies`) and make sure you're on
+v0.2.1+.
 
 **Nothing happens when I double-click `Open Dashboard.command` (macOS).** The
 first time, right-click it → **Open** → **Open** to clear the one-time security

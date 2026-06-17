@@ -101,61 +101,75 @@ def check_db(tool, db):
     return ok, val
 
 
+def run_checks(tool, env_py, scope):
+    """Return (status, lines, issues). status: 'ok'|'issues'|'skip'.
+    lines: pretty (symbol, text, fix-or-None) tuples. issues: [{label, fix}]."""
+    spec = requirements.for_tool(tool)
+    lines, issues = [], []
+    default_fix = spec.get("fix", f"bin/bdtools update {tool}")
+
+    want_os = spec.get("os")
+    sysname = "linux" if platform.system() == "Linux" else (
+        "macos" if platform.system() == "Darwin" else platform.system().lower())
+    if want_os and want_os != sysname:
+        return "skip", [(SKIP, f"not supported on {sysname} (requires {want_os}); skipping", None)], []
+
+    env_py = (env_py or "").strip()
+    if not env_py or not Path(env_py).exists():
+        fix = f"bin/bdtools install {tool}"
+        issues.append({"label": "environment not built", "fix": fix})
+        return "issues", [(BAD, "environment not built", fix)], issues
+    env_bin = str(Path(env_py).parent)
+    lines.append((OK, "environment present", None))
+
+    missing = check_modules(env_py, spec.get("modules", []))
+    if missing:
+        lines.append((BAD, f"python modules missing: {', '.join(missing)}", default_fix))
+        issues.append({"label": f"missing modules: {', '.join(missing)}", "fix": default_fix})
+    elif spec.get("modules"):
+        lines.append((OK, f"python modules ({len(spec['modules'])}) import", None))
+
+    missing_bin = [b for b in spec.get("binaries", []) if not has_binary(b, env_bin)]
+    if missing_bin:
+        lines.append((BAD, f"programs not found: {', '.join(missing_bin)}", default_fix))
+        issues.append({"label": f"missing programs: {', '.join(missing_bin)}", "fix": default_fix})
+    elif spec.get("binaries"):
+        lines.append((OK, f"programs ({len(spec['binaries'])}) on PATH", None))
+
+    if scope == "all":
+        for db in spec.get("databases", []):
+            ok, detail = check_db(tool, db)
+            if ok:
+                lines.append((OK, db["label"], None))
+            else:
+                lines.append((BAD, f"{db['label']} missing {detail}", db["fix"]))
+                issues.append({"label": f"{db['label']} missing", "fix": db["fix"]})
+
+    return ("issues" if issues else "ok"), lines, issues
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--tool", required=True)
     ap.add_argument("--dir", required=True)
     ap.add_argument("--python", default="")
     ap.add_argument("--scope", choices=["env", "all"], default="all")
+    ap.add_argument("--json", action="store_true")
     args = ap.parse_args()
 
-    spec = requirements.for_tool(args.tool)
-    failures = 0
+    status, lines, issues = run_checks(args.tool, args.python, args.scope)
+
+    if args.json:
+        print(json.dumps({"tool": args.tool, "status": status,
+                          "ok": status != "issues", "issues": issues}))
+        return 1 if status == "issues" else 0
+
     print(f"{B}{args.tool}{X}")
-
-    # Platform gate (e.g. ksnp_gui is Linux-only).
-    want_os = spec.get("os")
-    sysname = "linux" if platform.system() == "Linux" else (
-        "macos" if platform.system() == "Darwin" else platform.system().lower())
-    if want_os and want_os != sysname:
-        print(f"  {SKIP} not supported on {sysname} (requires {want_os}); skipping checks")
-        return 0
-
-    env_py = args.python.strip()
-    if not env_py or not Path(env_py).exists():
-        print(f"  {BAD} environment not built")
-        print(f"      fix: bin/bdtools install {args.tool}")
-        return 1
-    env_bin = str(Path(env_py).parent)
-    print(f"  {OK} environment present")
-
-    missing = check_modules(env_py, spec.get("modules", []))
-    if missing:
-        failures += 1
-        print(f"  {BAD} python modules missing: {', '.join(missing)}")
-        print(f"      fix: {spec.get('fix', 'bin/bdtools update ' + args.tool)}")
-    elif spec.get("modules"):
-        print(f"  {OK} python modules ({len(spec['modules'])}) import")
-
-    missing_bin = [b for b in spec.get("binaries", []) if not has_binary(b, env_bin)]
-    if missing_bin:
-        failures += 1
-        print(f"  {BAD} programs not found: {', '.join(missing_bin)}")
-        print(f"      fix: {spec.get('fix', 'bin/bdtools update ' + args.tool)}")
-    elif spec.get("binaries"):
-        print(f"  {OK} programs ({len(spec['binaries'])}) on PATH")
-
-    if args.scope == "all":
-        for db in spec.get("databases", []):
-            ok, detail = check_db(args.tool, db)
-            if ok:
-                print(f"  {OK} {db['label']}")
-            else:
-                failures += 1
-                print(f"  {BAD} {db['label']} missing {detail}")
-                print(f"      fix: {db['fix']}")
-
-    return 1 if failures else 0
+    for sym, text, fix in lines:
+        print(f"  {sym} {text}")
+        if fix:
+            print(f"      fix: {fix}")
+    return 1 if status == "issues" else 0
 
 
 if __name__ == "__main__":

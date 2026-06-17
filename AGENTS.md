@@ -145,6 +145,13 @@ suggested fix commands to the user verbatim — they're written for non-technica
 users. The per-tool contract lives in `bin/lib/requirements.py` (modules,
 binaries, databases); extend it when a tool gains a dependency.
 
+**Maintainer guardrail — `bdtools lint`.** Before tagging a release, run
+`bin/bdtools lint`: it statically compares each tool's actual imports + invoked
+programs against its declared dependencies (`environment.yml`, `requirements.txt`,
+`requirements.py`) and flags drift — the "code uses a package the env doesn't
+ship" bug (a `✗` is high-confidence; a `!` is advisory). Fix a `✗` by adding the
+dependency to that tool's `environment.yml`, then cut the release.
+
 ## 4. Update an existing install
 
 ```bash

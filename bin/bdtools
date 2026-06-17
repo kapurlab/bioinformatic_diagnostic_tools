@@ -16,6 +16,7 @@
 #   bdtools site-init [opts]            one-time bare-metal site bootstrap
 #   bdtools setup-databases [opts]      download shared reference DBs + wire the GUIs
 #   bdtools doctor  [tool ...]          check installs are runnable; print fixes
+#   bdtools lint    [tool ...]          (maintainer) flag dependency drift in repos
 #   bdtools test    <tool|all> [opts]   validate a deployment on a known sample
 #
 # Install modes (pass to `install`):
@@ -199,6 +200,8 @@ cmd_setup_databases() { "${KT_BIN_DIR}/setup-databases.sh" "$@"; }
 
 cmd_doctor() { "${KT_BIN_DIR}/doctor.sh" "$@"; }
 
+cmd_lint() { "${KT_BIN_DIR}/lint.sh" "$@"; }
+
 cmd_test() {
   [[ $# -ge 1 ]] || die "usage: bdtools test <tool|all> [--record] [--keep]"
   "${KT_BIN_DIR}/test.sh" "$@"
@@ -218,6 +221,7 @@ main() {
     site-init)          cmd_site_init "$@";;
     setup-databases)    cmd_setup_databases "$@";;
     doctor)             cmd_doctor "$@";;
+    lint)               cmd_lint "$@";;
     test)               cmd_test "$@";;
     -h|--help|help)     usage;;
     *) die "unknown command: ${cmd} (see: bdtools --help)";;

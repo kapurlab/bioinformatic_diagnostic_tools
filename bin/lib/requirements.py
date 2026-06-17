@@ -23,7 +23,11 @@ _WEB = ["fastapi", "uvicorn", "pydantic"]
 
 REQUIREMENTS = {
     "kraken_id_parse_gui": {
-        "modules": _WEB + ["humanize", "Bio", "pandas", "allel", "numpy"],
+        "modules": _WEB + ["humanize", "Bio", "pandas", "allel", "numpy",
+                           "pysam", "yaml", "svgwrite", "cairosvg", "PIL"],
+        # playwright is an optional PDF renderer with a fallback — not installed
+        # even in prod, so don't flag it as missing.
+        "optional_imports": ["playwright"],
         "binaries": ["kraken2", "seqkit", "blastn", "bwa", "spades.py",
                      "bracken", "samtools", "picard", "freebayes", "pigz"],
         "fix": "bin/bdtools update kraken_id_parse_gui   # rebuilds the env",
@@ -40,7 +44,7 @@ REQUIREMENTS = {
     },
     "vsnp_gui": {
         "modules": _WEB,
-        "binaries": ["vsnp3_step1.py", "snp-dists", "bcftools", "samtools"],
+        "binaries": ["vsnp3_step1.py", "vsnp3_step2.py", "snp-dists", "bcftools", "samtools"],
         "fix": "bin/bdtools update vsnp_gui   # rebuilds the vsnp3 env",
         "databases": [
             {"label": "vSNP reference options", "config_key": "vsnp3_reference_options_root",

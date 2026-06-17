@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# lint.sh — maintainer guardrail: flag dependency drift across the tool repos.
+#
+# For each tool checkout, statically compares the dependencies its code actually
+# uses (python imports + programs it shells out to) against what its env spec
+# declares (environment.yml, requirements.txt, requirements.py). Catches the
+# "code grew a dependency the env doesn't ship" bug at release time instead of
+# on a user's fresh machine. No env build — fast enough for CI / pre-release.
+#
+#   lint.sh [tool ...]      (default: every tool with a checkout)
+set -uo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
+
+ONLY=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help) sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
+    *) ONLY+=("$1"); shift;;
+  esac
+done
+targets() { if [[ ${#ONLY[@]} -gt 0 ]]; then printf '%s\n' "${ONLY[@]}"; else manifest_names; fi; }
+
+issues=0; checked=0
+while read -r name; do
+  [[ -n "$name" ]] || continue
+  manifest_has "$name" || { warn "unknown tool: $name"; continue; }
+  dir="$(tool_dir "$name")"
+  if [[ ! -d "${dir}" ]]; then
+    [[ ${#ONLY[@]} -gt 0 ]] && echo "${name}: no checkout at ${dir}"
+    continue
+  fi
+  checked=$((checked + 1))
+  python3 "${KT_BIN_DIR}/lib/lint.py" --tool "$name" --dir "${dir}" || issues=$((issues + 1))
+done < <(targets)
+
+echo
+if [[ ${checked} -eq 0 ]]; then warn "no tool checkouts found to lint."; exit 0; fi
+if [[ ${issues} -gt 0 ]]; then
+  warn "${issues} tool(s) have possible dependency drift. A ✗ is very likely a real gap"
+  warn "(add it to that tool's environment.yml); a ! is advisory — confirm before acting."
+  exit 1
+fi
+ok "no dependency drift across ${checked} tool(s)."

@@ -100,6 +100,20 @@ def tool_python(name):
     return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else None
 
 
+def readiness_map():
+    """Run `bdtools doctor --json` and return {name: {"ok", "issues"}}.
+
+    Used to badge tools that are installed but can't actually run yet (missing
+    dependency or un-set-up database). Best-effort: on any failure we return {}
+    and the UI simply shows no readiness badge."""
+    try:
+        r = subprocess.run([BDTOOLS, "doctor", "--json"], cwd=str(REPO_DIR),
+                           capture_output=True, text=True, timeout=180)
+        return {t["tool"]: t for t in json.loads(r.stdout or "[]")}
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return {}
+
+
 class Suite:
     """Tracks installed tools and any tool servers this dashboard has launched."""
 
@@ -110,13 +124,20 @@ class Suite:
         self.refresh()
 
     def refresh(self):
+        ready = readiness_map()
         tools = []
         for name in list_tools():
+            installed = tool_python(name) is not None
+            r = ready.get(name)
             tools.append({
                 "name": name,
                 "label": pretty(name),
                 "blurb": BLURB.get(name, ""),
-                "installed": tool_python(name) is not None,
+                "installed": installed,
+                # ready is None when readiness is unknown (doctor unavailable or
+                # tool has no spec); the UI only badges an explicit False.
+                "ready": (r["ok"] if r else None) if installed else None,
+                "issues": (r["issues"] if r else []) if installed else [],
             })
         with self.lock:
             self.tools = tools
@@ -186,26 +207,49 @@ PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
  button.open{background:var(--accent2)}
  .pill{font-size:12px;padding:2px 9px;border-radius:999px;background:#efe9df;color:var(--muted)}
  .pill.on{background:#e2efe4;color:#3f6b48}
+ .pill.warn{background:#fbedd6;color:#9a6212}
  .note{padding:0 24px;color:var(--muted);font-size:13px}
  a.foot{color:var(--accent)}
  .err{color:#b23b2e;font-size:12px;min-height:14px}
+ .setup{background:#fbf5ea;border:1px solid #f0e2c8;border-radius:8px;padding:8px 10px;
+   font-size:12px;color:#7a5a1e}
+ .setup b{color:#6b4f1a}
+ .setup code{background:#f3e7cf;padding:1px 5px;border-radius:4px;
+   font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;
+   user-select:all;word-break:break-all}
+ .recheck{padding:0 24px 12px;font-size:13px}
+ .recheck button{background:transparent;color:var(--accent);padding:4px 0;font-weight:600}
 </style></head><body>
 <header><h1>Kapur Lab Diagnostic Tools</h1>
 <p class="sub">Pick a tool to launch it on this machine. Each opens in a new tab.</p></header>
 <div id="grid" class="grid"></div>
+<p class="recheck" id="recheck" style="display:none"><button onclick="recheck(this)">↻ Re-check readiness</button></p>
 <p class="note" id="note"></p>
 <script>
+function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+function setupBlock(t){
+  // Installed but not runnable yet: list what's missing + the fix commands.
+  if(!t.installed || t.ready!==false || !(t.issues&&t.issues.length)) return '';
+  const items = t.issues.map(i=>`<div>• ${esc(i.label)} — <code>${esc(i.fix)}</code></div>`).join('');
+  return `<div class="setup"><b>Needs setup before it can run:</b>${items}</div>`;
+}
 async function load(){
   const r = await fetch('./api/tools'); const tools = await r.json();
   const g = document.getElementById('grid'); g.innerHTML='';
-  let anyInstalled=false;
+  let anyInstalled=false, anyIssues=false;
   for(const t of tools){
     if(t.installed) anyInstalled=true;
+    const needs = t.installed && t.ready===false;
+    if(needs) anyIssues=true;
     const c=document.createElement('div'); c.className='card';
+    const pill = t.running ? `<span class="pill on">running</span>`
+      : needs ? `<span class="pill warn">needs setup</span>`
+      : `<span class="pill">${t.installed?'installed':'not installed'}</span>`;
     c.innerHTML = `<div class="name">${t.label}</div>
       <div class="blurb">${t.blurb||''}</div>
+      ${setupBlock(t)}
       <div class="row">
-        <span class="pill ${t.running?'on':''}">${t.running?'running':(t.installed?'installed':'not installed')}</span>
+        ${pill}
         <button ${t.installed?'':'disabled'} data-tool="${t.name}" class="${t.running?'open':''}">
           ${t.running?'Open':'Launch'}</button>
       </div><div class="err" id="err-${t.name}"></div>`;
@@ -213,8 +257,14 @@ async function load(){
     b.onclick=()=>act(t.name,b);
     g.appendChild(c);
   }
+  document.getElementById('recheck').style.display = anyIssues ? '' : 'none';
   document.getElementById('note').innerHTML = anyInstalled ? '' :
     'No tools are built yet. Install one first, e.g. <code>bin/bdtools install mlst_gui</code>.';
+}
+async function recheck(btn){
+  btn.disabled=true; const was=btn.textContent; btn.textContent='Checking…';
+  try{ await fetch('./api/recheck',{method:'POST'}); }catch(e){}
+  await load(); btn.disabled=false; btn.textContent=was;
 }
 async function act(name,btn){
   const err=document.getElementById('err-'+name); err.textContent='';
@@ -254,6 +304,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         parsed = urlparse(self.path)
+        if parsed.path == "/api/recheck":
+            # Re-run readiness (after the user installs a database / fixes a dep).
+            SUITE.refresh()
+            self._send(200, json.dumps(SUITE.state()))
+            return
         if parsed.path == "/api/launch":
             tool = (parse_qs(parsed.query).get("tool") or [""])[0]
             names = {t["name"] for t in SUITE.tools}

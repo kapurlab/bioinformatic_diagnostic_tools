@@ -13,10 +13,11 @@
 set -uo pipefail   # NOTE: not -e; a failing tool check must not abort the sweep
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
 
-SCOPE="all"; ONLY=()
+SCOPE="all"; JSON=0; ONLY=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --scope) SCOPE="$2"; shift 2;;
+    --json)  JSON=1; shift;;          # machine-readable array (used by the dashboard)
     -h|--help) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
     *) ONLY+=("$1"); shift;;
   esac
@@ -36,23 +37,33 @@ resolve_env_python() {
 
 targets() { if [[ ${#ONLY[@]} -gt 0 ]]; then printf '%s\n' "${ONLY[@]}"; else manifest_names; fi; }
 
-issues=0; checked=0
+issues=0; checked=0; json_items=()
 while read -r name; do
   [[ -n "$name" ]] || continue
-  manifest_has "$name" || { warn "unknown tool: $name"; continue; }
+  manifest_has "$name" || { [[ ${JSON} -eq 1 ]] || warn "unknown tool: $name"; continue; }
   dir="$(tool_dir "$name")"
   if [[ ! -d "${dir}/.git" && ! -x "${dir}/env/bin/python" ]]; then
     # Not installed here — silent unless the user asked for this tool by name.
-    [[ ${#ONLY[@]} -gt 0 ]] && echo "${name}: not installed (bin/bdtools install ${name})"
+    [[ ${JSON} -eq 0 && ${#ONLY[@]} -gt 0 ]] && echo "${name}: not installed (bin/bdtools install ${name})"
     continue
   fi
   checked=$((checked + 1))
   py="$(resolve_env_python "${dir}" "$(manifest_get "$name" env)")"
-  python3 "${KT_BIN_DIR}/lib/check.py" --tool "$name" --dir "${dir}" \
-          --python "${py}" --scope "${SCOPE}" || issues=$((issues + 1))
-  echo
+  if [[ ${JSON} -eq 1 ]]; then
+    item="$(python3 "${KT_BIN_DIR}/lib/check.py" --tool "$name" --dir "${dir}" \
+              --python "${py}" --scope "${SCOPE}" --json)" || issues=$((issues + 1))
+    [[ -n "${item}" ]] && json_items+=("${item}")
+  else
+    python3 "${KT_BIN_DIR}/lib/check.py" --tool "$name" --dir "${dir}" \
+            --python "${py}" --scope "${SCOPE}" || issues=$((issues + 1))
+    echo
+  fi
 done < <(targets)
 
+if [[ ${JSON} -eq 1 ]]; then
+  ( IFS=,; echo "[${json_items[*]-}]" )
+  exit $([[ ${issues} -gt 0 ]] && echo 1 || echo 0)
+fi
 if [[ ${checked} -eq 0 ]]; then
   warn "no installed tools found to check (install one: bin/bdtools install <tool>)"
   exit 0

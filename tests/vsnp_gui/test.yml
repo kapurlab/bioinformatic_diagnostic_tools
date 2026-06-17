@@ -10,7 +10,7 @@ tier: 2
 summary: M. bovis reads -> vSNP3 best-reference selection + spoligotype
 fetch: sra
 accession: SRR1791695
-db_check: /srv/kapurlab/refs/vsnp3/reference_options
-db_hint: Stage the vsnp3 reference_options dir + dependencies/ref_db.sbt.zip (see vsnp_gui deploy/install_ood.sh).
+db_check: [{tooldir}/vSNP_reference_options, /srv/kapurlab/refs/vsnp3/reference_options]
+db_hint: Reference options are staged by a local `bdtools install vsnp_gui` (USDA-VS repo) or by the OOD installer. The sourmash best-reference index ships with the conda vsnp3 package.
 run_cmd: cd {out} && vsnp3_step1.py -n vsnp_test -r1 {r1} -r2 {r2} -spoligo && {python} {testsdir}/lib/vsnp_excel.py {out}
 result_file: vsnp_result.json

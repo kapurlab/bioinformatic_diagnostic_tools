@@ -105,6 +105,53 @@ then re-run this install."
   ok "Apple Silicon: building the conda env as osx-64 under Rosetta 2 (native arm64 bioconda builds are incomplete). Override with BDTOOLS_NATIVE_ARM=1."
 }
 
+# vsnp_gui is special: no environment.yml / deploy/install.sh. Its env is the
+# bioconda `vsnp3` package + a web layer + Kapur Lab patches, and it needs the
+# USDA-VS reference_options (the conda package already ships the sourmash
+# best-reference index). Build all of that locally so it runs standalone.
+VSNP_REFS_REPO="https://github.com/USDA-VS/vSNP_reference_options.git"
+build_vsnp_local() {
+  local conda; conda="$(detect_conda)" || die "conda/mamba not found. Install miniforge first."
+  ok "conda: ${conda}"
+  # 1. vsnp3 env (+ snp-dists for Step 2). CONDA_SUBDIR=osx-64 already exported on
+  #    Apple Silicon by ensure_conda_subdir, so this runs under Rosetta there.
+  if [[ -x "${DIR}/env/bin/python" ]]; then
+    ok "env present: ${DIR}/env"
+  else
+    log "creating vsnp3 env at ${DIR}/env (bioconda vsnp3 + snp-dists; solve can take several minutes)"
+    run "${conda}" create -y -p "${DIR}/env" -c conda-forge -c bioconda vsnp3 snp-dists
+  fi
+  # 2. web layer (uvicorn is served from this same python)
+  [[ -x "${DIR}/env/bin/pip" ]] && run "${DIR}/env/bin/pip" install --upgrade \
+      fastapi uvicorn pydantic python-multipart aiofiles
+  # 3. Kapur Lab vsnp3 patches (idempotent; safe on the packaged version)
+  [[ -x "${DIR}/deploy/vsnp3-patches/apply.sh" ]] && \
+    { run "${DIR}/deploy/vsnp3-patches/apply.sh" "${DIR}/env" || warn "vsnp3 patch step reported an issue (continuing)"; }
+  # 4. reference_options (USDA-VS) + register the path vsnp3 reads at runtime
+  local refs="${BDTOOLS_HOME}/vsnp3-refs/vSNP_reference_options"
+  if [[ -n "$(ls -A "${refs}" 2>/dev/null)" ]]; then
+    ok "reference options present: ${refs}"
+  else
+    log "downloading vSNP reference options (USDA-VS) -> ${refs}"
+    run mkdir -p "$(dirname "${refs}")"
+    run git clone --depth 1 "${VSNP_REFS_REPO}" "${refs}"
+  fi
+  if [[ ${DRY_RUN} -eq 0 ]]; then
+    local rop="${DIR}/env/dependencies/reference_options_paths.txt"
+    mkdir -p "${DIR}/env/dependencies"
+    grep -qxF "${refs}" "${rop}" 2>/dev/null || { echo "${refs}" >> "${rop}"; ok "registered ${refs}"; }
+    # stable in-checkout pointer so the validation harness can find the refs
+    [[ -e "${DIR}/vSNP_reference_options" ]] || ln -s "${refs}" "${DIR}/vSNP_reference_options" 2>/dev/null || true
+  fi
+  # 5. frontend
+  if [[ -d "${DIR}/frontend" && ! -f "${DIR}/frontend/dist/index.html" ]]; then
+    log "building frontend"
+    ( cd "${DIR}/frontend" && command -v npm >/dev/null 2>&1 \
+        && { run npm ci || run npm install; run npm run build; } \
+        || warn "npm not found — frontend not built" )
+  fi
+}
+
 build() {
   ensure_conda_subdir
   if [[ -x "${DIR}/deploy/install.sh" ]]; then
@@ -116,10 +163,13 @@ build() {
   elif [[ -f "${DIR}/conda_setup/environment.yml" ]]; then
     log "no deploy/install.sh in ${TOOL}; using generic build"
     generic_build
+  elif [[ -x "${DIR}/deploy/vsnp3-patches/apply.sh" ]]; then
+    # vsnp_gui: bioconda vsnp3 + web layer + patches + USDA reference_options.
+    log "building ${TOOL} locally (vsnp3 conda package + reference options)"
+    build_vsnp_local
   else
-    # Not an error: some tools (e.g. vsnp_gui) have no local-build path — their
-    # env + large reference DBs are provisioned only by their OOD installer.
-    # Skip cleanly with a sentinel exit so `install all` isn't marked failed.
+    # Not an error: some tools have no local-build path — skip cleanly with a
+    # sentinel exit so `install all` isn't marked failed.
     warn "${TOOL} has no local-build path — its conda env and reference databases are provisioned by its OOD installer, not in local mode."
     info "  Run it on an OOD deployment: 'bdtools install --sandbox ${TOOL}' (user) or '--server' (admin)."
     exit 3

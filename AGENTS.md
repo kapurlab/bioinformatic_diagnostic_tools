@@ -86,12 +86,15 @@ say, ask which tool(s) they want. The tools are: `vsnp_gui`, `amr_plus_gui`,
 `irma_gui`, `genoflu_gui`, `mlst_gui`, `kraken_id_parse_gui`, `ksnp_gui`,
 `ncbi_submit_gui`.
 
-> **`vsnp_gui` is OOD-only.** It has no local-build path — its conda env and its
-> large TB/Brucella reference sets are provisioned only by its OOD installer. In
-> `--local` mode `bdtools install` **skips it cleanly** (not a failure; `install
-> all` stays green and still shows the dashboard). The other seven GUIs install
-> locally. To run vsnp_gui, use `--sandbox` (OOD user) or `--server` (OOD admin).
-> This is expected — report it as a skip, don't treat it as broken.
+> **`vsnp_gui` installs locally too, but it's heavier.** Unlike the others it has
+> no `environment.yml`; `bdtools install --local vsnp_gui` builds the bioconda
+> `vsnp3` env (+ web layer + Kapur Lab patches), downloads the USDA-VS
+> reference_options (~320 MB) into `~/.local/share/bdtools/vsnp3-refs/`, and
+> registers them. The sourmash best-reference index ships with the conda package.
+> On Apple Silicon it builds osx-64 under Rosetta like the rest. (If a future
+> tool genuinely has no local path, `install` skips it cleanly — not a failure —
+> and says to use `--sandbox`/`--server`.) Note: IGV/FigTree are OOD-desktop
+> features and aren't available in local mode; the Step 1/Step 2 pipelines are.
 
 ---
 

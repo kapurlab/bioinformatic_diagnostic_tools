@@ -68,10 +68,20 @@ run_one() {  # tool -> prints a status; sets RC_FAIL on FAIL
   local dir; dir="$(tool_dir "${tool}")"
   [[ -d "${dir}/.git" ]] || { echo "SKIP  ${tool}: not installed at ${dir} (run: bdtools install ${tool})"; return 0; }
 
-  if [[ -n "${db_check}" && ! -e "${db_check}" ]]; then
-    echo "SKIP  ${tool}: required reference DB not found at ${db_check}"
-    [[ -n "${db_hint}" ]] && info "  ${db_hint}"
-    return 0
+  # db_check may be one path or a space/comma list of candidates (e.g. a local
+  # install path AND a server path); {tooldir} expands to the tool checkout. The
+  # DB counts as present if ANY candidate exists.
+  if [[ -n "${db_check}" ]]; then
+    local cand found=0
+    for cand in ${db_check}; do
+      cand="${cand//\{tooldir\}/${dir}}"
+      [[ -e "${cand}" ]] && { found=1; break; }
+    done
+    if [[ ${found} -eq 0 ]]; then
+      echo "SKIP  ${tool}: required reference DB not found (looked for: ${db_check})"
+      [[ -n "${db_hint}" ]] && info "  ${db_hint}"
+      return 0
+    fi
   fi
 
   local envname pybin py envbin

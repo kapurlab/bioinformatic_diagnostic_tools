@@ -40,18 +40,26 @@ claude "Follow AGENTS.md to validate this deployment with bdtools test all and r
 > No agent? The same steps by hand are in [INSTALL.md](INSTALL.md) and the
 > per-environment runbooks below.
 
-## Quick start (manual)
+## Quick start — personal computer (Linux / macOS / WSL2)
+
+This is the **local** path: no Open OnDemand, the tools run on your own machine.
+`bdtools install` defaults to `--local`, so `install all` below is exactly the
+same as `install --local all`. **On an HPC / Open OnDemand cluster, do not use
+this** — jump to [Installing on Open OnDemand](#installing-on-open-ondemand-hpc).
 
 ```bash
 git clone https://github.com/kapurlab/bioinformatic_diagnostic_tools.git
 cd bioinformatic_diagnostic_tools
 bin/bdtools list                 # what's in the suite
-bin/bdtools install all          # local mode (default) — Linux / macOS / WSL2
+bin/bdtools install all          # same as: install --local all   (Linux / macOS / WSL2)
 bin/bdtools dashboard            # landing page: pick a GUI -> opens at http://127.0.0.1:8080/
 bin/bdtools test all             # validate against known samples (PASS/FAIL/SKIP)
 ```
 
-## Opening your tools — the dashboard
+## Opening your tools — the local dashboard
+
+*(Personal/local installs only. On Open OnDemand your tools appear as cards in
+your institution's OOD dashboard instead — see the OOD section below.)*
 
 You don't need to be a "command-line person." After installing, a **dashboard**
 opens in your web browser automatically — a home page listing your tools. Click
@@ -89,7 +97,59 @@ You only ever need to remember one thing: **open the dashboard, then click your
 tool.** Single tool instead? `bin/bdtools local <tool> --port 8080`, then open
 http://127.0.0.1:8080/.
 
-## The five deployment targets
+## Installing on Open OnDemand (HPC)
+
+The same `bdtools` CLI installs onto an Open OnDemand cluster — but **not** with
+the `install all` from the local Quick start above (that builds a personal
+`localhost` copy). On OOD the **access point is your institution's OOD
+dashboard**: the tools appear there as cards for users to launch. Pick the path
+that matches your access.
+
+### A regular user (no admin rights) — `--sandbox`
+
+Per-user install into your own OOD sandbox (`~/ondemand/dev/`); nothing
+system-wide, no sysadmin needed.
+
+```bash
+git clone https://github.com/kapurlab/bioinformatic_diagnostic_tools.git
+cd bioinformatic_diagnostic_tools
+bin/bdtools install --sandbox all        # or a single tool, e.g. install --sandbox mlst_gui
+```
+
+Then open your OOD portal → the **Dev / sandbox** apps, and launch a tool card.
+Full runbook: [docs/INSTALL_HPC_OOD.md](docs/INSTALL_HPC_OOD.md).
+
+### The OOD sysadmin (publish to all users) — `--server`
+
+Installs each tool as a **system app** under `/var/www/ood/apps/sys/`, registering
+**only the production card** (developer cards stay hidden; add `--with-dev` per
+tool only if you want them). Requires root and an already-running OOD. Always
+dry-run first — it shows exactly what it would write and changes nothing.
+
+```bash
+sudo git clone https://github.com/kapurlab/bioinformatic_diagnostic_tools.git /opt/bdtools
+cd /opt/bdtools
+
+# 1. Describe your site once (paths, cluster name, Unix groups):
+cp sites/site.conf.example sites/site.conf
+"$EDITOR" sites/site.conf          # set CLUSTER_NAME, TOOLS_ROOT, SYS_APPS_DIR, groups
+
+# 2. Dry-run FIRST — prints every action, writes nothing:
+sudo bin/bdtools install --server all --site-conf sites/site.conf --dry-run
+
+# 3. Real install once the dry-run looks right:
+sudo bin/bdtools install --server all --site-conf sites/site.conf
+
+# 4. Validate (download known samples, run, diff vs expected):
+BDTOOLS_TOOLSDIR=<your TOOLS_ROOT> bin/bdtools test all
+```
+
+The production tool cards now show up in the OOD dashboard for all users. Full
+runbook (preflight checks, what it does and does **not** touch, updating):
+[docs/SYSADMIN.md](docs/SYSADMIN.md). Standing up a brand-new lab server from bare
+metal (no OOD yet)? Start at [docs/INSTALL_BARE_METAL.md](docs/INSTALL_BARE_METAL.md).
+
+## All deployment paths at a glance
 
 | Environment | Command | Notes |
 |---|---|---|
@@ -136,13 +196,13 @@ bdtools test mlst_gui     # one tool
 ```
 
 Each test downloads a fixed SRA/GenBank accession, runs the tool headlessly, and
-compares the result to a committed expected (golden) result. `mlst_gui`,
-`amr_plus_gui`, `irma_gui`, and `genoflu_gui` are validated today; the remaining
-tools **SKIP** cleanly (no spec yet, not installed, or a required reference DB is
-absent) and a SKIP is not a failure. The accessions and expected values are in
-[`tests/`](tests/) — see [tests/README.md](tests/README.md) for the coverage
-table and how the golden results were established. These are the suite's
-diagnostic-validation baseline.
+compares the result to a committed expected (golden) result. All seven diagnostic
+GUIs have recorded goldens (`ncbi_submit_gui`, the submission tool, is not tested
+by design). The tier-2 tools (`kraken_id_parse_gui`, `vsnp_gui`) need an external
+reference DB and **SKIP** cleanly when it's absent — a SKIP is not a failure. The
+accessions and expected values are in [`tests/`](tests/) — see
+[tests/README.md](tests/README.md) for the coverage table and how the golden
+results were established. These are the suite's diagnostic-validation baseline.
 
 ## How it relates to the tool repos
 

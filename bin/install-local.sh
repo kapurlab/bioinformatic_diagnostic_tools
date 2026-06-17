@@ -136,10 +136,23 @@ build_vsnp_local() {
     run mkdir -p "$(dirname "${refs}")"
     run git clone --depth 1 "${VSNP_REFS_REPO}" "${refs}"
   fi
+  # 4b. Local "site root" so the GUI backend (config.py keys everything off
+  #     VSNP_GUI_SITE_ROOT, default /srv/kapurlab) resolves the reference root,
+  #     vsnp3 env path, and VCF-db root to LOCAL locations. Without this the GUI
+  #     looks under /srv/kapurlab/refs/... and Step 1 fails ("reference folder
+  #     not found"). launch() exports VSNP_GUI_SITE_ROOT to this tree.
   if [[ ${DRY_RUN} -eq 0 ]]; then
-    local rop="${DIR}/env/dependencies/reference_options_paths.txt"
-    mkdir -p "${DIR}/env/dependencies"
-    grep -qxF "${refs}" "${rop}" 2>/dev/null || { echo "${refs}" >> "${rop}"; ok "registered ${refs}"; }
+    local site="${BDTOOLS_HOME}/vsnp3-site"
+    mkdir -p "${site}/refs/vsnp3/vcf_db_folders" "${site}/tools" "${site}/projects" "${site}/audit"
+    ln -sfn "${refs}" "${site}/refs/vsnp3/reference_options"   # GUI reference root
+    ln -sfn "${DIR}/env" "${site}/tools/vsnp3"                  # GUI vsnp3_path
+    local rop="${site}/tools/vsnp3/dependencies/reference_options_paths.txt"
+    local refpath="${site}/refs/vsnp3/reference_options"
+    mkdir -p "${site}/tools/vsnp3/dependencies"
+    grep -qxF "${refpath}" "${rop}" 2>/dev/null || { echo "${refpath}" >> "${rop}"; }
+    ok "configured local vsnp site: ${site} (references + vcf_db_folders + env link)"
+    info "  Step 2's curated VCF databases are lab-private and are NOT downloaded; add your own"
+    info "  VCF folders under ${site}/refs/vsnp3/vcf_db_folders or via the GUI settings."
     # stable in-checkout pointer so the validation harness can find the refs
     [[ -e "${DIR}/vSNP_reference_options" ]] || ln -s "${refs}" "${DIR}/vSNP_reference_options" 2>/dev/null || true
   fi
@@ -205,6 +218,38 @@ launch() {
   log "starting ${TOOL} at ${url}  (Ctrl-C to stop)"
   echo "  python: ${py}"
   if [[ ${DRY_RUN} -eq 1 ]]; then echo "  [dry-run] would exec uvicorn on ${PORT}"; return; fi
+  # vsnp_gui's backend resolves its shared paths (references, vcf_db, vsnp3 env)
+  # from VSNP_GUI_SITE_ROOT (default /srv/kapurlab). Point it at the local site
+  # tree build_vsnp_local() laid out, or Step 1 looks under /srv and fails.
+  if [[ -d "${DIR}/deploy/vsnp3-patches" ]]; then
+    local site="${BDTOOLS_HOME}/vsnp3-site"
+    export VSNP_GUI_SITE_ROOT="${site}"
+    # Self-heal a stale per-user config.json: load_config() froze /srv paths into
+    # it on the first GUI load (before this fix). Repoint the derived shared-path
+    # keys to the local site, preserving user prefs. No-op on a fresh machine.
+    VSNP_GUI_SITE_ROOT="${site}" "${py}" - <<'PY' || true
+import json, os
+from pathlib import Path
+site = os.environ["VSNP_GUI_SITE_ROOT"]
+cfgp = Path.home() / ".config" / "vsnp_gui" / "config.json"
+derived = {
+    "vsnp3_path": f"{site}/tools/vsnp3",
+    "vsnp3_reference_options_root": f"{site}/refs/vsnp3/reference_options",
+    "vcf_db_folders_root": f"{site}/refs/vsnp3/vcf_db_folders",
+    "vsnp_gui_deploy_path": f"{site}/tools/vsnp_gui",
+    "audit_root": f"{site}/audit",
+}
+try:
+    cfg = json.loads(cfgp.read_text())
+except Exception:
+    raise SystemExit(0)  # no/!readable config -> defaults (env-var) handle it
+changed = [k for k, v in derived.items() if cfg.get(k) != v]
+if changed:
+    cfg.update(derived)
+    cfgp.write_text(json.dumps(cfg, indent=2, sort_keys=True))
+    print(f"  repaired stale vsnp_gui config paths -> {site}")
+PY
+  fi
   [[ ${NO_BROWSER} -eq 1 ]] || ( sleep 2; open_url "${url}" ) &
   cd "${DIR}/backend"
   PATH="${envbin}:${PATH}" PYTHONPATH="${DIR}/bin:${PYTHONPATH:-}" \

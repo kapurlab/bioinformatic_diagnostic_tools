@@ -138,6 +138,7 @@ class Suite:
                 # tool has no spec); the UI only badges an explicit False.
                 "ready": (r["ok"] if r else None) if installed else None,
                 "issues": (r["issues"] if r else []) if installed else [],
+                "notes": (r.get("notes", []) if r else []) if installed else [],
             })
         with self.lock:
             self.tools = tools
@@ -217,6 +218,7 @@ PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
  .setup code{background:#f3e7cf;padding:1px 5px;border-radius:4px;
    font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;
    user-select:all;word-break:break-all}
+ .plat{font-size:12px;color:var(--muted);font-style:italic}
  .recheck{padding:0 24px 12px;font-size:13px}
  .recheck button{background:transparent;color:var(--accent);padding:4px 0;font-weight:600}
 </style></head><body>
@@ -233,6 +235,11 @@ function setupBlock(t){
   const items = t.issues.map(i=>`<div>• ${esc(i.label)} — <code>${esc(i.fix)}</code></div>`).join('');
   return `<div class="setup"><b>Needs setup before it can run:</b>${items}</div>`;
 }
+function noteBlock(t){
+  // Platform limitations (e.g. a step unavailable on macOS) — informational.
+  if(!t.installed || !(t.notes&&t.notes.length)) return '';
+  return `<div class="plat">${t.notes.map(n=>'⚠ '+esc(n)).join('<br>')}</div>`;
+}
 async function load(){
   const r = await fetch('./api/tools'); const tools = await r.json();
   const g = document.getElementById('grid'); g.innerHTML='';
@@ -248,6 +255,7 @@ async function load(){
     c.innerHTML = `<div class="name">${t.label}</div>
       <div class="blurb">${t.blurb||''}</div>
       ${setupBlock(t)}
+      ${noteBlock(t)}
       <div class="row">
         ${pill}
         <button ${t.installed?'':'disabled'} data-tool="${t.name}" class="${t.running?'open':''}">

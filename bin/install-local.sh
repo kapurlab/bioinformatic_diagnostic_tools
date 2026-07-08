@@ -18,11 +18,12 @@
 set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
 
-TOOL=""; RUN_ONLY=0; BUILD_ONLY=0; PORT=""; NO_BROWSER=0; PRINT_PYTHON=0
+TOOL=""; RUN_ONLY=0; BUILD_ONLY=0; PORT=""; NO_BROWSER=0; PRINT_PYTHON=0; REBUILD=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --run-only)   RUN_ONLY=1; shift;;
     --build-only) BUILD_ONLY=1; shift;;
+    --rebuild)    REBUILD=1; shift;;            # refresh an existing env from its spec (apply new deps)
     --no-browser) NO_BROWSER=1; shift;;        # launch but don't open a browser (used by the dashboard)
     --print-python) PRINT_PYTHON=1; shift;;     # print the tool's env python if built, else exit 1; no build/launch
     --prefix)   export BDTOOLS_HOME="$2"; shift 2;;
@@ -64,7 +65,16 @@ generic_build() {
   ok "conda: ${conda}"
   local env_file="${DIR}/conda_setup/environment.yml"
   if [[ -x "${DIR}/env/bin/python" ]]; then
-    ok "env present: ${DIR}/env"
+    if [[ ${REBUILD} -eq 1 && -f "${env_file}" ]]; then
+      # Refresh an existing env from its spec so newly-declared dependencies are
+      # installed (a plain build skips when the env exists, which is why a stale
+      # env never picked up additions like 'humanize'). conda env update is
+      # additive — it won't remove anything the user added.
+      log "updating conda env at ${DIR}/env from ${env_file} (--rebuild)"
+      run "${conda}" env update -p "${DIR}/env" -f "${env_file}"
+    else
+      ok "env present: ${DIR}/env"
+    fi
   elif [[ -f "${env_file}" ]]; then
     log "creating conda env at ${DIR}/env (solve can take several minutes)"
     run "${conda}" env create -p "${DIR}/env" -f "${env_file}"

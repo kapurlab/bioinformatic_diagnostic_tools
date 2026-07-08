@@ -57,8 +57,8 @@ apply_one() {
     run manifest_set "$name" version "$latest"
   fi
   log "rebuilding ${name}"
-  local a=(); [[ ${DRY_RUN} -eq 1 ]] && a+=(--dry-run)
-  run "${KT_BIN_DIR}/install-local.sh" --build-only ${a[@]+"${a[@]}"} "$name"
+  local a=(--rebuild); [[ ${DRY_RUN} -eq 1 ]] && a+=(--dry-run)
+  run "${KT_BIN_DIR}/install-local.sh" --build-only "${a[@]}" "$name"
   ok "${name} updated"
 }
 

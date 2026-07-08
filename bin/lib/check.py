@@ -102,23 +102,24 @@ def check_db(tool, db):
 
 
 def run_checks(tool, env_py, scope):
-    """Return (status, lines, issues). status: 'ok'|'issues'|'skip'.
-    lines: pretty (symbol, text, fix-or-None) tuples. issues: [{label, fix}]."""
+    """Return (status, lines, issues, notes). status: 'ok'|'issues'|'skip'.
+    lines: pretty (symbol, text, fix-or-None) tuples. issues: [{label, fix}]
+    (fixable problems). notes: [str] (platform limitations — not fixable here)."""
     spec = requirements.for_tool(tool)
-    lines, issues = [], []
+    lines, issues, notes = [], [], []
     default_fix = spec.get("fix", f"bin/bdtools update {tool}")
 
     want_os = spec.get("os")
     sysname = "linux" if platform.system() == "Linux" else (
         "macos" if platform.system() == "Darwin" else platform.system().lower())
     if want_os and want_os != sysname:
-        return "skip", [(SKIP, f"not supported on {sysname} (requires {want_os}); skipping", None)], []
+        return "skip", [(SKIP, f"not supported on {sysname} (requires {want_os}); skipping", None)], [], []
 
     env_py = (env_py or "").strip()
     if not env_py or not Path(env_py).exists():
         fix = f"bin/bdtools install {tool}"
         issues.append({"label": "environment not built", "fix": fix})
-        return "issues", [(BAD, "environment not built", fix)], issues
+        return "issues", [(BAD, "environment not built", fix)], issues, []
     env_bin = str(Path(env_py).parent)
     lines.append((OK, "environment present", None))
 
@@ -129,12 +130,24 @@ def run_checks(tool, env_py, scope):
     elif spec.get("modules"):
         lines.append((OK, f"python modules ({len(spec['modules'])}) import", None))
 
+    # Binaries unavailable on this OS (e.g. bracken on macOS) are a known
+    # limitation, not a rebuild-fixable error — report as a note, don't fail.
+    unavailable = set(spec.get("platform_unavailable", {}).get(sysname, []))
     missing_bin = [b for b in spec.get("binaries", []) if not has_binary(b, env_bin)]
-    if missing_bin:
-        lines.append((BAD, f"programs not found: {', '.join(missing_bin)}", default_fix))
-        issues.append({"label": f"missing programs: {', '.join(missing_bin)}", "fix": default_fix})
+    real_missing = [b for b in missing_bin if b not in unavailable]
+    note_missing = [b for b in missing_bin if b in unavailable]
+    if real_missing:
+        lines.append((BAD, f"programs not found: {', '.join(real_missing)}", default_fix))
+        issues.append({"label": f"missing programs: {', '.join(real_missing)}", "fix": default_fix})
     elif spec.get("binaries"):
-        lines.append((OK, f"programs ({len(spec['binaries'])}) on PATH", None))
+        # If some binaries are platform-unavailable (reported as a note below),
+        # say "other" so the OK line doesn't read as "everything is present".
+        lines.append((OK, "other programs on PATH" if note_missing else "programs on PATH", None))
+    if note_missing:
+        msg = (f"{', '.join(note_missing)} not available on {sysname} "
+               f"(that step won't run; use a Linux/OOD deployment for full output)")
+        lines.append((SKIP, msg, None))
+        notes.append(msg)
 
     if scope == "all":
         for db in spec.get("databases", []):
@@ -145,7 +158,7 @@ def run_checks(tool, env_py, scope):
                 lines.append((BAD, f"{db['label']} missing {detail}", db["fix"]))
                 issues.append({"label": f"{db['label']} missing", "fix": db["fix"]})
 
-    return ("issues" if issues else "ok"), lines, issues
+    return ("issues" if issues else "ok"), lines, issues, notes
 
 
 def main():
@@ -157,11 +170,11 @@ def main():
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args()
 
-    status, lines, issues = run_checks(args.tool, args.python, args.scope)
+    status, lines, issues, notes = run_checks(args.tool, args.python, args.scope)
 
     if args.json:
         print(json.dumps({"tool": args.tool, "status": status,
-                          "ok": status != "issues", "issues": issues}))
+                          "ok": status != "issues", "issues": issues, "notes": notes}))
         return 1 if status == "issues" else 0
 
     print(f"{B}{args.tool}{X}")

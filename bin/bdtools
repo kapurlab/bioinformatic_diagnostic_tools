@@ -155,7 +155,34 @@ EOF
     # Readiness summary: confirm each install can actually run, with fixes for
     # anything missing (a dependency or an un-set-up database). Non-fatal.
     echo; info "checking your installs are ready to run…"
-    "${KT_BIN_DIR}/doctor.sh" || true
+    local doctor_json; doctor_json="$("${KT_BIN_DIR}/doctor.sh" --json 2>/dev/null || true)"
+    "${KT_BIN_DIR}/doctor.sh" || true     # human-readable summary
+    # Offer to refresh any env with a fixable gap (a missing dependency the spec
+    # now declares). Platform limitations (e.g. bracken on macOS) are reported as
+    # notes, not issues, so they don't trigger a rebuild that can't help.
+    local need_rebuild
+    need_rebuild="$(printf '%s' "${doctor_json}" | python3 -c '
+import sys, json
+try: data = json.load(sys.stdin)
+except Exception: data = []
+print(" ".join(sorted({t["tool"] for t in data
+      for i in t.get("issues", []) if "bdtools update" in i.get("fix", "")})))' 2>/dev/null || true)"
+    if [[ -n "${need_rebuild}" ]]; then
+      if [[ -t 0 && -t 1 ]]; then
+        echo; read -r -p "Rebuild the environment for: ${need_rebuild}? [Y/n]: " ans
+        if [[ ! "${ans}" =~ ^[Nn] ]]; then
+          local rt
+          for rt in ${need_rebuild}; do
+            "${KT_BIN_DIR}/install-local.sh" --build-only --rebuild "${rt}" || warn "rebuild of ${rt} did not complete"
+          done
+          echo; info "re-checking…"; "${KT_BIN_DIR}/doctor.sh" || true
+        fi
+      else
+        echo
+        warn "These tools need their environment refreshed: ${need_rebuild}"
+        info "  ACTION: run  bin/bdtools update <tool>  for each (refreshes the env from its spec)."
+      fi
+    fi
     if [[ ${no_dashboard} -eq 0 && -t 1 ]]; then
       echo; info "opening the dashboard (Ctrl-C to stop; re-open later with 'bin/bdtools dashboard')…"
       cmd_dashboard

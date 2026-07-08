@@ -30,6 +30,11 @@ REQUIREMENTS = {
         "optional_imports": ["playwright"],
         "binaries": ["kraken2", "seqkit", "blastn", "bwa", "spades.py",
                      "bracken", "samtools", "picard", "freebayes", "pigz"],
+        # bracken's osx-64 builds (<=2.6.1) predate python 3.10, so it cannot be
+        # installed on Apple Silicon (osx-64 under Rosetta). Report it as a known
+        # platform limitation, not a "rebuild the env" error a rebuild can't fix.
+        # The Bracken abundance/pie-chart step won't run on macOS; the rest does.
+        "platform_unavailable": {"macos": ["bracken"]},
         "fix": "bin/bdtools update kraken_id_parse_gui   # rebuilds the env",
         "databases": [
             {"label": "Kraken2 DB", "config_key": "kraken_db",

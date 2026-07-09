@@ -9,7 +9,10 @@ tier: 2
 summary: M. tuberculosis reads -> Kraken2 top-species identification
 fetch: sra
 accession: SRR28623786
-db_check: /srv/kapurlab/databases/kraken2/k2_standard_08gb/opts.k2d
-db_hint: Stage a Kraken2 standard DB (e.g. k2_standard_08gb) and update the path in this spec / the tool config.
-run_cmd: cd {out} && {python} {tooldir}/bin/kraken_id_parse.py -r1 {r1} -r2 {r2} --kraken-only -k /srv/kapurlab/databases/kraken2/k2_standard_08gb && python3 {testsdir}/lib/kraken_top.py {out}
+# {dbroot} resolves to the local setup-databases root (~/databases or a shared
+# root) on a laptop, and to the OOD server layout otherwise; the explicit /srv
+# path stays as a fallback candidate so server installs still satisfy db_check.
+db_check: [{dbroot}/kraken2/k2_standard_08gb/opts.k2d, /srv/kapurlab/databases/kraken2/k2_standard_08gb/opts.k2d]
+db_hint: Stage a Kraken2 standard DB with `bin/bdtools setup-databases kraken` (or set kraken_db in the tool config).
+run_cmd: cd {out} && {python} {tooldir}/bin/kraken_id_parse.py -r1 {r1} -r2 {r2} --kraken-only -k {dbroot}/kraken2/k2_standard_08gb && python3 {testsdir}/lib/kraken_top.py {out}
 result_file: kraken_top.json

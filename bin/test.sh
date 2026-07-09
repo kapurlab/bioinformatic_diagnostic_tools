@@ -22,6 +22,11 @@ source "${TESTS_DIR}/lib/fetch.sh"
 
 RECORD=0; KEEP=0
 WORKDIR="${BDTOOLS_TEST_WORKDIR:-${BDTOOLS_HOME}/testwork}"
+# Where reference databases live for tier-2 specs. `setup-databases` records the
+# chosen root in ${BDTOOLS_HOME}/db-root (home or shared); fall back to the OOD
+# server layout when no local root was configured. Specs reference it as {dbroot}
+# in db_check/run_cmd so the same spec resolves on a laptop and on a server.
+DBROOT="$( [[ -f "${BDTOOLS_HOME}/db-root" ]] && cat "${BDTOOLS_HOME}/db-root" || echo "/srv/kapurlab/databases" )"
 TARGET=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -86,6 +91,7 @@ run_one() {  # tool -> prints a status; sets RC_FAIL on FAIL
     local cand found=0
     for cand in ${db_check}; do
       cand="${cand//\{tooldir\}/${dir}}"
+      cand="${cand//\{dbroot\}/${DBROOT}}"
       [[ -e "${cand}" ]] && { found=1; break; }
     done
     if [[ ${found} -eq 0 ]]; then
@@ -136,6 +142,7 @@ run_one() {  # tool -> prints a status; sets RC_FAIL on FAIL
   local cmd="${run_cmd}"
   cmd="${cmd//\{python\}/${py}}"
   cmd="${cmd//\{tooldir\}/${dir}}"
+  cmd="${cmd//\{dbroot\}/${DBROOT}}"
   cmd="${cmd//\{testsdir\}/${TESTS_DIR}}"
   cmd="${cmd//\{out\}/${out}}"
   cmd="${cmd//\{fasta\}/${fasta}}"

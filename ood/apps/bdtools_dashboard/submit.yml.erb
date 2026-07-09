@@ -1,0 +1,21 @@
+---
+# Slurm batch_connect submission for the consolidated dashboard. Runs on ONE
+# compute node; `port` is allocated on that node by before.sh and proxied back
+# through OOD's rnode. Every tool the dashboard launches binds 127.0.0.1 on this
+# same node — reachable only through the dashboard's authenticated reverse proxy.
+batch_connect:
+  template: "basic"
+  conn_params:
+    - port
+
+script:
+  wall_time: "<%= context.bc_num_hours.to_i * 3600 %>"
+  native:
+    - "--nodes=1"
+    - "--ntasks=1"
+    - "--cpus-per-task=<%= context.num_cores.to_i %>"
+    - "--mem=<%= context.mem_gb.to_i %>G"
+    - "--partition=<%= context.slurm_partition.to_s.strip %>"
+<%- unless context.slurm_account.to_s.strip.empty? -%>
+    - "--account=<%= context.slurm_account.to_s.strip %>"
+<%- end -%>

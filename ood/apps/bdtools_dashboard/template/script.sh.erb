@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# Consolidated Diagnostic Tools dashboard — OOD batch_connect session script.
+# Runs on the allocated compute node. $port is exported by before.sh.
+#
+# It starts ONE authenticated dashboard (bin/ood_dashboard). The dashboard
+# launches each tool the user opens as a uvicorn bound to 127.0.0.1 on THIS node
+# and reverse-proxies to it, so:
+#   * one Slurm allocation serves the whole session (not one job per tool), and
+#   * auth is enforced once here (per-session token + OOD username match),
+#     so no other user can reach the session.
+
+echo "=== Kapur Lab Diagnostic Tools Dashboard — session starting ==="
+echo "host:$(hostname)  dashboard-port:${port}"
+
+# ---- locate the umbrella checkout (shared install, else per-user) ----
+SHARED_REPO=/srv/kapurlab/tools/bioinformatic_diagnostic_tools
+PERSONAL_REPO="${HOME}/bioinformatic_diagnostic_tools"
+if [ -d "${SHARED_REPO}/bin/ood_dashboard" ]; then
+  REPO="${SHARED_REPO}"
+  export BDTOOLS_TOOLSDIR=/srv/kapurlab/tools
+elif [ -d "${PERSONAL_REPO}/bin/ood_dashboard" ]; then
+  REPO="${PERSONAL_REPO}"
+else
+  echo "ERROR: cannot find the bioinformatic_diagnostic_tools checkout (looked in" >&2
+  echo "       ${SHARED_REPO} and ${PERSONAL_REPO})." >&2
+  exit 1
+fi
+echo "  umbrella: ${REPO}"
+
+# ---- authentication material (both injected here so they always match) ----
+# $password is the per-session secret the OOD "basic" template generates; the
+# view page hands it to the browser once as ?t=... and the dashboard turns it
+# into a cookie. $USER is the OOD-authenticated user; the dashboard rejects any
+# request whose (unspoofable) X-Forwarded-User header doesn't match it.
+export BDTOOLS_SESSION_TOKEN='<%= password %>'
+export BDTOOLS_SESSION_OWNER="${USER}"
+
+# ---- find a python with the dashboard's deps (starlette + httpx + uvicorn) ----
+# These live in every tool's conda env; pick the first that imports them.
+PYTHON=""
+for cand in \
+    /srv/kapurlab/tools/*/env/bin/python \
+    /srv/kapurlab/tools/vsnp3/bin/python \
+    "${HOME}"/miniforge3/envs/*/bin/python \
+    "${HOME}"/miniforge3/bin/python; do
+  [ -x "${cand}" ] || continue
+  if "${cand}" -c 'import starlette, httpx, uvicorn' >/dev/null 2>&1; then
+    PYTHON="${cand}"; break
+  fi
+done
+if [ -z "${PYTHON}" ]; then
+  echo "ERROR: no python with starlette+httpx+uvicorn found. Install any tool" >&2
+  echo "       (its conda env ships these) or add them to a base env." >&2
+  exit 1
+fi
+echo "  python:   ${PYTHON}"
+
+cd "${REPO}/bin/ood_dashboard"
+echo "Starting dashboard on 0.0.0.0:${port}"
+exec "${PYTHON}" -m uvicorn app:app \
+    --host 0.0.0.0 \
+    --port "${port}" \
+    --log-level info

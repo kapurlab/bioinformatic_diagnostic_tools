@@ -59,7 +59,7 @@ cmd_status() {
 }
 
 cmd_install() {
-  local mode="local"; local raw=() passthru=() with_dev=0 no_dashboard=0
+  local mode="local"; local raw=() passthru=() with_dev=0 no_dashboard=0 dashboard=0 site_conf=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --local)   mode="local";   shift;;
@@ -67,13 +67,22 @@ cmd_install() {
       --server)  mode="server";  shift;;
       --dry-run)   DRY_RUN=1; export DRY_RUN; passthru+=(--dry-run); shift;;
       --prefix)    export BDTOOLS_HOME="$2"; passthru+=(--prefix "$2"); shift 2;;
-      --site-conf) passthru+=(--site-conf "$2"); shift 2;;
+      --site-conf) site_conf="$2"; passthru+=(--site-conf "$2"); shift 2;;
       --with-dev)  with_dev=1; shift;;
+      --no-card)   passthru+=(--no-card); shift;;   # server: build a tool's env but skip its per-tool card
+      --dashboard) dashboard=1; shift;;             # server: install the consolidated dashboard card
       --no-dashboard) no_dashboard=1; shift;;   # local: don't auto-open the dashboard at the end
       -*)          die "install: unknown option '$1'";;
       *)         raw+=("$1"); shift;;
     esac
   done
+  # --dashboard installs the single umbrella-owned card (no tool positional).
+  if [[ ${dashboard} -eq 1 ]]; then
+    [[ "${mode}" == "server" ]] || die "--dashboard only applies to --server installs"
+    local dargs=(); [[ ${DRY_RUN:-0} -eq 1 ]] && dargs+=(--dry-run)
+    [[ -n "${site_conf}" ]] && dargs+=(--site-conf "${site_conf}")
+    exec "${KT_BIN_DIR}/install-server.sh" --dashboard ${dargs[@]+"${dargs[@]}"}
+  fi
   # --with-dev is a server-only opt-in (developer branch-picker cards).
   if [[ ${with_dev} -eq 1 ]]; then
     [[ "${mode}" == "server" ]] || die "--with-dev only applies to --server installs"

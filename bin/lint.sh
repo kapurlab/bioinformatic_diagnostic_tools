@@ -20,6 +20,25 @@ while [[ $# -gt 0 ]]; do
 done
 targets() { if [[ ${#ONLY[@]} -gt 0 ]]; then printf '%s\n' "${ONLY[@]}"; else manifest_names; fi; }
 
+# The consolidated OOD dashboard reverse-proxies each tool under a sub-path
+# (/t/<tool>/), exactly as OOD's /rnode already serves them under a sub-path.
+# That only works if the built frontend references assets RELATIVELY (./assets,
+# a Vite `base: "./"` build), never from the site root (/assets, base "/").
+# A root-absolute build silently 404s every asset behind the proxy, so guard it
+# here: catch it at release time, not on a user's screen.
+check_frontend_base() {
+  local dir="$1" name="$2" idx="$1/frontend/dist/index.html"
+  [[ -f "${idx}" ]] || return 0
+  # Absolute-root asset refs: src="/... or href="/... (but not protocol-relative //).
+  if grep -qE '(src|href)="/[^/]' "${idx}"; then
+    warn "${name}: frontend/dist/index.html has root-absolute asset URLs (src/href=\"/…\")."
+    warn "  This breaks the OOD dashboard sub-path proxy. Rebuild the frontend with a"
+    warn "  relative base (Vite: base: './'). See docs/BUILDING_A_TOOL.md."
+    return 1
+  fi
+  return 0
+}
+
 issues=0; checked=0
 while read -r name; do
   [[ -n "$name" ]] || continue
@@ -31,6 +50,7 @@ while read -r name; do
   fi
   checked=$((checked + 1))
   python3 "${KT_BIN_DIR}/lib/lint.py" --tool "$name" --dir "${dir}" || issues=$((issues + 1))
+  check_frontend_base "${dir}" "${name}" || issues=$((issues + 1))
 done < <(targets)
 
 echo

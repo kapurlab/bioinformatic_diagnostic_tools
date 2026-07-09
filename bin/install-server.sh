@@ -6,13 +6,23 @@
 # the Kapur Lab literals (paths, cluster name, groups) from the site config.
 # Run as root (it writes /var/www/ood/apps/sys). Always --dry-run first.
 #
-#   install-server.sh <tool> [--site-conf PATH] [--with-dev] [--dry-run] [phase ...]
+#   install-server.sh <tool> [--site-conf PATH] [--with-dev] [--no-card] [--dry-run] [phase ...]
+#   install-server.sh --dashboard [--site-conf PATH] [--dry-run]
 #
 # Phases (default: all): preflight toolchain app verify
 #   preflight  OOD core present? conda/node? cluster defined? sys-apps writable?
 #   toolchain  checkout the pinned tool at TOOLS_ROOT/<tool>; build env+frontend
 #   app        render ood/apps/<tool>/* into SYS_APPS_DIR/<tool> (site subst)
 #   verify     card + env + frontend present
+#
+# CONSOLIDATED DASHBOARD (recommended): with --dashboard, installs the single
+# umbrella-owned card (SYS_APPS_DIR/bdtools_dashboard) that allocates ONE node per
+# session and runs every tool on it behind one authenticated reverse proxy. Build
+# each tool's env first with `--no-card` (env only, no per-tool card):
+#   for t in $(bin/bdtools list ...); do install-server.sh "$t" --no-card; done
+#   install-server.sh --dashboard
+# Per-tool cards are still available (omit --no-card) for a dedicated single-tool
+# session, but are no longer required for routine use.
 #
 # By default ONLY the production card(s) (tools.yml `ood_apps`) are installed —
 # that is all a normal user sees in the dashboard. Pass --with-dev to ALSO
@@ -28,19 +38,29 @@ set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
 
 SITE_CONF="${REPO_DIR}/sites/site.conf"
-TOOL=""; PHASES=(); WITH_DEV=0
+TOOL=""; PHASES=(); WITH_DEV=0; DASHBOARD=0; NO_CARD=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --site-conf) SITE_CONF="$2"; shift 2;;
     --with-dev)  WITH_DEV=1; shift;;
+    --dashboard) DASHBOARD=1; shift;;   # install the umbrella's consolidated dashboard card
+    --no-card)   NO_CARD=1; shift;;     # build a tool's env but do NOT install its per-tool card
     --dry-run)   DRY_RUN=1; export DRY_RUN; shift;;
     -h|--help)   sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
     -*)          die "unknown option: $1";;
     *)           if [[ -z "${TOOL}" ]] && manifest_has "$1"; then TOOL="$1"; else PHASES+=("$1"); fi; shift;;
   esac
 done
-[[ -n "${TOOL}" ]] || die "name a tool (see: bdtools list)"
-[[ ${#PHASES[@]} -gt 0 ]] || PHASES=(preflight toolchain app verify)
+if [[ ${DASHBOARD} -eq 1 ]]; then
+  TOOL="bdtools_dashboard"        # the umbrella-owned card; no tool checkout needed
+  [[ ${#PHASES[@]} -gt 0 ]] || PHASES=(preflight app verify)
+else
+  [[ -n "${TOOL}" ]] || die "name a tool (see: bdtools list), or pass --dashboard"
+  if [[ ${#PHASES[@]} -eq 0 ]]; then
+    if [[ ${NO_CARD} -eq 1 ]]; then PHASES=(preflight toolchain verify)   # env only, no card
+    else PHASES=(preflight toolchain app verify); fi
+  fi
+fi
 
 [[ -f "${SITE_CONF}" ]] || die "site config not found: ${SITE_CONF}
        cp ${REPO_DIR}/sites/site.conf.example <path> and edit it, then pass --site-conf <path>."
@@ -54,15 +74,21 @@ for v in SITE_NAME SITE_DISPLAY SITE_ROOT CLUSTER_NAME TOOLS_ROOT SYS_APPS_DIR; 
 done
 [[ ${#_missing[@]} -eq 0 ]] || die "required site.conf vars unset: ${_missing[*]}"
 
-DIR="${TOOLS_ROOT}/${TOOL}"
-REPO="$(manifest_get "${TOOL}" repo)"
-VERSION="$(manifest_get "${TOOL}" version)"
 APP_DST_BASE="${SYS_APPS_DIR}"
-# Production cards always; developer (branch-picker) cards only with --with-dev.
-OOD_APPS=( $(manifest_get "${TOOL}" ood_apps) )
-DEV_APPS=( $(manifest_get "${TOOL}" dev_apps) )
-if [[ ${WITH_DEV} -eq 1 && ${#DEV_APPS[@]} -gt 0 ]]; then
-  OOD_APPS+=( "${DEV_APPS[@]}" )
+if [[ ${DASHBOARD} -eq 1 ]]; then
+  # The umbrella checkout IS the "source"; its card lives under ood/apps/.
+  DIR="${REPO_DIR}"; REPO=""; VERSION=""
+  OOD_APPS=(bdtools_dashboard); DEV_APPS=()
+else
+  DIR="${TOOLS_ROOT}/${TOOL}"
+  REPO="$(manifest_get "${TOOL}" repo)"
+  VERSION="$(manifest_get "${TOOL}" version)"
+  # Production cards always; developer (branch-picker) cards only with --with-dev.
+  OOD_APPS=( $(manifest_get "${TOOL}" ood_apps) )
+  DEV_APPS=( $(manifest_get "${TOOL}" dev_apps) )
+  if [[ ${WITH_DEV} -eq 1 && ${#DEV_APPS[@]} -gt 0 ]]; then
+    OOD_APPS+=( "${DEV_APPS[@]}" )
+  fi
 fi
 
 # subst — rewrite Kapur Lab literals to this site's values. Longest-match first
@@ -165,6 +191,20 @@ phase_app() {
 
 phase_verify() {
   log "verify — ${TOOL}"
+  if [[ ${DASHBOARD} -eq 1 ]]; then
+    [[ -f "${DIR}/bin/ood_dashboard/app.py" ]] && ok "dashboard app present" \
+      || warn "missing ${DIR}/bin/ood_dashboard/app.py"
+    [[ -f "${APP_DST_BASE}/bdtools_dashboard/manifest.yml" ]] && ok "card installed: bdtools_dashboard" \
+      || warn "card missing: bdtools_dashboard"
+    local anypy="" p
+    for p in "${TOOLS_ROOT}"/*/env/bin/python "${TOOLS_ROOT}"/vsnp3/bin/python; do
+      [[ -x "$p" ]] && "$p" -c 'import starlette,httpx,uvicorn' 2>/dev/null && { anypy="$p"; break; }
+    done
+    [[ -n "${anypy}" ]] && ok "a python with the dashboard deps exists (${anypy})" \
+      || warn "no tool env has starlette+httpx+uvicorn yet — install a tool first (e.g. bdtools install mlst_gui --server --no-card)"
+    info "Final manual check: launch 'Diagnostic Tools Dashboard' in OOD; confirm the landing page loads and a tool opens through /rnode."
+    return
+  fi
   [[ -x "${DIR}/env/bin/python" ]] && ok "env python present" || warn "no ${DIR}/env/bin/python (toolchain not built?)"
   [[ -f "${DIR}/frontend/dist/index.html" ]] && ok "frontend built" || warn "frontend/dist missing"
   local app

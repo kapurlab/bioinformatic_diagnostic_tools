@@ -1,0 +1,52 @@
+---
+# The single OOD app for the whole suite. It allocates ONE compute node for the
+# session; every tool the user opens runs on this same allocation (instead of a
+# separate OOD/Slurm job per tool). Size it for the heaviest tool you expect to
+# run concurrently — this is a whole-session request, not a per-tool one.
+#
+# `cluster` is rewritten to this site's cluster id by `bdtools install --server`
+# (from CLUSTER_NAME in sites/site.conf). On the Kapur Lab box it is "wgs3".
+cluster: "wgs3"
+
+form:
+  - slurm_partition
+  - slurm_account
+  - num_cores
+  - mem_gb
+  - bc_num_hours
+
+attributes:
+  slurm_partition:
+    widget: "text_field"
+    label: "Slurm partition"
+    value: ""
+    help: "The partition/queue to submit to (e.g. open, standard, batch). Ask your HPC admin if unsure."
+
+  slurm_account:
+    widget: "text_field"
+    label: "Slurm account (optional)"
+    value: ""
+    help: "Allocation/account to charge. Leave blank if your site does not require -A."
+
+  num_cores:
+    widget: "number_field"
+    label: "CPU cores"
+    value: 16
+    min: 1
+    max: 128
+    help: "Shared by every tool you open this session. 16 comfortably covers concurrent bacterial-WGS work; raise it for a heavy vSNP/assembly run."
+
+  mem_gb:
+    widget: "number_field"
+    label: "Memory (GB)"
+    value: 64
+    min: 4
+    max: 1024
+    help: "Shared across all tools in the session."
+
+  bc_num_hours:
+    widget: "number_field"
+    label: "Session duration (hours)"
+    value: 8
+    min: 1
+    max: 48

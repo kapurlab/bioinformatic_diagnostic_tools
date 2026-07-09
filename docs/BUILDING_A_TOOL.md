@@ -19,8 +19,11 @@ already mostly follow (see the canonical guide in
 
 ## Rules that keep it portable
 
-1. **All frontend URLs relative** (`./api/...`); FastAPI serves `frontend/dist/`.
-   This is what lets the same app run behind OOD's proxy *and* standalone locally.
+1. **All frontend URLs relative** (`./api/...`, Vite `base: "./"`); FastAPI serves
+   `frontend/dist/`. This is what lets the same app run behind OOD's proxy *and*
+   standalone locally — including under the consolidated dashboard's `/t/<tool>/`
+   sub-path. `bdtools lint` fails a build whose `index.html` uses root-absolute
+   (`src="/…"`) asset URLs.
 2. **Cluster name is data, not code** — `ood/apps/<tool>/form.yml` must take the
    cluster from site config, not a hardcoded `cluster: "..."`.
 3. **No hardcoded site paths** in committed files — read roots from config/env.

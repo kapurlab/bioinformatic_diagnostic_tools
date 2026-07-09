@@ -19,6 +19,8 @@ drives everything through one CLI: **`bdtools`**.
 ```
 bdtools list | status
 bdtools install <tool|all> [--local | --sandbox | --server] [--with-dev] [--no-dashboard]
+bdtools install <tool> --server --no-card            # build a tool's env, skip its per-tool card
+bdtools install --server --dashboard                 # install the consolidated OOD dashboard card
 bdtools local  <tool> [--port N] [--no-browser]
 bdtools dashboard [--port N] [--restart | --stop]      # local landing page
 bdtools setup-databases [--home|--shared|--root DIR] [DB ...]   # download + wire ref DBs
@@ -32,6 +34,50 @@ bdtools site-init [--site-conf F]                      # bare-metal bootstrap
 ### tools.yml pins
 - `vsnp_gui` → **v0.2.1**, `kraken_id_parse_gui` → **v0.1.3**  (others → v0.1.1)
 - suite tags: `suite-2026.06`, `suite-2026.06.1`
+
+## Session 2026-07-09 — consolidated + authenticated OOD dashboard (branch `ood-consolidated-dashboard`)
+
+Addresses two OOD-admin requirements from a July 2026 meeting. **On a feature
+branch, not merged.** Full write-up: `docs/OOD_DASHBOARD.md`.
+
+1. **Session confinement.** Old model: each tool's uvicorn bound `0.0.0.0:$port`
+   on the node with no auth → any OOD user who knew host+port could open another
+   user's session via `/rnode`. New model: a single dashboard is the only thing
+   `/rnode` reaches; tools bind `127.0.0.1`; auth enforced once at the dashboard —
+   per-session token (OOD `$password` → `?t=` → HttpOnly cookie) **and**
+   `X-Forwarded-User == owner` (mod_ood_proxy sets+overwrites it, unspoofable;
+   verified at `/opt/ood/mod_ood_proxy/lib/ood/proxy.lua:26`, OOD 3.1.16).
+2. **Resource consolidation.** New OOD card `ood/apps/bdtools_dashboard/` allocates
+   ONE node per session (cores/mem/partition/hours form); every tool opened shares
+   it, instead of a Slurm job per tool.
+
+New/changed:
+- `bin/lib/tool_launch.py` — single launch resolver reproducing each tool's env
+  (shared `<dir>/env`, PYTHONPATH, vsnp sibling `vsnp3` env, ksnp vendor bin, amr
+  CONDA_PREFIX); always binds `127.0.0.1`.
+- `bin/ood_dashboard/app.py` — Starlette+httpx ASGI dashboard: `/t/<tool>/` reverse
+  proxy (SSE streamed unbuffered, Range/206 passthrough, Location + Set-Cookie
+  path rewrite, hop-by-hop strip) + auth middleware.
+- `ood/apps/bdtools_dashboard/` — the OOD card (manifest/form/submit/before/script/view).
+- `bin/install-server.sh` — `--dashboard` (render the umbrella card, no checkout) and
+  `--no-card` (build a tool env without its per-tool card); `bin/bdtools` passes both.
+- `bin/lint.sh` — fails a tool whose `frontend/dist/index.html` uses root-absolute
+  asset URLs (the sub-path proxy needs relative `base: './'`).
+
+**Local mode is deliberately untouched** (`bin/dashboard.py`, `install-local.sh`,
+`common.sh`, `tools.yml` unchanged) — Mac/WSL/Linux personal installs behave exactly
+as before. Verified on wgs3 (Linux): resolver correct for all 8 tools; dashboard
+proxied mlst_gui + vsnp_gui (index/assets/relative API 200); SSE arrives
+incrementally (~0.5s cadence) not buffered; Range→206 with intact Content-Range;
+token 403/303/200 flow; `X-Forwarded-User` mismatch → 403; card renders portably for
+a synthetic non-kapurlab site (`/srv/kapurlab/tools`→`/opt/nivedi/tools`, `wgs3`→`roar`);
+local dashboard still serves 200; local install dry-run unaffected.
+
+**Open / not yet done:** real OOD end-to-end on a Slurm node (needs the cluster);
+sandbox (`--sandbox`) dashboard card link-in (server path done; sandbox deferred —
+cluster is hardcoded and would need per-user editing); process-cleanup check that
+launched tool uvicorns die with the Slurm job (dashboard has a shutdown handler;
+Slurm cgroup kill also covers it, but verify on-node).
 
 ## Session 2026-07-08 — committed the env-refresh / bracken-macOS work (on main, pushed)
 

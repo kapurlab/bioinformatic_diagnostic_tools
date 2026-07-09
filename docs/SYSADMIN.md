@@ -3,6 +3,12 @@
 This guide is written so the install looks like **any other Open OnDemand app**
 you already manage — nothing exotic.
 
+> **Recommended:** deploy the single **consolidated dashboard** instead of one
+> card per tool — it allocates a node once per session, runs every tool on it,
+> and adds per-session authentication (token + OOD-username match). See
+> [OOD_DASHBOARD.md](OOD_DASHBOARD.md). The per-tool cards below still work and
+> remain available for a dedicated single-tool allocation.
+
 ## The familiar shape
 
 Each tool is a standard `batch_connect` app distributed as a **git repo with

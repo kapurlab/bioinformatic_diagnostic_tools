@@ -52,6 +52,15 @@ This is the **local** path: no Open OnDemand, the tools run on your own machine.
 same as `install --local all`. **On an HPC / Open OnDemand cluster, do not use
 this** — jump to [Installing on Open OnDemand](#installing-on-open-ondemand-hpc).
 
+> **Before you start** you need **git** and a **conda/miniforge**
+> ([Miniforge](https://github.com/conda-forge/miniforge)); the installer stops
+> with a clear message if either is missing. On **Apple Silicon Macs (M1/M2/M3…)**
+> the env is built as `osx-64` under **Rosetta 2** (bioconda has no native arm64
+> builds for the pipeline toolchain) — install it once with `softwareupdate
+> --install-rosetta --agree-to-license`. Node.js/npm is only needed when building
+> a tool from a branch (release tarballs ship the frontend prebuilt). Full
+> platform notes: [docs/INSTALL_LOCAL.md](docs/INSTALL_LOCAL.md).
+
 ```bash
 git clone https://github.com/kapurlab/bioinformatic_diagnostic_tools.git
 cd bioinformatic_diagnostic_tools

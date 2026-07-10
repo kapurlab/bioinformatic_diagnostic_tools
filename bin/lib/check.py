@@ -41,18 +41,35 @@ def config_value(tool, key):
 
 
 def check_modules(env_py, modules):
-    """Return the subset of modules that fail to import in the tool's env."""
+    """Return the subset of modules that fail to import in the tool's env.
+
+    Actually imports each module in the env interpreter (a real "does it work"
+    test, not just "is it discoverable"). Each import is guarded independently so
+    one failure doesn't hide the rest, and the script always completes and prints
+    the failures. (An earlier version used `import importlib` + `importlib.util`,
+    but `import importlib` does not expose the `util` submodule — it raised
+    AttributeError, so the check silently passed while testing nothing, and could
+    flip to "all missing" when the interpreter path wasn't runnable.)
+    """
     if not modules:
         return []
     code = (
-        "import importlib,sys\n"
-        "bad=[m for m in sys.argv[1:] "
-        "if importlib.util.find_spec(m) is None]\n"
+        "import sys\n"
+        "bad=[]\n"
+        "for m in sys.argv[1:]:\n"
+        "    try:\n"
+        "        __import__(m)\n"
+        "    except Exception:\n"
+        "        bad.append(m)\n"
         "print('\\n'.join(bad))\n"
     )
     try:
         out = subprocess.run([env_py, "-c", code, *modules],
-                             capture_output=True, text=True, timeout=60)
+                             capture_output=True, text=True, timeout=120)
+        # If the interpreter couldn't even start the script (nonzero exit with no
+        # output), we can't say which imports failed — report all as missing.
+        if out.returncode != 0 and not out.stdout.strip():
+            return list(modules)
         return [m for m in out.stdout.split() if m]
     except Exception:
         return list(modules)  # can't even run the interpreter -> all "missing"

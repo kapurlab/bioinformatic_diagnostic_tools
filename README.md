@@ -61,9 +61,21 @@ this** — jump to [Installing on Open OnDemand](#installing-on-open-ondemand-hp
 > a tool from a branch (release tarballs ship the frontend prebuilt). Full
 > platform notes: [docs/INSTALL_LOCAL.md](docs/INSTALL_LOCAL.md).
 
+> 💽 **On an HPC / shared cluster?** Set **`BDTOOLS_HOME`** to large
+> **scratch/work/group** storage *before* `install all` — cluster home dirs are
+> quota-limited and the conda envs are multi-GB, so the default
+> (`~/.local/share/bdtools`) fails partway with *Disk quota exceeded*. Persist it
+> once and it's used by every command (install, dashboard, …):
+>
+>     echo 'export BDTOOLS_HOME=/path/on/large-storage/bdtools' >> ~/.bashrc && source ~/.bashrc
+>
+> A lab can share one install via a group path. More:
+> [docs/INSTALL_LOCAL.md](docs/INSTALL_LOCAL.md#where-things-live).
+
 ```bash
 git clone https://github.com/kapurlab/bioinformatic_diagnostic_tools.git
 cd bioinformatic_diagnostic_tools
+# HPC/cluster? first set large-storage BDTOOLS_HOME (home quotas are too small — see note above)
 bin/bdtools list                 # what's in the suite
 bin/bdtools install all          # same as: install --local all   (Linux / macOS / WSL2)
 bin/bdtools dashboard            # landing page: pick a GUI -> opens at http://127.0.0.1:8080/

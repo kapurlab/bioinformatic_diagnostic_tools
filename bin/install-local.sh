@@ -78,7 +78,7 @@ ensure_checkout() {
   log "cloning ${TOOL} @ ${VERSION}"
   run mkdir -p "$(dirname "${DIR}")"
   run git clone --branch "${VERSION}" --depth 1 "${REPO}" "${DIR}" \
-    || die "git clone failed (${REPO} @ ${VERSION})"
+    || die "git clone failed (${REPO} @ ${VERSION}). If this said 'Disk quota exceeded', your home filesystem is full — on an HPC set BDTOOLS_HOME to a larger scratch/work/group filesystem and re-run (see docs/INSTALL_LOCAL.md)."
 }
 
 # --------------------------------------------------------------------------

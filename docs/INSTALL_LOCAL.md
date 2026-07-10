@@ -112,3 +112,29 @@ Override the checkout location with `--prefix DIR` or `BDTOOLS_HOME`.
 If you already have the tools cloned elsewhere (e.g. a shared
 `/srv/<lab>/tools` tree), point `BDTOOLS_TOOLSDIR` at it and the CLI will use
 those checkouts in place instead of cloning.
+
+> ### ⚠️ On an HPC / cluster: move `BDTOOLS_HOME` off your home directory first
+>
+> Cluster home directories are small, quota-limited filesystems, and the tools'
+> conda environments are large (several GB total). Building them under the default
+> `~/.local/share/bdtools` will fail partway through with **`Disk quota
+> exceeded`** on a `git clone`, or an opaque **conda error mid-solve** (conda
+> aborts when it can't write). Point `BDTOOLS_HOME` at a large **scratch / work /
+> group** filesystem *before* installing, and set it persistently so the
+> dashboard and later commands resolve the same location:
+>
+> ```bash
+> # example paths — use your cluster's large-storage mount:
+> echo 'export BDTOOLS_HOME=/storage/work/$USER/bdtools' >> ~/.bashrc
+> export BDTOOLS_HOME=/storage/work/$USER/bdtools
+>
+> # if a partial install already filled your home quota, reclaim it first:
+> rm -rf ~/.local/share/bdtools
+>
+> bin/bdtools install all      # now builds under large storage
+> bin/bdtools doctor
+> ```
+>
+> A whole lab can share one install by pointing `BDTOOLS_HOME` at a group
+> allocation (e.g. `/storage/group/<grp>/bdtools`). Keep conda's **package cache**
+> off home too — set `pkgs_dirs` and `envs_dirs` to scratch in `~/.condarc`.

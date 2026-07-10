@@ -143,20 +143,81 @@ Set up only some of them by naming which: `bin/bdtools setup-databases kraken vs
 (choices: `kraken blast vsnp-refs vsnp-deps`). Pick the location non-interactively
 with `--home`, `--shared`, or `--root DIR`.
 
-**Doing it by hand instead.** If you'd rather manage the databases yourself,
-download them to any location and set the path in each tool's **Settings** page
-(or its `~/.config/<tool>/config.json`):
+**Doing it by hand instead — and staging on large storage.** These databases
+are big (Kraken2 standard ~8 GB and up; BLAST nucleotide DBs are tens of GB). If
+your home directory is on a small disk, download them to a **large-storage
+volume** and `ln -s` them into the databases root each GUI reads (`~/databases`
+by default), or point the tool's config there directly. Set `BIG` below to your
+large-storage mount. (This is exactly what `setup-databases` automates.)
+
+**Kraken2 database + taxonomy** (kraken_id_parse_gui → config key `kraken_db`).
+Prebuilt Kraken2/Bracken indexes — with current sizes, dates, and download
+links — are published at the AWS-hosted index collection:
+**<https://benlangmead.github.io/aws-indexes/k2>**. Pick a build (e.g.
+*Standard-8* ~8 GB for a laptop, or the full *Standard* for a server), copy its
+`.tar.gz` link from that page, and stage it on large storage. One extracted
+folder holds the **database and its taxonomy together** (`hash.k2d`, `opts.k2d`,
+`taxo.k2d`) — Kraken reads all three from that one directory, so keep them in
+place and link the whole folder.
 
 ```bash
-# Kraken2 (kraken_id_parse_gui → config key "kraken_db")
-mkdir -p ~/databases/kraken2/k2_standard_08gb
+BIG=/mnt/bigstore                         # <- your large-storage mount
+
+# 1. Download + extract onto large storage (use the current link from the k2
+#    page above; the pinned example below is the one setup-databases uses):
+mkdir -p "$BIG/kraken2/k2_standard_08gb"
 curl -fL https://genome-idx.s3.amazonaws.com/kraken/k2_standard_08_GB_20260226.tar.gz \
-  | tar -xz -C ~/databases/kraken2/k2_standard_08gb
+  | tar -xz -C "$BIG/kraken2/k2_standard_08gb"
+ls "$BIG/kraken2/k2_standard_08gb"        # -> hash.k2d  opts.k2d  taxo.k2d  (+ seqid2taxid.map)
 
-# BLAST ref_prok_rep_genomes (kraken_id_parse_gui → config key "blast_db")
-mkdir -p ~/databases/blast && cd ~/databases/blast
-update_blastdb.pl --decompress ref_prok_rep_genomes   # ships with the kraken_id_parse_gui env
+# 2. Link the database (incl. taxonomy) into the databases root the GUI reads:
+mkdir -p ~/databases/kraken2
+ln -s "$BIG/kraken2/k2_standard_08gb" ~/databases/kraken2/k2_standard_08gb
 
+# 3. Point kraken_id_parse_gui at it (or use the tool's Settings page):
+python3 bin/lib/db_config.py kraken --kraken-db ~/databases/kraken2/k2_standard_08gb
+```
+
+> Building your **own** Kraken2 DB rather than using a prebuilt index? Then you
+> fetch the taxonomy yourself first: `kraken2-build --download-taxonomy --db
+> <dir>` (large), then `--download-library` / `--build`. Put `<dir>` on large
+> storage and link it the same way. The prebuilt indexes above already bundle the
+> taxonomy, so most users don't need this.
+
+**BLAST databases + taxonomy** (kraken_id_parse_gui → config key `blast_db`).
+BLAST DBs come from NCBI via `update_blastdb.pl`, which ships in the
+kraken_id_parse_gui conda env (the `blast` package). **First list what's
+available to download:**
+
+```bash
+# the env's copy (or `conda activate kraken_id_parse` first, then just update_blastdb.pl):
+UB=~/.local/share/bdtools/checkouts/kraken_id_parse_gui/env/bin/update_blastdb.pl
+"$UB" --showall pretty          # every downloadable NCBI BLAST DB, with sizes + descriptions
+```
+
+Then stage the DB you want (e.g. `ref_prok_rep_genomes`) on large storage, add
+`taxdb` (so hits carry organism names), and link the folder into the databases
+root:
+
+```bash
+BIG=/mnt/bigstore
+mkdir -p "$BIG/blast" && cd "$BIG/blast"
+"$UB" --decompress ref_prok_rep_genomes   # the DB (multi-volume, tens of GB)
+"$UB" --decompress taxdb                  # taxonomy names for BLAST hits
+
+# link the whole blast dir into the databases root, then point the GUI at the
+# DB *base name* (no file extension):
+ln -s "$BIG/blast" ~/databases/blast
+python3 bin/lib/db_config.py kraken --blast-db ~/databases/blast/ref_prok_rep_genomes
+```
+
+> Keeping several BLAST DBs in one directory? Export `BLASTDB=$BIG/blast` so
+> every tool finds them by base name without a full path.
+
+**vSNP references** (vsnp_gui). Small enough to keep under `~/databases`, but the
+same `ln -s`-to-large-storage trick applies if you prefer:
+
+```bash
 # vSNP reference options (vsnp_gui → Reference Locations / "vsnp3_reference_options_root")
 git clone --depth 1 https://github.com/USDA-VS/vSNP_reference_options.git \
   ~/databases/vsnp3/reference_options

@@ -45,7 +45,7 @@ claude "Follow AGENTS.md to validate this deployment with bdtools test all and r
 > No agent? The same steps by hand are in [INSTALL.md](INSTALL.md) and the
 > per-environment runbooks below.
 
-## Quick start — personal computer (Linux / macOS / WSL2)
+## 🚀 Quick start — personal computer (Linux / macOS / WSL2)
 
 This is the **local** path: no Open OnDemand, the tools run on your own machine.
 `bdtools install` defaults to `--local`, so `install all` below is exactly the
@@ -70,7 +70,28 @@ bin/bdtools dashboard            # landing page: pick a GUI -> opens at http://1
 bin/bdtools test all             # validate against known samples (PASS/FAIL/SKIP)
 ```
 
-## Opening your tools — the local dashboard
+> ✅ **When it finishes**, the installer prints where your tools live and opens
+> the **dashboard** in your browser automatically at **http://127.0.0.1:8080/** —
+> pick a tool and it opens in a tab. **Keep that window open while you work.**
+> Re-open it any time by double-clicking **`Open Dashboard.command`** in the repo
+> folder (macOS), or running `bin/bdtools dashboard`. To launch just one tool:
+> `bin/bdtools local vsnp_gui --port 8080`, then open http://127.0.0.1:8080/.
+
+> 🩺 **If `install all` reports a problem** — computing environments differ, so
+> this can happen — run the doctor; it checks every tool and prints the exact fix
+> under each ✗:
+>
+>     bin/bdtools doctor
+>
+> Fixes ship as new tool versions, so the standard "get back on track" recovery
+> is to pull and re-run — the install is safe and resumable (finished tools are
+> skipped, the failed one is retried):
+>
+>     git pull && bin/bdtools install all && bin/bdtools doctor
+>
+> Full details in [🩺 Troubleshooting](#-troubleshooting-local-installs).
+
+## 🖥️ Opening your tools — the local dashboard
 
 *(Personal/local installs only. On Open OnDemand your tools appear as cards in
 your institution's OOD dashboard instead — see the OOD section below.)*
@@ -111,7 +132,7 @@ You only ever need to remember one thing: **open the dashboard, then click your
 tool.** Single tool instead? `bin/bdtools local <tool> --port 8080`, then open
 http://127.0.0.1:8080/.
 
-## Reference databases
+## 💾 Reference databases
 
 A few tools need large third-party **reference databases** that aren't shipped
 with the code (they're tens of GB and maintained upstream). The installer
@@ -338,7 +359,7 @@ accessions and expected values are in [`tests/`](tests/) — see
 [tests/README.md](tests/README.md) for the coverage table and how the golden
 results were established. These are the suite's diagnostic-validation baseline.
 
-## Troubleshooting (local installs)
+## 🩺 Troubleshooting (local installs)
 
 **First stop for any "it won't run" problem — ask the doctor.** It checks every
 installed tool (its environment, the programs it needs, and its reference

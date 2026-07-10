@@ -47,7 +47,31 @@ ENV_NAME="$(manifest_get "${TOOL}" env)"
 # --------------------------------------------------------------------------
 ensure_checkout() {
   if [[ -d "${DIR}/.git" ]]; then
-    ok "checkout present: ${DIR} ($(git -C "${DIR}" describe --tags --always 2>/dev/null || echo '?'))"
+    local at; at="$(git -C "${DIR}" describe --tags --always 2>/dev/null || echo '?')"
+    # Reuse the existing checkout, but first move it onto the manifest-pinned
+    # ref if it isn't there yet. This makes `git pull` + re-run pick up a shipped
+    # fix (a bumped pin) instead of silently reusing old code — the key to
+    # resuming a partial/failed `install all` after an upstream fix. Skipped for
+    # --run-only, and never clobbers local (tracked) edits.
+    if [[ ${RUN_ONLY} -eq 0 && -n "${VERSION}" ]]; then
+      local want; want="$(git -C "${DIR}" rev-parse -q --verify "refs/tags/${VERSION}^{commit}" 2>/dev/null || true)"
+      if [[ -z "${want}" ]]; then
+        run git -C "${DIR}" fetch --tags --depth 1 origin "${VERSION}" >/dev/null 2>&1 || true
+        want="$(git -C "${DIR}" rev-parse -q --verify "refs/tags/${VERSION}^{commit}" 2>/dev/null \
+                || git -C "${DIR}" rev-parse -q --verify FETCH_HEAD 2>/dev/null || true)"
+      fi
+      local head; head="$(git -C "${DIR}" rev-parse -q --verify HEAD 2>/dev/null || true)"
+      if [[ -n "${want}" && "${head}" != "${want}" ]]; then
+        if git -C "${DIR}" diff --quiet && git -C "${DIR}" diff --cached --quiet; then
+          log "moving ${TOOL} checkout ${at} -> pinned ${VERSION}"
+          run git -C "${DIR}" checkout -q "${VERSION}" 2>/dev/null || run git -C "${DIR}" checkout -q "${want}"
+          at="$(git -C "${DIR}" describe --tags --always 2>/dev/null || echo '?')"
+        else
+          warn "${TOOL} checkout is ${at} but pin is ${VERSION}, and it has local edits — not moving. Commit/stash them, or run: bdtools update ${TOOL}"
+        fi
+      fi
+    fi
+    ok "checkout present: ${DIR} (${at})"
     return
   fi
   [[ ${RUN_ONLY} -eq 1 ]] && die "${TOOL} is not installed at ${DIR} (run: bdtools install ${TOOL})"

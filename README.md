@@ -355,6 +355,30 @@ under it (e.g. `bin/bdtools setup-databases kraken` for a missing database, or
 `bin/bdtools update <tool>` to rebuild an incomplete environment). The installer
 runs this for you at the end of an install, too.
 
+**A tool failed partway through `install all` — how do I resume (and pick up a
+fix)?** `install all` builds the tools in order and stops at the first failure;
+everything before it is already done. When a bug in a tool has since been fixed
+upstream (a new pinned version), get the fix and re-run — the install is
+idempotent and resumable:
+
+```bash
+cd ~/bioinformatic_diagnostic_tools   # your umbrella checkout
+git pull                              # updated tools.yml pins (the fixes) + docs
+bin/bdtools install all               # resumes: done tools are skipped in <1s
+bin/bdtools doctor                    # confirm every tool is ✓
+```
+
+`install` reuses each already-built tool (its conda env is detected and skipped,
+so finished tools cost ~1s) and **moves any tool whose checkout is behind the
+newly-pinned version onto that version before building** — so the re-run picks up
+the fix rather than silently rebuilding the old code. It then continues to the
+tool that failed and any not yet reached. Re-running is always safe. (If a single
+tool is the problem, `bin/bdtools update <tool>` does the same move-to-pin +
+rebuild for just that one.) This is the standard "get me back on track" recipe to
+hand a group hitting environment-specific snags: **`git pull` → `install all` →
+`doctor`.** If `git pull` complains about local changes, `git stash && git pull`
+first (see the stash note below).
+
 **After updating, the tools still behave like the old version.** The dashboard
 and any open tools keep running until you stop them — closing the browser tab
 does *not* stop the servers. After a `git pull`, restart them so the new code

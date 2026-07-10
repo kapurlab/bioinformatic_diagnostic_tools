@@ -11,3 +11,7 @@ checkouts/
 .DS_Store
 __pycache__/
 *.pyc
+
+# internal dev handoff / session notes — never publish
+HANDOFF*.md
+*_HANDOFF.md

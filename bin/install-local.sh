@@ -84,6 +84,20 @@ ensure_checkout() {
 # --------------------------------------------------------------------------
 # 2. build (env + frontend)
 # --------------------------------------------------------------------------
+# conda-forge openjdk on osx-64 installs the JRE under <env>/lib/jvm/bin/ and only
+# exports JAVA_HOME from its activate.d hook. But tools here run with just
+# <env>/bin on PATH (no `conda activate`), so java-based tools can't find `java`
+# and die — e.g. picard in kraken_id_parse_gui, or pilon/trimmomatic invoked by
+# shovill in mlst_gui. Symlink java into <env>/bin so it resolves without
+# activation. No-op on Linux (openjdk already provides bin/java) and for envs
+# with no JRE. Works for both in-checkout envs and named conda envs.
+ensure_env_java() {
+  local envdir="$1"
+  [[ -x "${envdir}/lib/jvm/bin/java" && ! -e "${envdir}/bin/java" ]] || return 0
+  ln -sfn ../lib/jvm/bin/java "${envdir}/bin/java" 2>/dev/null \
+    && ok "linked ${envdir}/bin/java -> lib/jvm/bin/java (JRE)"
+}
+
 generic_build() {
   local conda; conda="$(detect_conda)" || die "conda/mamba not found. Install miniforge first."
   ok "conda: ${conda}"
@@ -105,16 +119,7 @@ generic_build() {
   else
     die "no ${env_file} — cannot build env"
   fi
-  # conda-forge openjdk on osx-64 installs the JRE under env/lib/jvm/bin/ and only
-  # exports JAVA_HOME from its activate.d hook — but tools here run with just
-  # env/bin on PATH (no `conda activate`), so java-based tools (e.g. picard in
-  # kraken_id_parse_gui's full-identification path) can't find `java` and die.
-  # Symlink it into env/bin so it resolves without activation. No-op on Linux
-  # (openjdk already provides env/bin/java) and for tools without a JRE.
-  if [[ -x "${DIR}/env/lib/jvm/bin/java" && ! -e "${DIR}/env/bin/java" ]]; then
-    ln -sfn ../lib/jvm/bin/java "${DIR}/env/bin/java"
-    ok "linked env/bin/java -> lib/jvm/bin/java (JRE for picard et al.)"
-  fi
+  ensure_env_java "${DIR}/env"
   if [[ -f "${DIR}/backend/requirements.txt" ]]; then
     log "pip install backend requirements"
     run "${DIR}/env/bin/python" -m pip install -r "${DIR}/backend/requirements.txt"
@@ -282,6 +287,10 @@ resolve_python() {
 
 launch() {
   local py envbin; py="$(resolve_python)"; envbin="$(dirname "${py}")"
+  # Universal self-heal: ensure java resolves for any tool that needs it (covers
+  # deploy/install.sh tools like mlst_gui that generic_build never touches, and
+  # existing installs from before this fix). envbin is <env>/bin, so pass <env>.
+  ensure_env_java "${envbin%/bin}"
   [[ -f "${DIR}/frontend/dist/index.html" ]] || warn "frontend/dist not built — the GUI may not load"
   [[ -n "${PORT}" ]] || PORT="$(find_free_port)"
   local url="http://127.0.0.1:${PORT}/"

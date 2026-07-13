@@ -105,6 +105,16 @@ generic_build() {
   else
     die "no ${env_file} — cannot build env"
   fi
+  # conda-forge openjdk on osx-64 installs the JRE under env/lib/jvm/bin/ and only
+  # exports JAVA_HOME from its activate.d hook — but tools here run with just
+  # env/bin on PATH (no `conda activate`), so java-based tools (e.g. picard in
+  # kraken_id_parse_gui's full-identification path) can't find `java` and die.
+  # Symlink it into env/bin so it resolves without activation. No-op on Linux
+  # (openjdk already provides env/bin/java) and for tools without a JRE.
+  if [[ -x "${DIR}/env/lib/jvm/bin/java" && ! -e "${DIR}/env/bin/java" ]]; then
+    ln -sfn ../lib/jvm/bin/java "${DIR}/env/bin/java"
+    ok "linked env/bin/java -> lib/jvm/bin/java (JRE for picard et al.)"
+  fi
   if [[ -f "${DIR}/backend/requirements.txt" ]]; then
     log "pip install backend requirements"
     run "${DIR}/env/bin/python" -m pip install -r "${DIR}/backend/requirements.txt"

@@ -96,10 +96,27 @@ open_url() {
 }
 
 # Detect a usable conda/mamba base; prefer mamba (conda's classic solver hangs).
+# Resolve a real conda/mamba BINARY (never a shell function). conda's shell init
+# defines `conda` as a function that isn't visible to child scripts (e.g. a
+# tool's deploy/install.sh), and `command -v conda` then prints just "conda",
+# which is useless as a path. So probe explicit overrides, CONDA_EXE, and the
+# common install bases, and only accept a `command -v` result if it's executable.
 detect_conda() {
-  local base="${CONDA_BASE:-${HOME}/miniforge3}"
-  if [[ -x "${base}/bin/conda" ]]; then echo "${base}/bin/conda"; return 0; fi
-  command -v mamba 2>/dev/null && return 0
-  command -v conda 2>/dev/null && return 0
+  local base="${CONDA_BASE:-}" b p
+  [[ -n "${base}" && -x "${base}/bin/conda" ]] && { echo "${base}/bin/conda"; return 0; }
+  [[ -n "${CONDA_EXE:-}" && -x "${CONDA_EXE}" ]] && { echo "${CONDA_EXE}"; return 0; }
+  for b in "${HOME}/miniforge3" "${HOME}/miniconda3" "${HOME}/mambaforge" \
+           "${HOME}/anaconda3" "/opt/miniforge3" "/opt/miniconda3" \
+           "/opt/homebrew/Caskroom/miniforge/base"; do
+    [[ -x "${b}/bin/conda" ]] && { echo "${b}/bin/conda"; return 0; }
+  done
+  p="$(command -v mamba 2>/dev/null || true)"; [[ -n "${p}" && -x "${p}" ]] && { echo "${p}"; return 0; }
+  p="$(command -v conda 2>/dev/null || true)"; [[ -n "${p}" && -x "${p}" ]] && { echo "${p}"; return 0; }
   return 1
+}
+
+# The conda base directory (parent of bin/) for the resolved binary, or empty.
+conda_base_dir() {
+  local bin; bin="$(detect_conda 2>/dev/null || true)"
+  [[ -n "${bin}" ]] && dirname "$(dirname "${bin}")"
 }

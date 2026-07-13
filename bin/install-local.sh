@@ -247,6 +247,23 @@ build() {
     local args=(); [[ ${DRY_RUN} -eq 1 ]] && args+=(--dry-run)
     # Prefer a personal/standalone env if the tool's installer supports it.
     if grep -q -- '--personal' "${DIR}/deploy/install.sh" 2>/dev/null; then args+=(--personal); fi
+    # Tell the tool installer where conda lives. Its own default is ~/miniforge3
+    # and it can't see the `conda` shell function from this subprocess, so on a
+    # box with miniconda3 (or any non-default base) it would die "conda not
+    # found". We already resolved a real base for our own steps — pass it through
+    # when the installer accepts --conda-base.
+    if grep -q -- '--conda-base' "${DIR}/deploy/install.sh" 2>/dev/null; then
+      local _cbase; _cbase="$(conda_base_dir)"
+      [[ -n "${_cbase}" ]] && args+=(--conda-base "${_cbase}")
+    fi
+    # Every GUI ships a prebuilt frontend/dist. The tool installers otherwise try
+    # to rebuild it and hard-fail when Node is absent (a laptop without node, or
+    # node_modules present but no node binary). Mirror generic_build's
+    # skip-if-already-built behavior: when dist exists, skip the frontend build.
+    if [[ -f "${DIR}/frontend/dist/index.html" ]] \
+       && grep -q -- '--skip-frontend' "${DIR}/deploy/install.sh" 2>/dev/null; then
+      args+=(--skip-frontend)
+    fi
     run "${DIR}/deploy/install.sh" ${args[@]+"${args[@]}"} || die "${TOOL} deploy/install.sh failed"
   elif [[ -f "${DIR}/conda_setup/environment.yml" ]]; then
     log "no deploy/install.sh in ${TOOL}; using generic build"

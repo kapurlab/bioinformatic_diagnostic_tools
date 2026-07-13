@@ -191,6 +191,13 @@ build_vsnp_local() {
     mkdir -p "${site}/refs/vsnp3/vcf_db_folders" "${site}/tools" "${site}/projects" "${site}/audit"
     ln -sfn "${refs}" "${site}/refs/vsnp3/reference_options"   # GUI reference root
     ln -sfn "${DIR}/env" "${site}/tools/vsnp3"                  # GUI vsnp3_path
+    # Kraken ID Parse is a sibling tool the vSNP backend shells out to from Step 1.
+    # Link the CHECKOUT dir here — NOT its env like vsnp3 above — because the
+    # backend appends /bin/kraken_id_parse.py and /env/bin/python to this path
+    # itself (_resolve_kraken_runtime). Guarded so a vsnp-only install (kraken not
+    # checked out yet) doesn't fail; launch() self-heals the link either way.
+    local kdir; kdir="$(tool_dir kraken_id_parse_gui)"
+    [[ -d "${kdir}" ]] && ln -sfn "${kdir}" "${site}/tools/kraken_id_parse_gui"
     local rop="${site}/tools/vsnp3/dependencies/reference_options_paths.txt"
     local refpath="${site}/refs/vsnp3/reference_options"
     mkdir -p "${site}/tools/vsnp3/dependencies"
@@ -272,6 +279,11 @@ launch() {
   if [[ -d "${DIR}/deploy/vsnp3-patches" ]]; then
     local site="${BDTOOLS_HOME}/vsnp3-site"
     export VSNP_GUI_SITE_ROOT="${site}"
+    # Self-heal the Kraken tool link for installs done before this fix, or when
+    # kraken was checked out after vsnp. Point at the CHECKOUT dir (not its env) —
+    # the backend appends /bin and /env itself. Idempotent; no-op if absent.
+    { local kdir; kdir="$(tool_dir kraken_id_parse_gui)"; [[ -d "${kdir}" ]] && \
+        ln -sfn "${kdir}" "${site}/tools/kraken_id_parse_gui"; } 2>/dev/null || true
     # Self-heal a stale per-user config.json: load_config() froze /srv paths into
     # it on the first GUI load (before this fix). Repoint the derived shared-path
     # keys to the local site, preserving user prefs. No-op on a fresh machine.

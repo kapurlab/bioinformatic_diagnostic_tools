@@ -198,6 +198,11 @@ build_vsnp_local() {
     # checked out yet) doesn't fail; launch() self-heals the link either way.
     local kdir; kdir="$(tool_dir kraken_id_parse_gui)"
     [[ -d "${kdir}" ]] && ln -sfn "${kdir}" "${site}/tools/kraken_id_parse_gui"
+    # vSNP's embedded Kraken/BLAST runner defaults its DBs to SITE_ROOT/databases/...
+    # (the server layout). Locally the DBs live at BDTOOLS_HOME/db-root, so adopt it
+    # here — otherwise "Kraken + Krona" fails with "does not contain necessary file
+    # taxo.k2d". (db_root resolved above from BDTOOLS_HOME/db-root.)
+    [[ -n "${db_root}" && -d "${db_root}" ]] && ln -sfn "${db_root}" "${site}/databases"
     local rop="${site}/tools/vsnp3/dependencies/reference_options_paths.txt"
     local refpath="${site}/refs/vsnp3/reference_options"
     mkdir -p "${site}/tools/vsnp3/dependencies"
@@ -284,6 +289,10 @@ launch() {
     # the backend appends /bin and /env itself. Idempotent; no-op if absent.
     { local kdir; kdir="$(tool_dir kraken_id_parse_gui)"; [[ -d "${kdir}" ]] && \
         ln -sfn "${kdir}" "${site}/tools/kraken_id_parse_gui"; } 2>/dev/null || true
+    # Self-heal the DB-root link too (see build_vsnp_local): local DBs live at
+    # db-root, but the vSNP embedded Kraken/BLAST default is SITE_ROOT/databases/...
+    { local dbr; dbr="$(cat "${BDTOOLS_HOME}/db-root" 2>/dev/null || true)"; \
+        [[ -n "${dbr}" && -d "${dbr}" ]] && ln -sfn "${dbr}" "${site}/databases"; } 2>/dev/null || true
     # Self-heal a stale per-user config.json: load_config() froze /srv paths into
     # it on the first GUI load (before this fix). Repoint the derived shared-path
     # keys to the local site, preserving user prefs. No-op on a fresh machine.

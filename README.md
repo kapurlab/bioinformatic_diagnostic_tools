@@ -342,23 +342,25 @@ metal (no OOD yet)? Start at [docs/INSTALL_BARE_METAL.md](docs/INSTALL_BARE_META
 
 ## Updating
 
-Two things update independently — do them in this order:
+Two things update independently — run these from your
+`bioinformatic_diagnostic_tools` checkout, in this order:
 
-1. **The `bioinformatic_diagnostic_tools` checkout itself** (the `bdtools` CLI, the
-   `tools.yml` manifest, and the install scripts). `bdtools update` does NOT touch
-   this — pull it in its own checkout:
-   ```bash
-   git -C /path/to/bioinformatic_diagnostic_tools pull
-   ```
-2. **The individual tools** — each tool repo, moved to its newest tag:
-   ```bash
-   bdtools check-updates          # report newer upstream versions (read-only)
-   bdtools update <tool|all>      # move to the newest tag + rebuild
-   ```
+```bash
+cd bioinformatic_diagnostic_tools   # the folder you installed into
 
-Pull the repo first, then `bdtools update`, so any new install-script behavior is in
-effect when tools rebuild. On local (macOS/Linux) installs, launching a GUI after
-updating also self-heals its shared-tool links (e.g. vSNP3's link to Kraken ID Parse).
+# 1. The checkout itself (the bdtools CLI, tools.yml manifest, install scripts).
+#    `bin/bdtools update` does NOT touch this — pull it yourself:
+git pull
+
+# 2. The individual tools — each tool repo, moved to its newest tag:
+bin/bdtools check-updates          # report newer upstream versions (read-only)
+bin/bdtools update <tool|all>      # move to the newest tag + rebuild
+```
+
+Pull the repo first, then `bin/bdtools update`, so any new install-script behavior
+is in effect when tools rebuild. On local (macOS/Linux) installs, launching a GUI
+after updating also self-heals its shared-tool links (e.g. vSNP3's link to Kraken
+ID Parse).
 
 The manifest is the source of truth: tagging this repo (`suite-YYYY.MM`) pins
 the entire set, so any site can reproduce an exact deployment. Maintainers: see

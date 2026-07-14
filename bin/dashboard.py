@@ -59,6 +59,9 @@ CAVEAT = {
     "mhc_gui": ("This tool is under active development. Results are preliminary, "
                 "have not been fully validated, and should not be treated as "
                 "definitive; interpret with caution and confirm by orthogonal methods."),
+    "ncbi_submit_gui": ("This tool is under active development. Output is preliminary "
+                        "and has not been fully validated; review all generated "
+                        "submission files carefully before submitting to NCBI."),
 }
 
 

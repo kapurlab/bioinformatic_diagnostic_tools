@@ -149,7 +149,21 @@ phase_toolchain() {
   # Build env + frontend via the tool's own no-sudo installer (shared env at <dir>/env).
   if [[ -x "${DIR}/deploy/install.sh" ]]; then
     local a=(); [[ ${DRY_RUN} -eq 1 ]] && a+=(--dry-run)
-    [[ -n "${CONDA_BASE:-}" ]] && a+=(--conda-base "${CONDA_BASE}")
+    # conda base: an explicit CONDA_BASE (from site conf) wins; otherwise resolve a
+    # real one so the tool installer doesn't fall back to its ~/miniforge3 default
+    # and die "conda not found" on a miniconda3 host.
+    if [[ -n "${CONDA_BASE:-}" ]]; then a+=(--conda-base "${CONDA_BASE}")
+    elif grep -q -- '--conda-base' "${DIR}/deploy/install.sh" 2>/dev/null; then
+      local _cbase; _cbase="$(conda_base_dir)"; [[ -n "${_cbase}" ]] && a+=(--conda-base "${_cbase}")
+    fi
+    # Skip the frontend rebuild when a prebuilt dist ships. All GUIs use vite
+    # base:"./", so the shipped dist is path-portable (works under any OOD
+    # sub-path) — this avoids a hard Node dependency on the server without a
+    # rebuild being needed. Mirrors install-local.sh.
+    if [[ -f "${DIR}/frontend/dist/index.html" ]] \
+       && grep -q -- '--skip-frontend' "${DIR}/deploy/install.sh" 2>/dev/null; then
+      a+=(--skip-frontend)
+    fi
     run "${DIR}/deploy/install.sh" ${a[@]+"${a[@]}"} || die "${TOOL} deploy/install.sh failed"
   else
     warn "${TOOL} has no deploy/install.sh — build its env+frontend manually,"

@@ -101,6 +101,16 @@ Every accession below is a **public** record from NCBI's Sequence Read Archive
 hand. The very first download of a sample can take a few minutes depending on its
 size and your connection; downloads are cached, so re-running is instant.
 
+**How the data tables work.** Each dataset is shown as a **two-column,
+tab-delimited table** — an `Accession` column and a label. Two ways to use it:
+
+- **Into Excel:** select the whole block (including the header row) and paste it
+  into a worksheet — the tab between the columns drops each value into its own
+  cell, so you get a tidy accession + label spreadsheet.
+- **Into a tool:** paste just the **`Accession`** column into the tool's **SRA
+  Download** box (or, for kSNP, its accession box). The label column is only there
+  for your reference — leave it out when loading a tool.
+
 ---
 
 ## Module 1 — IRMA: assemble an influenza genome
@@ -112,14 +122,15 @@ submission-ready FASTA headers.
 
 **Input.** Raw reads (FASTQ) — exactly what SRA gives you.
 
-### The data — copy this into IRMA's SRA Download box
+### The data
 
 ```
-SRR36749644
-SRR36749648
-SRR36749650
-SRR36749472
-SRR37580742
+Accession	Organism
+SRR36749644	Influenza A virus
+SRR36749648	Influenza A virus
+SRR36749650	Influenza A virus
+SRR36749472	Influenza A virus
+SRR37580742	Influenza A virus
 ```
 
 *Influenza A virus (IAV) whole-genome sequencing runs. We'll use the same set for
@@ -244,18 +255,19 @@ question in outbreak and surveillance work.
 The power of this split: you run Step 1 once, then re-run Step 2 as often as you
 like — adding samples, changing thresholds — **without re-aligning anything.**
 
-### The data — copy this into vSNP3's SRA Download box
+### The data
 
 ```
-SRR12882448
-SRR1173725
-SRR998630
-SRR7236232
-SRR6797355
-SRR10251192
-SRR10251191
-SRR10251185
-SRR10251193
+Accession	Organism
+SRR12882448	M. tuberculosis complex
+SRR1173725	M. tuberculosis complex
+SRR998630	M. tuberculosis complex
+SRR7236232	M. tuberculosis complex
+SRR6797355	M. tuberculosis complex
+SRR10251192	M. tuberculosis complex
+SRR10251191	M. tuberculosis complex
+SRR10251185	M. tuberculosis complex
+SRR10251193	M. tuberculosis complex
 ```
 
 *A small TB / M. bovis complex set — enough to learn Step 1 → QC → Step 2.*
@@ -341,35 +353,65 @@ Paste any subset (or all) of these into **SRA Download**. Each is labeled with t
 lineage/species it represents, so you can confirm the tree groups them correctly.
 
 ```
-ERR212113     Lineage 1        SRR671797     Lineage 2
-ERR270648     Lineage 1        ERR2704702    Lineage 2
-ERR2704680    Lineage 1        ERR221591     Lineage 3
-ERR234100     Lineage 2        SRR6797316    Lineage 3
-ERR553373     Lineage 2        SRR6964550    Lineage 3
-ERR2704693    Lineage 3        ERR234198     Lineage 4
-ERR270639     Lineage 4        SRR671750     Lineage 4
-ERR2704709    Lineage 4        ERR234113     Lineage 5
-ERR234680     Lineage 5        ERR2704812    Lineage 5
-ERR2704686    Lineage 5        ERR234186     Lineage 6
-ERR2383628    Lineage 6        ERR270805     Lineage 6
-ERR2704681    Lineage 6        ERR1200604    Lineage 7
-ERR181435     Lineage 7        ERR756345     Lineage 7
-ERR2704711    Lineage 7        SRR10828835   Lineage 8
-SRR1173725    Lineage 8        ERR181314     Lineage 9
-ERR181315     Lineage 9        ERR4192384    Lineage 9
-ERR2516384    Lineage 10       ERR2707158    Lineage 10
-ERR212091     M. bovis         SRR5216728    M. bovis
-SRR7983754    M. bovis         SRR1791695    M. bovis
-ERR10430697   M. caprae        ERR10430698   M. caprae
-ERR1462610    M. caprae        SRR7617662    M. caprae
-ERR027295     M. microti       ERR553376     M. microti
-ERR027297     M. microti       SRR3647357    M. microti
-SRR3500411    M. mungi         ERR015582     M. orygis
-ERR234682     M. orygis        SRR6797355    M. orygis
-SRR5642711    M. orygis        SRR1239336    M. pinnipedii
-SRR1239339    M. pinnipedii    SRR7693584    M. pinnipedii
-ERR970409     M. suricattae    ERR970410     M. suricattae
-ERR970412     M. suricattae    ERR266120     M. canettii
+Accession	Lineage / species
+ERR212113	Lineage 1
+ERR270648	Lineage 1
+ERR2704680	Lineage 1
+SRR671797	Lineage 2
+ERR2704702	Lineage 2
+ERR234100	Lineage 2
+ERR553373	Lineage 2
+ERR221591	Lineage 3
+SRR6797316	Lineage 3
+SRR6964550	Lineage 3
+ERR2704693	Lineage 3
+ERR234198	Lineage 4
+ERR270639	Lineage 4
+SRR671750	Lineage 4
+ERR2704709	Lineage 4
+ERR234113	Lineage 5
+ERR234680	Lineage 5
+ERR2704812	Lineage 5
+ERR2704686	Lineage 5
+ERR234186	Lineage 6
+ERR2383628	Lineage 6
+ERR270805	Lineage 6
+ERR2704681	Lineage 6
+ERR1200604	Lineage 7
+ERR181435	Lineage 7
+ERR756345	Lineage 7
+ERR2704711	Lineage 7
+SRR10828835	Lineage 8
+SRR1173725	Lineage 8
+ERR181314	Lineage 9
+ERR181315	Lineage 9
+ERR4192384	Lineage 9
+ERR2516384	Lineage 10
+ERR2707158	Lineage 10
+ERR212091	M. bovis
+SRR5216728	M. bovis
+SRR7983754	M. bovis
+SRR1791695	M. bovis
+ERR10430697	M. caprae
+ERR10430698	M. caprae
+ERR1462610	M. caprae
+SRR7617662	M. caprae
+ERR027295	M. microti
+ERR553376	M. microti
+ERR027297	M. microti
+SRR3647357	M. microti
+SRR3500411	M. mungi
+ERR015582	M. orygis
+ERR234682	M. orygis
+SRR6797355	M. orygis
+SRR5642711	M. orygis
+SRR1239336	M. pinnipedii
+SRR1239339	M. pinnipedii
+SRR7693584	M. pinnipedii
+ERR970409	M. suricattae
+ERR970410	M. suricattae
+ERR970412	M. suricattae
+ERR266120	M. canettii
 ```
 
 > 💡 **Start small.** This is a large panel — dozens of genomes, each aligned
@@ -424,16 +466,12 @@ reads.
 
 ### The data
 
-Two isolates — copy each into a separate project (or both into one).
+Two isolates — put both in one project, or one each. The *Pasteurella* isolate is reused for MLST in Module 6.
 
-*Pasteurella multocida* (also used for MLST in Module 6):
 ```
-SRR28320745
-```
-
-*Escherichia coli*:
-```
-SRR39605045
+Accession	Organism
+SRR28320745	Pasteurella multocida
+SRR39605045	Escherichia coli
 ```
 
 ### Steps
@@ -497,9 +535,9 @@ the scheme** — you don't tell it the species.
 
 ### The data — same isolate as Module 5
 
-*Pasteurella multocida*:
 ```
-SRR28320745
+Accession	Organism
+SRR28320745	Pasteurella multocida
 ```
 
 Reusing the *Pasteurella* isolate lets you see two tools describe one organism:
@@ -552,22 +590,23 @@ kSNP takes **GenBank/RefSeq genome accessions**, not SRA runs. Paste these into
 kSNP's **"Download genome FASTA by accession"** box (not the SRA box):
 
 ```
-CP041800     Lineage 1
-CP017920     Lineage 2
-CP046309     Lineage 3
-NC_000962    Lineage 4    (M. tuberculosis H37Rv — the classic reference)
-CP020381     Lineage 4
-CP089775     Lineage 4
-CP041837     Lineage 4
-CP069067     Lineage 5
-NZ_CP014617  Lineage 6
-CP041791     Lineage 7
-CP048071     Lineage 8
-NC_002945    M. bovis
-CP109681     M. bovis BCG
-CP016401     M. caprae
-LR882497     M. microti
-CP063804     M. orygis
+Accession	Lineage / species
+CP041800	Lineage 1
+CP017920	Lineage 2
+CP046309	Lineage 3
+NC_000962	Lineage 4 (M. tuberculosis H37Rv reference)
+CP020381	Lineage 4
+CP089775	Lineage 4
+CP041837	Lineage 4
+CP069067	Lineage 5
+NZ_CP014617	Lineage 6
+CP041791	Lineage 7
+CP048071	Lineage 8
+NC_002945	M. bovis
+CP109681	M. bovis BCG
+CP016401	M. caprae
+LR882497	M. microti
+CP063804	M. orygis
 ```
 
 ### Steps

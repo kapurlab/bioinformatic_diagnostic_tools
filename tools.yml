@@ -85,12 +85,12 @@ tools:
 
   # Under active development. Results are preliminary and not yet validated for
   # diagnostic use (see the development notice on its dashboard card): DRB3 is
-  # production-ready, Class I calls are provisional. The tool currently BORROWS
-  # the amr_plus env for its FastAPI backend (env: amr_plus); a dedicated env
-  # with the ONT/phase pipeline toolchain is still to be built.
+  # production-ready, Class I calls are provisional. Has its own dedicated conda
+  # env (like every other tool) with the full ONT amplicon toolchain; the BoLA
+  # reference bundle ships in-repo.
   - name: mhc_gui
     repo: https://github.com/kapurlab/bovine_mhc_typer.git
-    version: v0.1.2
+    version: v0.1.3
     ood_apps: [mhc_gui]
     dev_apps: [mhc_gui_dev]
-    env: amr_plus
+    env: mhc_gui

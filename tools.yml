@@ -90,7 +90,7 @@ tools:
   # with the ONT/phase pipeline toolchain is still to be built.
   - name: mhc_gui
     repo: https://github.com/kapurlab/bovine_mhc_typer.git
-    version: v0.1.0
+    version: v0.1.2
     ood_apps: [mhc_gui]
     dev_apps: [mhc_gui_dev]
     env: amr_plus

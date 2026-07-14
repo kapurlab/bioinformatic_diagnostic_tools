@@ -486,3 +486,14 @@ The tool repos stay independent and individually releasable. This umbrella only
 *references* them (by repo + version in `tools.yml`) and provides the shared
 install/update/site machinery. See [docs/BUILDING_A_TOOL.md](docs/BUILDING_A_TOOL.md)
 for the light contract a tool repo must satisfy to be drivable from here.
+
+## 🎓 Training
+
+New to the suite, or onboarding students? **[docs/TRAINING.md](docs/TRAINING.md)**
+is a hands-on, step-by-step walkthrough of every tool using real public data you
+can copy-paste straight into each GUI — assemble an influenza genome (IRMA) and
+genotype it (GenoFLU), run the two-step vSNP3 SNP workflow on TB isolates and
+build a whole-*M. tuberculosis*-complex phylogeny, profile resistance genes
+(AMRFinderPlus), assign a sequence type (MLST), and build a reference-free SNP
+tree (kSNP). No command-line experience required; each module explains how to run
+the tool **and how to interpret its output**.

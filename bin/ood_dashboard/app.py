@@ -56,7 +56,7 @@ HOP_BY_HOP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authoriza
 PRETTY = {
     "vsnp_gui": "vSNP3", "amr_plus_gui": "AMRFinderPlus", "irma_gui": "IRMA",
     "genoflu_gui": "GenoFLU", "mlst_gui": "MLST", "kraken_id_parse_gui": "Kraken ID / Parse",
-    "ksnp_gui": "kSNP", "ncbi_submit_gui": "NCBI Submit",
+    "ksnp_gui": "kSNP", "ncbi_submit_gui": "NCBI Submit", "mhc_gui": "Bovine MHC Typer",
 }
 BLURB = {
     "vsnp_gui": "SNP analysis & phylogeny (TB / Brucella)",
@@ -67,6 +67,14 @@ BLURB = {
     "kraken_id_parse_gui": "Taxonomic identification (Kraken2)",
     "ksnp_gui": "Reference-free SNP phylogeny (kSNP4)",
     "ncbi_submit_gui": "Prepare SRA / GenBank submissions",
+    "mhc_gui": "Bovine MHC (BoLA) typing from Nanopore amplicons",
+}
+# Static per-tool development notices, shown as a banner on the card. For tools
+# not yet validated for diagnostic use — independent of runtime readiness.
+CAVEAT = {
+    "mhc_gui": ("This tool is under active development. Results are preliminary, "
+                "have not been fully validated, and should not be treated as "
+                "definitive; interpret with caution and confirm by orthogonal methods."),
 }
 
 
@@ -132,7 +140,8 @@ class Suite:
             except Exception:
                 installed = False
             out.append({"name": name, "label": pretty(name),
-                        "blurb": BLURB.get(name, ""), "installed": installed})
+                        "blurb": BLURB.get(name, ""), "caveat": CAVEAT.get(name, ""),
+                        "installed": installed})
         return out
 
     async def launch(self, name):
@@ -239,6 +248,7 @@ PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
  button:disabled{{background:#cfc7ba;cursor:not-allowed}}button.open{{background:var(--accent2)}}
  .pill{{font-size:12px;padding:2px 9px;border-radius:999px;background:#efe9df;color:var(--muted)}}
  .pill.on{{background:#e2efe4;color:#3f6b48}}.err{{color:#b23b2e;font-size:12px;min-height:14px}}
+ .dev{{background:#fbecec;border:1px solid #ecc9c4;border-radius:8px;padding:8px 10px;font-size:12px;color:#8a3324}}
 </style></head><body>
 <header><h1>Kapur Lab Diagnostic Tools</h1>
 <p class="sub">One session, one allocation. Pick a tool to launch it on this node.</p></header>
@@ -252,6 +262,7 @@ async function load(){{
   const c=document.createElement('div');c.className='card';
   const pill=t.running?'<span class="pill on">running</span>':'<span class="pill">'+(t.installed?'installed':'not installed')+'</span>';
   c.innerHTML='<div class="name">'+t.label+'</div><div class="blurb">'+(t.blurb||'')+'</div>'+
+   (t.caveat?'<div class="dev"><b>⚠ Development status:</b> '+t.caveat+'</div>':'')+
    '<div class="row">'+pill+'<button '+(t.installed?'':'disabled')+' class="'+(t.running?'open':'')+'">'+(t.running?'Open':'Launch')+'</button></div>'+
    '<div class="err" id="err-'+t.name+'"></div>';
   const b=c.querySelector('button');b.onclick=()=>act(t.name,b);g.appendChild(c);

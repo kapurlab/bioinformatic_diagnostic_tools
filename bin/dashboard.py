@@ -39,6 +39,7 @@ PRETTY = {
     "kraken_id_parse_gui": "Kraken ID / Parse",
     "ksnp_gui": "kSNP",
     "ncbi_submit_gui": "NCBI Submit",
+    "mhc_gui": "Bovine MHC Typer",
 }
 BLURB = {
     "vsnp_gui": "SNP analysis & phylogeny (TB / Brucella)",
@@ -49,6 +50,15 @@ BLURB = {
     "kraken_id_parse_gui": "Taxonomic identification (Kraken2)",
     "ksnp_gui": "Reference-free SNP phylogeny (kSNP4)",
     "ncbi_submit_gui": "Prepare SRA / GenBank submissions",
+    "mhc_gui": "Bovine MHC (BoLA) typing from Nanopore amplicons",
+}
+# Static per-tool development notices. Shown as a prominent banner on the card
+# for tools that are not yet validated for diagnostic use — independent of the
+# runtime readiness check (which reports missing deps/databases).
+CAVEAT = {
+    "mhc_gui": ("This tool is under active development. Results are preliminary, "
+                "have not been fully validated, and should not be treated as "
+                "definitive; interpret with caution and confirm by orthogonal methods."),
 }
 
 
@@ -133,6 +143,7 @@ class Suite:
                 "name": name,
                 "label": pretty(name),
                 "blurb": BLURB.get(name, ""),
+                "caveat": CAVEAT.get(name, ""),
                 "installed": installed,
                 # ready is None when readiness is unknown (doctor unavailable or
                 # tool has no spec); the UI only badges an explicit False.
@@ -219,6 +230,9 @@ PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
    font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;
    user-select:all;word-break:break-all}
  .plat{font-size:12px;color:var(--muted);font-style:italic}
+ .dev{background:#fbecec;border:1px solid #ecc9c4;border-radius:8px;padding:8px 10px;
+   font-size:12px;color:#8a3324}
+ .dev b{color:#7a2a1e}
  .recheck{padding:0 24px 12px;font-size:13px}
  .recheck button{background:transparent;color:var(--accent);padding:4px 0;font-weight:600}
 </style></head><body>
@@ -240,6 +254,11 @@ function noteBlock(t){
   if(!t.installed || !(t.notes&&t.notes.length)) return '';
   return `<div class="plat">${t.notes.map(n=>'⚠ '+esc(n)).join('<br>')}</div>`;
 }
+function devBlock(t){
+  // Static development notice — the tool is not yet validated for diagnostic use.
+  if(!t.caveat) return '';
+  return `<div class="dev"><b>⚠ Development status:</b> ${esc(t.caveat)}</div>`;
+}
 async function load(){
   const r = await fetch('./api/tools'); const tools = await r.json();
   const g = document.getElementById('grid'); g.innerHTML='';
@@ -254,6 +273,7 @@ async function load(){
       : `<span class="pill">${t.installed?'installed':'not installed'}</span>`;
     c.innerHTML = `<div class="name">${t.label}</div>
       <div class="blurb">${t.blurb||''}</div>
+      ${devBlock(t)}
       ${setupBlock(t)}
       ${noteBlock(t)}
       <div class="row">

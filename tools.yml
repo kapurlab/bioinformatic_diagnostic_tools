@@ -82,3 +82,13 @@ tools:
     ood_apps: [ncbi_submit_gui]
     dev_apps: [ncbi_submit_gui_dev]
     env: ncbi_submit
+
+  # Under active development. Results are preliminary and not yet validated for
+  # diagnostic use (see the development notice on its dashboard card): DRB3 is
+  # production-ready, Class I calls are provisional.
+  - name: mhc_gui
+    repo: https://github.com/kapurlab/bovine_mhc_typer.git
+    version: v0.1.0
+    ood_apps: [mhc_gui]
+    dev_apps: [mhc_gui_dev]
+    env: mhc_gui

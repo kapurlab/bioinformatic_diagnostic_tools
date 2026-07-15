@@ -286,11 +286,19 @@ generic_build() {
     log "pip install backend requirements"
     run "${DIR}/env/bin/python" -m pip install -r "${DIR}/backend/requirements.txt"
   fi
-  if [[ -d "${DIR}/frontend" && ! -f "${DIR}/frontend/dist/index.html" ]]; then
-    log "building frontend"
-    ( cd "${DIR}/frontend" && command -v npm >/dev/null 2>&1 \
-        && { run npm ci || run npm install; run npm run build; } \
-        || warn "npm not found — frontend not built" )
+  if [[ -d "${DIR}/frontend" ]]; then
+    # Rebuild the frontend whenever npm is available so a tool update actually
+    # ships its new UI (dist/ is gitignored — only built here, not committed —
+    # so skipping when a stale dist exists would silently keep the old UI).
+    # Only fall back to the existing dist when Node is genuinely absent.
+    if command -v npm >/dev/null 2>&1; then
+      log "building frontend"
+      ( cd "${DIR}/frontend" && { run npm ci || run npm install; run npm run build; } )
+    elif [[ ! -f "${DIR}/frontend/dist/index.html" ]]; then
+      warn "npm not found and no prebuilt dist — frontend not built"
+    else
+      warn "npm not found — keeping the existing frontend build (it may be stale)"
+    fi
   fi
 }
 
@@ -394,11 +402,19 @@ build_vsnp_local() {
     [[ -e "${DIR}/vSNP_reference_options" ]] || ln -s "${refs}" "${DIR}/vSNP_reference_options" 2>/dev/null || true
   fi
   # 5. frontend
-  if [[ -d "${DIR}/frontend" && ! -f "${DIR}/frontend/dist/index.html" ]]; then
-    log "building frontend"
-    ( cd "${DIR}/frontend" && command -v npm >/dev/null 2>&1 \
-        && { run npm ci || run npm install; run npm run build; } \
-        || warn "npm not found — frontend not built" )
+  if [[ -d "${DIR}/frontend" ]]; then
+    # Rebuild the frontend whenever npm is available so a tool update actually
+    # ships its new UI (dist/ is gitignored — only built here, not committed —
+    # so skipping when a stale dist exists would silently keep the old UI).
+    # Only fall back to the existing dist when Node is genuinely absent.
+    if command -v npm >/dev/null 2>&1; then
+      log "building frontend"
+      ( cd "${DIR}/frontend" && { run npm ci || run npm install; run npm run build; } )
+    elif [[ ! -f "${DIR}/frontend/dist/index.html" ]]; then
+      warn "npm not found and no prebuilt dist — frontend not built"
+    else
+      warn "npm not found — keeping the existing frontend build (it may be stale)"
+    fi
   fi
 }
 
@@ -418,11 +434,13 @@ build() {
       local _cbase; _cbase="$(conda_base_dir)"
       [[ -n "${_cbase}" ]] && args+=(--conda-base "${_cbase}")
     fi
-    # Every GUI ships a prebuilt frontend/dist. The tool installers otherwise try
-    # to rebuild it and hard-fail when Node is absent (a laptop without node, or
-    # node_modules present but no node binary). Mirror generic_build's
-    # skip-if-already-built behavior: when dist exists, skip the frontend build.
+    # Let the tool installer rebuild the frontend when npm is available, so a
+    # tool update actually ships its new UI (dist/ is gitignored, so a stale
+    # dist from the previous install would otherwise be kept). Only skip the
+    # frontend build — keeping the existing dist — when Node is absent, which is
+    # also where the tool installers hard-fail if asked to build.
     if [[ -f "${DIR}/frontend/dist/index.html" ]] \
+       && ! command -v npm >/dev/null 2>&1 \
        && grep -q -- '--skip-frontend' "${DIR}/deploy/install.sh" 2>/dev/null; then
       args+=(--skip-frontend)
     fi

@@ -550,13 +550,13 @@ async function applyUpdates(target,btn){
       ? 'Update bdtools (the suite + this dashboard) now?'
       : 'Install tool updates now? This rebuilds environments and may take several minutes.')) return;
   document.querySelectorAll('.updates button').forEach(b=>b.disabled=true);
-  const log=document.getElementById('ulog'); if(log){ log.style.display='block'; log.textContent='Starting…\n'; }
+  const log=document.getElementById('ulog'); if(log){ log.style.display='block'; log.textContent='Starting…\\n'; }
   try{
     const r=await fetch('./api/apply-updates?target='+encodeURIComponent(target),{method:'POST'});
     const j=await r.json();
-    if(!j.started){ if(log) log.textContent += (j.error||'could not start')+'\n'; return; }
+    if(!j.started){ if(log) log.textContent += (j.error||'could not start')+'\\n'; return; }
     pollUpdate();
-  }catch(e){ if(log) log.textContent += String(e)+'\n'; }
+  }catch(e){ if(log) log.textContent += String(e)+'\\n'; }
 }
 async function pollUpdate(){
   if(updatePolling) return; updatePolling=true;
@@ -564,7 +564,7 @@ async function pollUpdate(){
   const tick=async()=>{
     try{
       const r=await fetch('./api/update-status'); const s=await r.json();
-      if(log){ log.textContent=(s.log||[]).join('\n'); log.scrollTop=log.scrollHeight; }
+      if(log){ log.textContent=(s.log||[]).join('\\n'); log.scrollTop=log.scrollHeight; }
       if(s.done){
         updatePolling=false;
         if(done) done.innerHTML = s.ok

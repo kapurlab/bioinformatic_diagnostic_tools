@@ -52,31 +52,110 @@ ENV_NAME="$(manifest_get "${TOOL}" env)"
 # wins if one is already set in the environment.
 export CONDA_CHANNEL_PRIORITY="${CONDA_CHANNEL_PRIORITY:-strict}"
 
-# with_progress "<label>" cmd [args...] — run a long, often-silent step (a conda
-# solve, a delegated deploy/install.sh, a big DB download) with a timestamped
-# start/done banner and a heartbeat while it runs. The heartbeat is the point:
-# a conda solve prints nothing for minutes, so without it a healthy solve and a
-# real hang look identical. With it, both the terminal and a piped log show
-# "still working, 3m00s elapsed" — so `bdtools install` never reads as frozen,
-# and if it truly wedges you can see exactly which step and for how long.
-# Honors --dry-run and `set -e`; returns the command's own exit code.
-# Heartbeat interval: BDTOOLS_HEARTBEAT_SECS (default 30; 0 disables it).
+# Progress helpers for the long, often-silent build steps (conda solve, package
+# download, delegated deploy/install.sh). The problem they solve: a solve is
+# CPU-bound and silent, a download is I/O-bound and silent, and a *stalled*
+# download (dead mirror connection, no timeout) is silent too — on the command
+# line all three look identical, which is the root of the "hung for hours"
+# reports. So we watch two independent progress signals and act on them.
+
+# _tree_cpu_ticks PID — total CPU ticks (utime+stime) of PID and all descendants.
+# Rises during a solve/extract even when nothing is written to disk.
+_tree_cpu_ticks() {
+  local frontier="$1" next pid t total=0
+  while [[ -n "${frontier}" ]]; do
+    next=""
+    for pid in ${frontier}; do
+      t="$(awk '{print $14+$15}' "/proc/${pid}/stat" 2>/dev/null || echo 0)"
+      total=$(( total + ${t:-0} ))
+      next="${next} $(pgrep -P "${pid}" 2>/dev/null | tr '\n' ' ')"
+    done
+    frontier="${next}"
+  done
+  echo "${total}"
+}
+
+# _watched_bytes — total bytes across the paths a build writes to (the pkg cache,
+# the target env prefix, the frontend). Rises during a download/extract/link even
+# when CPU is idle. Cheap enough at heartbeat cadence; missing paths are skipped.
+_watched_bytes() {
+  local p b total=0
+  for p in "$@"; do
+    [[ -e "${p}" ]] || continue
+    b="$(du -sb "${p}" 2>/dev/null | cut -f1)"
+    total=$(( total + ${b:-0} ))
+  done
+  echo "${total}"
+}
+
+# _kill_tree PID — SIGKILL PID and all descendants (mamba spawns worker children).
+_kill_tree() {
+  local p
+  for p in $(pgrep -P "$1" 2>/dev/null); do _kill_tree "${p}"; done
+  kill -9 "$1" 2>/dev/null || true
+}
+
+# with_progress "<label>" cmd [args...] — run a long build step with a heartbeat,
+# a stall detector, and automatic retry. Every BDTOOLS_HEARTBEAT_SECS (default 30)
+# it checks CPU-tree ticks and watched-bytes; if NEITHER has advanced for
+# BDTOOLS_IDLE_TIMEOUT seconds (default 300, 0 disables) the step is treated as
+# wedged — the process tree is killed and the whole step retried, up to
+# BDTOOLS_BUILD_TRIES attempts (default 2). This turns a dead-mirror stall from an
+# indefinite hang into a bounded wait + retry. Honors --dry-run and `set -e`;
+# returns the command's own exit code (124 if it was killed for stalling).
 with_progress() {
   local label="$1"; shift
   if [[ "${DRY_RUN:-0}" -eq 1 ]]; then echo "  [dry-run] ${label}: $*"; return 0; fi
-  local secs="${BDTOOLS_HEARTBEAT_SECS:-30}" t0 hb=0 rc=0 tot
-  t0="$(date +%s)"
-  log "${label} — started $(date '+%H:%M:%S')  (silence during a conda solve is normal)"
-  if [[ "${secs}" -gt 0 ]]; then
-    ( while :; do sleep "${secs}"; e=$(( $(date +%s) - t0 ))
-        printf '  … %s: still working, %dm%02ds elapsed\n' "${label}" $((e/60)) $((e%60)); done ) &
-    hb=$!
-  fi
-  "$@" || rc=$?
-  [[ "${hb}" -ne 0 ]] && { kill "${hb}" 2>/dev/null || true; wait "${hb}" 2>/dev/null || true; }
-  tot=$(( $(date +%s) - t0 ))
+  local tries="${BDTOOLS_BUILD_TRIES:-2}" attempt=1 rc=0
+  while :; do
+    [[ "${tries}" -gt 1 ]] && log "${label} — attempt ${attempt}/${tries}"
+    rc=0; _run_watched "${label}" "$@" || rc=$?
+    [[ ${rc} -eq 0 ]] && return 0
+    if [[ ${attempt} -ge ${tries} ]]; then
+      warn "${label} — giving up after ${attempt} attempt(s) (exit ${rc})"
+      return ${rc}
+    fi
+    warn "${label} — failed/stalled (exit ${rc}); retrying in 5s…"
+    sleep 5; attempt=$(( attempt + 1 ))
+  done
+}
+
+# _run_watched: one attempt — launch, monitor CPU+disk progress, kill on stall.
+_run_watched() {
+  local label="$1"; shift
+  local secs="${BDTOOLS_HEARTBEAT_SECS:-30}" idle_max="${BDTOOLS_IDLE_TIMEOUT:-300}"
+  local watch=() cbase
+  cbase="$(conda_base_dir 2>/dev/null || true)"
+  [[ -n "${cbase}" ]] && watch+=("${cbase}/pkgs")
+  [[ -n "${cbase}" && -n "${ENV_NAME:-}" ]] && watch+=("${cbase}/envs/${ENV_NAME}")
+  watch+=("${DIR}/env" "${DIR}/frontend/node_modules" "${DIR}/frontend/dist")
+  local t0 last cpu0 disk0 cpu disk now e idle rc=0
+  t0="$(date +%s)"; last="${t0}"
+  log "${label} — started $(date '+%H:%M:%S')  (heartbeat ${secs}s; stall-kill after ${idle_max}s of no progress)"
+  "$@" & local cmd=$!
+  cpu0="$(_tree_cpu_ticks "${cmd}")"; disk0="$(_watched_bytes "${watch[@]}")"
+  while kill -0 "${cmd}" 2>/dev/null; do
+    sleep "${secs}"
+    kill -0 "${cmd}" 2>/dev/null || break
+    now="$(date +%s)"; e=$(( now - t0 ))
+    cpu="$(_tree_cpu_ticks "${cmd}")"; disk="$(_watched_bytes "${watch[@]}")"
+    if [[ "${cpu}" != "${cpu0}" || "${disk}" != "${disk0}" ]]; then
+      last="${now}"; cpu0="${cpu}"; disk0="${disk}"
+      printf '  … %s: working, %dm%02ds elapsed\n' "${label}" $((e/60)) $((e%60))
+    else
+      idle=$(( now - last ))
+      printf '  … %s: NO cpu/disk progress for %ds (elapsed %dm%02ds)\n' "${label}" "${idle}" $((e/60)) $((e%60))
+      if [[ "${idle_max}" -gt 0 && ${idle} -ge ${idle_max} ]]; then
+        warn "${label} — stalled ${idle}s with no CPU or disk progress; killing to retry"
+        _kill_tree "${cmd}"; wait "${cmd}" 2>/dev/null || true
+        return 124
+      fi
+    fi
+  done
+  if wait "${cmd}"; then rc=0; else rc=$?; fi
+  local tot=$(( $(date +%s) - t0 ))
   if [[ ${rc} -eq 0 ]]; then ok "${label} — done in $((tot/60))m$((tot%60))s"
-  else warn "${label} — FAILED after $((tot/60))m$((tot%60))s (exit ${rc})"; fi
+  else warn "${label} — exited ${rc} after $((tot/60))m$((tot%60))s"; fi
   return ${rc}
 }
 

@@ -118,6 +118,15 @@ _kill_tree() {
   kill -9 "$1" 2>/dev/null || true
 }
 
+# _env_built [conda_base] — is the tool's target conda env created yet? Handles
+# both a prefix env (<checkout>/env) and a named --personal env (<base>/envs/<name>).
+# Used to gate the runaway-solve guard: a stuck solve never produces an env.
+_env_built() {
+  [[ -x "${DIR}/env/bin/python" ]] && return 0
+  [[ -n "${1:-}" && -n "${ENV_NAME:-}" && -x "${1}/envs/${ENV_NAME}/bin/python" ]] && return 0
+  return 1
+}
+
 # with_progress "<label>" cmd [args...] — run a long build step with a heartbeat,
 # a stall detector, and automatic retry. Every BDTOOLS_HEARTBEAT_SECS (default 30)
 # it checks CPU-tree ticks and watched-bytes; if NEITHER has advanced for
@@ -147,6 +156,7 @@ with_progress() {
 _run_watched() {
   local label="$1"; shift
   local secs="${BDTOOLS_HEARTBEAT_SECS:-30}" idle_max="${BDTOOLS_IDLE_TIMEOUT:-300}"
+  local solve_max="${BDTOOLS_SOLVE_MAX_SECS:-2400}"   # cap the env-create (solve+download) phase
   local watch=() cbase
   cbase="$(conda_base_dir 2>/dev/null || true)"
   [[ -n "${cbase}" ]] && watch+=("${cbase}/pkgs")
@@ -173,6 +183,18 @@ _run_watched() {
         _kill_tree "${cmd}"; wait "${cmd}" 2>/dev/null || true
         return 124
       fi
+    fi
+    # Runaway-solve guard: a stuck mamba/conda solve spins at 100% CPU — so the
+    # idle check above (which resets on CPU progress) never fires — and never
+    # creates the env. Cap the solve+download phase: if the target env still
+    # doesn't exist after solve_max seconds, treat it as runaway and kill+retry.
+    # Disarmed the moment the env appears, so a long post-solve step (a big DB
+    # download/extract to an unwatched path, npm, pip) is never capped — only
+    # the idle check guards those.
+    if [[ "${solve_max}" -gt 0 && ${e} -ge ${solve_max} ]] && ! _env_built "${cbase}"; then
+      warn "${label} — env still not created after ${e}s (runaway solve?); killing to retry"
+      _kill_tree "${cmd}"; wait "${cmd}" 2>/dev/null || true
+      return 124
     fi
   done
   if wait "${cmd}"; then rc=0; else rc=$?; fi

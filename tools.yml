@@ -21,7 +21,7 @@
 # All tools carry a baseline tag (vsnp_gui v0.2.0; the rest v0.1.0, cut
 # 2026-06-16). Bump a pin with `bdtools update <tool>` once newer tags exist.
 
-suite_version: "2026.06-dev"
+suite_version: "2026.07"
 
 tools:
   - name: vsnp_gui

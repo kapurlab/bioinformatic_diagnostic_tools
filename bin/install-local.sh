@@ -63,6 +63,18 @@ export CONDA_CHANNEL_PRIORITY="${CONDA_CHANNEL_PRIORITY:-strict}"
 # inherit it. Operator override wins if one is already set.
 export CONDA_DEFAULT_CHANNELS="${CONDA_DEFAULT_CHANNELS:-conda-forge,bioconda}"
 
+# Prefer conda's libmamba solver over standalone mamba for env builds. mamba 2.x
+# has a solver regression that spins indefinitely on large bioconda graphs:
+# amr_plus_gui's env ran mamba 2.5 at 100% CPU for 2h+ without finishing, while
+# conda/libmamba solved the identical spec in ~6 min (full build 13 min). The
+# tool deploy/install.sh scripts prefer mamba but honor a preset CONDA_FRONTEND,
+# so point them at conda. Only set when a conda binary is resolvable and the
+# operator hasn't already chosen a frontend.
+if [[ -z "${CONDA_FRONTEND:-}" ]]; then
+  _cf_base="$(conda_base_dir 2>/dev/null || true)"
+  [[ -n "${_cf_base}" && -x "${_cf_base}/bin/conda" ]] && export CONDA_FRONTEND="${_cf_base}/bin/conda"
+fi
+
 # Progress helpers for the long, often-silent build steps (conda solve, package
 # download, delegated deploy/install.sh). The problem they solve: a solve is
 # CPU-bound and silent, a download is I/O-bound and silent, and a *stalled*

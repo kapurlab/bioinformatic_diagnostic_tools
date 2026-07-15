@@ -127,6 +127,75 @@ def readiness_map():
         return {}
 
 
+def _parse_update_line(line):
+    """Parse one `check-updates` report line into an update record, or None.
+
+    Line shape (from check-updates.sh report_one):
+      <name> pinned=<v> installed=<v> latest=<v> <status text>
+    """
+    line = line.rstrip()
+    if not line or "pinned=" not in line or "installed=" not in line:
+        return None
+    name = line.split()[0]
+    def field(key):
+        for tok in line.split():
+            if tok.startswith(key + "="):
+                return tok[len(key) + 1:]
+        return ""
+    installed = field("installed")
+    latest = field("latest")
+    available = "available" in line  # "↑ <latest> available"
+    return {
+        "name": name,
+        "label": pretty(name),
+        "installed": installed or "—",
+        "latest": latest or "—",
+        "update_available": available,
+    }
+
+
+def check_tool_updates():
+    """Run `bdtools check-updates all` and return a list of per-tool update
+    records. Best-effort: returns [] on any failure (network, git, timeout)."""
+    try:
+        out = subprocess.run([BDTOOLS, "check-updates", "all"], cwd=str(REPO_DIR),
+                             capture_output=True, text=True, timeout=120).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    recs = []
+    for line in out.splitlines():
+        rec = _parse_update_line(line)
+        if rec:
+            recs.append(rec)
+    return recs
+
+
+def check_bdtools_update():
+    """Is the umbrella (bdtools) checkout behind its upstream branch? Returns a
+    record or None. Best-effort — no upstream / not a git checkout / offline
+    all yield None (no cue shown)."""
+    git = ["git", "-C", str(REPO_DIR)]
+    try:
+        if subprocess.run(git + ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+                          capture_output=True, text=True, timeout=15).returncode != 0:
+            return None  # no upstream tracking branch
+        subprocess.run(git + ["fetch", "--quiet"], capture_output=True, text=True, timeout=60)
+        behind = subprocess.run(git + ["rev-list", "--count", "HEAD..@{u}"],
+                               capture_output=True, text=True, timeout=15).stdout.strip()
+        n = int(behind or "0")
+        current = subprocess.run(git + ["describe", "--tags", "--always"],
+                                capture_output=True, text=True, timeout=15).stdout.strip()
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+    return {
+        "name": "bdtools",
+        "label": "bdtools (suite + dashboard)",
+        "installed": current or "—",
+        "latest": f"{n} new commit(s)" if n else current or "—",
+        "update_available": n > 0,
+    }
+
+
 class Suite:
     """Tracks installed tools and any tool servers this dashboard has launched."""
 
@@ -134,6 +203,10 @@ class Suite:
         self.lock = threading.Lock()
         self.running = {}  # name -> {"port": int, "proc": Popen, "url": str}
         self.tools = []    # [{"name","label","blurb","installed"}]
+        # Update state: cached check + a single background apply job.
+        self.updates_cache = None   # {"checked": bool, "items": [...], "any": bool}
+        self.update_job = {"running": False, "done": False, "ok": None,
+                           "target": None, "log": []}
         self.refresh()
 
     def refresh(self):
@@ -194,6 +267,77 @@ class Suite:
             time.sleep(0.5)
         return None, "timed out waiting for the tool to start (first launch may still be building)"
 
+    # --- Updates -----------------------------------------------------------
+    def check_updates(self):
+        """Check bdtools + every tool for newer versions; cache and return it."""
+        items = []
+        bd = check_bdtools_update()
+        if bd:
+            items.append(bd)
+        items.extend(check_tool_updates())
+        cache = {
+            "checked": True,
+            "items": items,
+            "any": any(i["update_available"] for i in items),
+        }
+        with self.lock:
+            self.updates_cache = cache
+        return cache
+
+    def apply_updates(self, target):
+        """Start a background update of `target` ('all', a tool name, or
+        'bdtools'). Returns (started: bool, error: str|None)."""
+        with self.lock:
+            if self.update_job["running"]:
+                return False, "an update is already running"
+            self.update_job = {"running": True, "done": False, "ok": None,
+                               "target": target, "log": []}
+        threading.Thread(target=self._run_update, args=(target,), daemon=True).start()
+        return True, None
+
+    def _log(self, msg):
+        with self.lock:
+            self.update_job["log"].append(msg)
+            # keep the tail bounded
+            if len(self.update_job["log"]) > 2000:
+                self.update_job["log"] = self.update_job["log"][-2000:]
+
+    def _run_update(self, target):
+        if target == "bdtools":
+            cmd = ["git", "-C", str(REPO_DIR), "pull", "--ff-only"]
+            self._log("$ git pull --ff-only  (updating bdtools)")
+        else:
+            cmd = [BDTOOLS, "update", target]
+            self._log(f"$ bdtools update {target}")
+            self._log("Rebuilding environments — this can take several minutes per tool…")
+        ok = False
+        try:
+            proc = subprocess.Popen(cmd, cwd=str(REPO_DIR), stdout=subprocess.PIPE,
+                                    stderr=subprocess.STDOUT, text=True, bufsize=1)
+            for line in proc.stdout:
+                self._log(line.rstrip())
+            ok = proc.wait() == 0
+        except (OSError, subprocess.SubprocessError) as exc:
+            self._log(f"ERROR: {exc}")
+            ok = False
+        self._log("")
+        self._log("✅ Done." if ok else "⚠ Update finished with errors — see the log above.")
+        with self.lock:
+            self.update_job["running"] = False
+            self.update_job["done"] = True
+            self.update_job["ok"] = ok
+        # Refresh the update cache so the banner reflects the new state.
+        try:
+            self.check_updates()
+        except Exception:  # noqa: BLE001
+            pass
+
+    def update_status(self):
+        with self.lock:
+            j = self.update_job
+            return {"running": j["running"], "done": j["done"], "ok": j["ok"],
+                    "target": j["target"], "log": j["log"][-400:]}
+
 
 SUITE = None
 
@@ -238,9 +382,25 @@ PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
  .dev b{color:#7a2a1e}
  .recheck{padding:0 24px 12px;font-size:13px}
  .recheck button{background:transparent;color:var(--accent);padding:4px 0;font-weight:600}
+ .updates{margin:8px 24px 0;border-radius:10px;padding:12px 14px;font-size:13.5px;
+   border:1px solid var(--line);background:var(--card)}
+ .updates.checking{color:var(--muted)}
+ .updates.current{background:#e9f1ea;border-color:#cfe2d1;color:#3f6b48}
+ .updates.avail{background:#fbf1dc;border-color:#f0dcae;color:#7a5a1e}
+ .updates .uhead{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+ .updates .utitle{font-weight:650}
+ .updates ul{margin:8px 0 0;padding-left:18px}
+ .updates li{margin:2px 0}
+ .updates .uactions{display:flex;gap:8px;flex-wrap:wrap}
+ .updates button.u{background:var(--accent)}
+ .updates button.link{background:transparent;color:var(--accent);padding:4px 6px;font-weight:600}
+ .ulog{margin-top:10px;background:#2c2a26;color:#eee;border-radius:8px;padding:8px 10px;
+   font:12px/1.45 ui-monospace,Menlo,Consolas,monospace;max-height:220px;overflow:auto;white-space:pre-wrap}
+ .udone{margin-top:8px;font-weight:600}
 </style></head><body>
 <header><h1>Kapur Lab Diagnostic Tools</h1>
 <p class="sub">Pick a tool to launch it on this machine. Each opens in a new tab.</p></header>
+<div id="updates" class="updates checking">Checking for updates…</div>
 <div id="grid" class="grid"></div>
 <p class="recheck" id="recheck" style="display:none"><button onclick="recheck(this)">↻ Re-check readiness</button></p>
 <p class="note" id="note"></p>
@@ -308,7 +468,79 @@ async function act(name,btn){
   }catch(e){ err.textContent=String(e); }
   btn.disabled=false; btn.textContent=was; load();
 }
+// ---- Updates: check on open, show a cue, offer install buttons ----
+let updatePolling = false;
+function renderUpdates(d){
+  const box = document.getElementById('updates');
+  if(!d || !d.checked){ box.className='updates checking'; box.textContent='Checking for updates…'; return; }
+  const items = d.items || [];
+  const avail = items.filter(i=>i.update_available);
+  if(!avail.length){
+    box.className='updates current';
+    box.innerHTML = `<div class="uhead"><span class="utitle">✓ Everything is up to date.</span>`
+      + `<button class="link" onclick="checkUpdates(true)">Re-check</button></div>`;
+    return;
+  }
+  box.className='updates avail';
+  const bd = avail.find(i=>i.name==='bdtools');
+  const toolUps = avail.filter(i=>i.name!=='bdtools');
+  const li = avail.map(i=>`<li><b>${esc(i.label)}</b>: ${esc(i.installed)} → <b>${esc(i.latest)}</b></li>`).join('');
+  let actions = '';
+  if(toolUps.length) actions += `<button class="u" onclick="applyUpdates('all',this)">Install tool updates (${toolUps.length})</button>`;
+  if(bd) actions += `<button class="u" onclick="applyUpdates('bdtools',this)">Update bdtools</button>`;
+  actions += `<button class="link" onclick="checkUpdates(true)">Re-check</button>`;
+  box.innerHTML = `<div class="uhead"><span class="utitle">↑ Updates available (${avail.length})</span>`
+    + `<span class="uactions">${actions}</span></div>`
+    + `<ul>${li}</ul>`
+    + `<div class="udesc" style="margin-top:6px;color:#7a5a1e">Installing rebuilds the tool's environment and can take a few minutes. `
+    + `When it finishes, <b>close this window and reopen the dashboard</b> to load the new version.</div>`
+    + `<div id="ulog" class="ulog" style="display:none"></div>`
+    + `<div id="udone" class="udone"></div>`;
+}
+async function checkUpdates(force){
+  const box=document.getElementById('updates');
+  if(force){ box.className='updates checking'; box.textContent='Checking for updates…'; }
+  try{
+    const r = await fetch('./api/check-updates',{method:'POST'});
+    renderUpdates(await r.json());
+  }catch(e){
+    box.className='updates'; box.textContent='Could not check for updates right now.';
+  }
+}
+async function applyUpdates(target,btn){
+  if(!confirm(target==='bdtools'
+      ? 'Update bdtools (the suite + this dashboard) now?'
+      : 'Install tool updates now? This rebuilds environments and may take several minutes.')) return;
+  document.querySelectorAll('.updates button').forEach(b=>b.disabled=true);
+  const log=document.getElementById('ulog'); if(log){ log.style.display='block'; log.textContent='Starting…\n'; }
+  try{
+    const r=await fetch('./api/apply-updates?target='+encodeURIComponent(target),{method:'POST'});
+    const j=await r.json();
+    if(!j.started){ if(log) log.textContent += (j.error||'could not start')+'\n'; return; }
+    pollUpdate();
+  }catch(e){ if(log) log.textContent += String(e)+'\n'; }
+}
+async function pollUpdate(){
+  if(updatePolling) return; updatePolling=true;
+  const log=document.getElementById('ulog'); const done=document.getElementById('udone');
+  const tick=async()=>{
+    try{
+      const r=await fetch('./api/update-status'); const s=await r.json();
+      if(log){ log.textContent=(s.log||[]).join('\n'); log.scrollTop=log.scrollHeight; }
+      if(s.done){
+        updatePolling=false;
+        if(done) done.innerHTML = s.ok
+          ? '✅ Updates installed. <b>Close this window and reopen the dashboard</b> to load the new versions.'
+          : '⚠ Update finished with errors — see the log above.';
+        return;
+      }
+    }catch(e){}
+    setTimeout(tick, 1500);
+  };
+  tick();
+}
 load(); setInterval(load, 5000);
+checkUpdates(false);
 </script></body></html>"""
 
 
@@ -330,6 +562,11 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, PAGE, "text/html; charset=utf-8")
         elif path == "/api/tools":
             self._send(200, json.dumps(SUITE.state()))
+        elif path == "/api/updates":
+            cache = SUITE.updates_cache or {"checked": False, "items": [], "any": False}
+            self._send(200, json.dumps(cache))
+        elif path == "/api/update-status":
+            self._send(200, json.dumps(SUITE.update_status()))
         else:
             self._send(404, json.dumps({"error": "not found"}))
 
@@ -339,6 +576,19 @@ class Handler(BaseHTTPRequestHandler):
             # Re-run readiness (after the user installs a database / fixes a dep).
             SUITE.refresh()
             self._send(200, json.dumps(SUITE.state()))
+            return
+        if parsed.path == "/api/check-updates":
+            self._send(200, json.dumps(SUITE.check_updates()))
+            return
+        if parsed.path == "/api/apply-updates":
+            target = (parse_qs(parsed.query).get("target") or ["all"])[0]
+            valid = {"all", "bdtools"} | {t["name"] for t in SUITE.tools}
+            if target not in valid:
+                self._send(400, json.dumps({"error": f"unknown update target: {target}"}))
+                return
+            started, err = SUITE.apply_updates(target)
+            code = 200 if started else 409
+            self._send(code, json.dumps({"started": started, "error": err}))
             return
         if parsed.path == "/api/launch":
             tool = (parse_qs(parsed.query).get("tool") or [""])[0]

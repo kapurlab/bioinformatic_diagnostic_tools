@@ -497,3 +497,12 @@ build a whole-*M. tuberculosis*-complex phylogeny, profile resistance genes
 (AMRFinderPlus), assign a sequence type (MLST), and build a reference-free SNP
 tree (kSNP). No command-line experience required; each module explains how to run
 the tool **and how to interpret its output**.
+
+## 🪟 On Windows? Set up WSL2 first
+
+These tools run on Linux/macOS. On Windows you run them inside **WSL2** (a real
+Ubuntu Linux alongside Windows — no dual-boot). If you've never used WSL, the
+**[docs/INSTALL_WSL.md](docs/INSTALL_WSL.md)** guide walks you through it from
+scratch: what you need, the one-time `wsl --install` (and when admin rights are
+required), how to verify it, and where to go next — then you follow the normal
+Linux install above.

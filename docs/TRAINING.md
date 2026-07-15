@@ -36,7 +36,7 @@ Everything starts from the dashboard — a home page listing your installed tool
   `bioinformatic_diagnostic_tools` folder, **or**
 - **Any system (Terminal):**
   ```bash
-  cd ~/bioinformatic_diagnostic_tools
+  cd <path to repo>/bioinformatic_diagnostic_tools
   bin/bdtools dashboard
   ```
 
@@ -79,9 +79,15 @@ module will feel familiar. From top to bottom you'll see:
    - **Choose Files** / drag-and-drop — upload files from your computer.
    - **Link** — point at a folder already on the server (no copying).
    - **SRA Download** — **paste accession numbers (SRR/ERR/DRR) and the tool
-     downloads the reads for you.** ← this is what you'll use in this guide.
-   - *(kSNP only)* **Download genome FASTA by accession** — paste GenBank/RefSeq
-     genome accessions (e.g. `NC_000962`).
+     downloads the reads for you.** ← the reads-based tools use this. When it
+     finishes, a per-sample status list shows which accessions downloaded and
+     which failed, so a partial batch is obvious.
+   - **Download genome FASTA by accession** *(kSNP, MLST, GenoFLU)* — paste
+     GenBank/RefSeq genome accessions (e.g. `NC_000962`) or assembly accessions
+     (`GCA_`/`GCF_`); the tool fetches assembled FASTA. GenoFLU also accepts a
+     **BioSample** (e.g. `SAMN60641678`) and pulls that isolate's 8 influenza
+     segments as one genome. (GenoFLU uses this instead of an SRA read download,
+     since it genotypes assembled genomes.)
 4. **Run …** — pick your options and click **▶ Run selected (N)**, where N is the
    number of samples you checked.
 5. **Pipeline Log** *(collapsible)* — live output while the job runs. It ends with
@@ -145,11 +151,24 @@ GenoFLU in Module 2.*
 4. Find the **SRA Download** box, **paste the five accessions above** (one per
    line), and click **Download**. Watch the **Pipeline Log** — each run appears in
    the project when it finishes downloading.
-5. *(Optional)* Open **Sample Metadata** and fill in host/state/collection year.
+5. *(Optional)* Open **Sample Metadata** to build submission-ready FASTA headers.
+   Every field is optional and each shows an example: **host** (e.g. `chicken`),
+   **state** (`California`), **collection_year** (`2023`), **subtype** (`H5N1`).
+   The tool builds each defline as `A/host/state/sample/year(subtype)`; anything
+   you leave blank becomes `unknown_host`, `unknown_subtype`, etc. (Note the
+   field is **subtype** — e.g. `H5N1` — not "strain"; `H5N1` is a subtype.) The
+   result is an NCBI-submission-style header per segment, for example:
+
+   ```
+   >Seq1 [organism=Influenza A virus](A/chicken/California/24-000127-003-original/2023(H5N1)) segment 1, polymerase PB2 (PB2) gene, complete cds.
+   >Seq4 [organism=Influenza A virus](A/chicken/California/24-000127-003-original/2023(H5N1)) segment 4, hemagglutinin HA (HA) gene, complete cds.
+   ```
+
    This is only needed if you plan to submit sequences to NCBI; skip it for
    training.
 6. In **Projects & Samples**, expand the project and **check the box** next to each
-   sample you want to run.
+   sample you want to run — or use the project's **Select all** checkbox to check
+   every sample at once.
 7. In the **Run IRMA** section:
    - **IRMA module:** leave on **`FLU`** (it's `CoV` for SARS-CoV-2).
    - **Run GenoFLU genotyping:** ✅ **tick this on.** IRMA will assemble *and*
@@ -172,10 +191,20 @@ GenoFLU in Module 2.*
     **FAIL** (missing/too low). A complete influenza genome is **8/8 segments
     PASS**.
 - **Report (PDF)** — a shareable lab report: QC of the input reads, the
-  per-segment table, and coverage diagrams (a depth plot per segment).
+  per-segment table, and — appended at the end — a **per-segment coverage plot
+  for every segment** (all 8 IRMA coverage reports rolled into the one PDF).
+- **Result files** — the Results list labels each file so you know what you're
+  opening: **IRMA assembly & QC statistics (Excel workbook)** vs. the two GenoFLU
+  genotype files, which are now distinguished as **Excel workbook** and
+  **tab-delimited text**.
 - **Submission FASTA** — the consensus sequences, one per segment.
 - **GenoFLU genotype** (because you ticked it on) — the clade/genotype call; we
   interpret this in the next module.
+
+> 💡 **Seeing what ran.** After a run, the **Current run** pane (right) lists the
+> samples that ran with a **search box** and a **date filter** (Today / Last 7d /
+> Last 30d). Click a sample there to open its results — you don't have to go back
+> to Projects to find them.
 
 > 🔎 **Teaching point.** If a sample has, say, 7/8 segments PASS and NA at 60%
 > coverage, that's a *partial* genome — usable for subtyping but not for a
@@ -206,14 +235,18 @@ that IRMA produced. This is the pattern you'd use for genomes assembled elsewher
 ### Steps
 
 1. **Launch** **GenoFLU** from the dashboard.
-2. Create a project — e.g. `IAV_genotyping`.
-3. Get an assembled FASTA into it. Use the IRMA output from Module 1:
-   - In IRMA, download a sample's **Assembly FASTA** (or **Submission FASTA**) to
-     your computer, then in GenoFLU use **Choose Files** to upload it; **or**
-   - Use **Link** to point GenoFLU at the IRMA project folder on the server.
-   > GenoFLU's own **SRA Download** box exists, but remember it only fetches *raw
-   > reads* — you'd still have to assemble them in IRMA first. Feeding an assembly
-   > is the whole point here.
+2. Open the **same project you assembled in Module 1** (e.g. `IAV_training`), or
+   create a new one. GenoFLU now **lists the genomes IRMA assembled in that
+   project automatically** — each sample's submission/assembly FASTA appears as a
+   ready-to-run sample (no copying or uploading needed).
+3. Need a genome that wasn't assembled here? Use **Download genome FASTA by
+   accession** (GenoFLU's Inputs pane — this replaces the old SRA read download,
+   since GenoFLU genotypes *assembled* genomes):
+   - paste GenBank/RefSeq nucleotide accessions or a `GCA_`/`GCF_` assembly, **or**
+   - paste a **BioSample** (e.g. `SAMN60641678`) or sample name — GenoFLU pulls
+     that isolate's **8 influenza segments** and saves them as one multi-FASTA
+     genome ready to genotype. You can also still **Choose Files** / **Link** an
+     assembly from elsewhere.
 4. Leave **Percent-identity threshold** at its default (**98%**, the USDA
    surveillance standard).
 5. Check the sample and click **▶ Run selected (1)**.
@@ -240,17 +273,18 @@ that IRMA produced. This is the pattern you'd use for genomes assembled elsewher
 ## Module 3 — vSNP3: the two-step SNP workflow (introduction)
 
 **What it does.** vSNP3 (USDA) is the suite's high-resolution SNP tool for
-*Mycobacterium tuberculosis* complex (TB, *M. bovis*, *M. orygis*, …) and
-*Brucella*. It answers *"how closely related are these isolates?"* — the core
-question in outbreak and surveillance work.
+bacteria and viruses. It answers *"how closely related are these isolates?"* —
+the core question in outbreak and surveillance work. This example will use TB as
+the practice organism.
 
 **The two-step model — the single most important concept:**
 
 - **Step 1 — one sample at a time.** Align a sample's reads to a reference genome
   and call its variants, producing a per-sample **VCF** file. Do this once per
   sample.
-- **Step 2 — compare many samples.** Collect the Step 1 VCFs, build a **SNP table**
-  (who differs from whom, and where) and a **phylogenetic tree**.
+- **Step 2 — compare many samples.** Collect the Step 1 VCFs with zero coverage
+  (`zc.vcf`), build a **SNP table** (who differs from whom, and where) and a
+  **phylogenetic tree**.
 
 The power of this split: you run Step 1 once, then re-run Step 2 as often as you
 like — adding samples, changing thresholds — **without re-aligning anything.**
@@ -285,11 +319,9 @@ SRR10251193	M. tuberculosis complex
    **Download**.
 5. In the **Step 1** section, click **Setup** (this organizes the downloaded reads
    into one folder per sample).
-6. **Choose a reference.** Two ways:
-   - **Auto-detect (best match)** — recommended; vSNP3 scans each sample's reads
-     and picks the closest reference automatically.
-   - **Manual** — the two built-in TB references are **`Mycobacterium_H37`**
-     (*M. tuberculosis*) and **`Mycobacterium_AF2122`** (*M. bovis*).
+6. **Choose a reference** if one isn't already selected. The two built-in TB
+   references are **`Mycobacterium_H37`** (*M. tuberculosis*) and
+   **`Mycobacterium_AF2122`** (*M. bovis*).
 7. Click **▶ Run**. Step 1 processes a few samples in parallel; use **Stop** to
    halt if needed. This is the slow part — reads are being aligned.
 
@@ -307,6 +339,25 @@ Open **QC Summary / Step 1 Results**. This is a mandatory checkpoint. Key column
 Tick the **Exclude** box for any sample that fails, then click **Save
 Exclusions** — Step 2 will automatically leave those samples out.
 
+### Low mapping? Decontaminate with Kraken, then re-run Step 1
+
+In this dataset **`SRR1173725`** and **`SRR998630`** map poorly to the reference.
+Low mapping usually means **contaminated reads** — host DNA or other bacteria
+mixed in with the target. Rather than discard the samples, clean them and try
+again:
+
+1. From the Step 1 Results row for a low-mapping sample, run **Kraken** on it.
+   Choose **Parse reads only (skip BLAST)** and select the target taxon
+   **Mycobacterium tuberculosis complex** — this keeps only the reads that
+   classify to the complex and drops the contaminating ones.
+2. When the parse finishes, **Import → Step 1** the parsed reads so they appear
+   as a sample in this project's download set.
+3. With the parsed samples added, click **Setup**, then **▶ Run**. Only the
+   newly-added (parsed) samples are aligned — samples already marked **Complete**
+   are skipped, so this is quick. (Use **Force re-run** only if you deliberately
+   want to re-align everything.)
+4. Re-check the QC for the parsed samples — mapping should now be much higher.
+
 ### Step 2 — build the SNP table and tree
 
 1. Go to the **Step 2** section and choose **Use Step 1 only** (compare the samples
@@ -318,10 +369,17 @@ Exclusions** — Step 2 will automatically leave those samples out.
 
 ### How to read the output
 
-- **`…_sort_table.xlsx` (the cascading SNP table)** — rows are SNP positions,
-  columns are samples. Cells show the base each sample carries. Samples that share
-  the same pattern of SNPs are closely related. This is the table you'd put in a
-  report.
+- **`…_sort_table.xlsx` (the cascading SNP table)** — the go-to SNP table. Rows
+  are SNP positions, columns are samples, and each cell shows the base that
+  sample carries. It's called *cascading* because the positions and samples are
+  ordered so shared SNPs line up into a staircase — samples that carry the same
+  block of SNPs sit together, making related groups easy to read off at a glance.
+  Samples that share the same pattern of SNPs are closely related. This is the
+  table you'd put in a report.
+
+> 🖱 **Try it.** Open the cascading table and find the **`La3_orygis`** group,
+> then click one of its SNP cells — the viewer shows the read **alignment at that
+> position**, so you can confirm the call directly in the reads.
 - **`…_tree.tre` (phylogenetic tree)** — open it in a tree viewer (FigTree, or
   the built-in viewer). **Branch length ≈ number of SNPs.** Isolates on a tight
   cluster (a handful of SNPs apart) are plausibly linked; isolates far apart are
@@ -425,16 +483,19 @@ Identical to Module 3:
 
 1. New project — e.g. `MTBC_phylogeny`.
 2. **SRA Download** → paste your chosen accessions → **Download**.
-3. **Step 1**: **Setup** → reference **Auto-detect (best match)** (essential here,
-   since the panel spans many species) → **Run**.
+3. **Step 1**: **Setup** → **choose a single common reference** (e.g.
+   **`Mycobacterium_H37`**) so the whole panel aligns to the same coordinates and
+   Step 2 can compare them all in one tree → **Run**.
 4. **QC Summary**: review, exclude any failures, **Save Exclusions**.
 5. **Step 2**: **Use Step 1 only** → **Setup** → **Run**.
 
-> ⚠️ **Reference lock.** Because auto-detect may align different species to
-> different references, Step 2 will only compare samples that share a reference. If
-> you want a single tree across all of MTBC, align the whole panel to one common
-> reference (e.g. **`Mycobacterium_H37`**) by selecting it manually in Step 1
-> instead of auto-detect.
+> 🏷 **Label the tree with a metadata file.** The tree tips default to the
+> accession. To show readable names (lineage/species), take the **sample list**
+> for your panel and build a small **metadata Excel** with two columns —
+> `Original name` (the VCF file-stem) and `Display label` (e.g. `L2_Beijing`,
+> `M_orygis_ERR015582`). Add it in the **Sample Metadata** pane; Step 2 renames
+> the tips to your labels. (This is also how you'd re-label an outbreak set for a
+> report.)
 
 ### How to read the output
 
@@ -442,14 +503,22 @@ Open the **tree** (`…_tree.tre`). Because you know each sample's true lineage 
 the labels above, this is a self-checking exercise:
 
 - Samples of the **same lineage should form clusters** (clades) together.
-- The animal-adapted species (*M. bovis*, *M. caprae*, *M. orygis*, …) should sit
-  within the Lineage-4-adjacent part of the complex, and *M. canettii* should sit
-  well apart as the most divergent member.
-- If a sample lands in the "wrong" clade, that's a teaching moment — usually a QC
-  problem (low coverage, wrong reference) you can trace back in the Step 1 stats.
+- Look at how the lineages that are **historically regarded as human-adapted**
+  vs. **animal-adapted** fall out on the tree. The human lineages (Lineages 1–4,
+  7, …) and the animal-associated species (*M. bovis*, *M. caprae*, *M. orygis*,
+  *M. microti*, *M. pinnipedii*, …) each tend to group among their own kind — a
+  useful sanity check that the panel resolved as expected.
+- If a sample lands in the "wrong" clade, it's usually a QC problem (low coverage,
+  wrong reference) you can trace back in the Step 1 stats.
 
 The **cascading SNP table** shows the shared-SNP patterns that *define* each
 lineage — the columns of SNPs that all Lineage-2 samples share, for instance.
+
+> 📏 **These tables get big.** A whole-complex SNP table has thousands of
+> positions across dozens of samples — far too large to read cell-by-cell. That's
+> exactly why we use **defining SNPs** to collapse the panel into smaller, more
+> meaningful **outbreak groups**: instead of the full matrix, you work with the
+> handful of SNPs that define a cluster, which is what makes a report legible.
 
 ---
 
@@ -481,7 +550,9 @@ SRR39605045	Escherichia coli
    the organism manually — that's fine.
 2. **Launch** **AMRFinderPlus**. Create a project — e.g. `AMR_training`.
 3. **Inputs → SRA Download** → paste `SRR28320745` (and/or `SRR39605045`) →
-   **Download**.
+   **Download**. When it finishes, a **per-sample status list** shows which
+   accessions downloaded (`✓`) and which failed (`✗`); if one fails, the Pipeline
+   Log has the per-method reason, and you can just retry that accession.
 4. Expand the project and **check** the sample.
 5. In **Run AMRFinderPlus**:
    - **Force organism** — leave on **Auto-detect (recommended)** if you set up
@@ -503,6 +574,12 @@ The **resistance table** is the main output. Key columns:
 | **Class / Subclass** | The drug class it affects, e.g. `BETA-LACTAM` / `Cephalosporin`. |
 | **Method** | *How* it was found — see below. |
 | **% Identity / % Coverage** | How well the hit matches the reference gene. Near 100% = a confident, full-length match. |
+
+**Report (HTML + PDF).** Beyond the table, the run produces a comprehensive
+**report** — open **Report (HTML)** in the browser or **Report (PDF)** to share.
+It gathers the input read QC, assembly QC, organism identification (Kraken +
+**MLST scheme, ST and alleles**), the full resistance table and an AMR summary in
+one professional document, styled to match the suite's other tool reports.
 
 **The Method column is your confidence guide:**
 
@@ -546,7 +623,11 @@ its **resistance genes** (Module 5) and its **strain type** (here).
 ### Steps
 
 1. **Launch** **MLST**. Create a project — e.g. `MLST_training`.
-2. **Inputs → SRA Download** → paste `SRR28320745` → **Download**.
+2. Get the isolate in: **Inputs → SRA Download** → paste `SRR28320745` →
+   **Download** (MLST assembles the reads for you). Or, if you already have an
+   assembly, use **Download genome FASTA by accession** to fetch a GenBank/RefSeq
+   or `GCA_`/`GCF_` genome directly — the same downloader kSNP and GenoFLU use.
+   MLST can type an assembly with no read-download/assembly step.
 3. Expand the project, **check** the sample.
 4. In **Run MLST**, leave **Force scheme** on **Autodetect (recommended)** — the
    tool picks the right scheme from the assembly.

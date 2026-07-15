@@ -144,7 +144,14 @@ def _parse_update_line(line):
         return ""
     installed = field("installed")
     latest = field("latest")
-    available = "available" in line  # "↑ <latest> available"
+    # An update is available when what's actually INSTALLED on this machine is
+    # behind the newest released tag — NOT when the manifest pin matches the tag.
+    # (`git pull` bumps the pin ahead of the installed checkout, so the old
+    # pin-vs-tag test wrongly reported "up to date" until `bdtools update` ran.)
+    # `git describe` may add a "-N-g<hash>" suffix for commits past a tag; strip
+    # it so a checkout sitting exactly on / ahead of the tag isn't flagged.
+    inst_tag = installed.split("-")[0] if installed and installed != "—" else ""
+    available = bool(latest and latest != "—" and inst_tag and inst_tag != latest)
     return {
         "name": name,
         "label": pretty(name),

@@ -52,6 +52,34 @@ ENV_NAME="$(manifest_get "${TOOL}" env)"
 # wins if one is already set in the environment.
 export CONDA_CHANNEL_PRIORITY="${CONDA_CHANNEL_PRIORITY:-strict}"
 
+# with_progress "<label>" cmd [args...] — run a long, often-silent step (a conda
+# solve, a delegated deploy/install.sh, a big DB download) with a timestamped
+# start/done banner and a heartbeat while it runs. The heartbeat is the point:
+# a conda solve prints nothing for minutes, so without it a healthy solve and a
+# real hang look identical. With it, both the terminal and a piped log show
+# "still working, 3m00s elapsed" — so `bdtools install` never reads as frozen,
+# and if it truly wedges you can see exactly which step and for how long.
+# Honors --dry-run and `set -e`; returns the command's own exit code.
+# Heartbeat interval: BDTOOLS_HEARTBEAT_SECS (default 30; 0 disables it).
+with_progress() {
+  local label="$1"; shift
+  if [[ "${DRY_RUN:-0}" -eq 1 ]]; then echo "  [dry-run] ${label}: $*"; return 0; fi
+  local secs="${BDTOOLS_HEARTBEAT_SECS:-30}" t0 hb=0 rc=0 tot
+  t0="$(date +%s)"
+  log "${label} — started $(date '+%H:%M:%S')  (silence during a conda solve is normal)"
+  if [[ "${secs}" -gt 0 ]]; then
+    ( while :; do sleep "${secs}"; e=$(( $(date +%s) - t0 ))
+        printf '  … %s: still working, %dm%02ds elapsed\n' "${label}" $((e/60)) $((e%60)); done ) &
+    hb=$!
+  fi
+  "$@" || rc=$?
+  [[ "${hb}" -ne 0 ]] && { kill "${hb}" 2>/dev/null || true; wait "${hb}" 2>/dev/null || true; }
+  tot=$(( $(date +%s) - t0 ))
+  if [[ ${rc} -eq 0 ]]; then ok "${label} — done in $((tot/60))m$((tot%60))s"
+  else warn "${label} — FAILED after $((tot/60))m$((tot%60))s (exit ${rc})"; fi
+  return ${rc}
+}
+
 # --------------------------------------------------------------------------
 # 1. checkout
 # --------------------------------------------------------------------------
@@ -118,14 +146,14 @@ generic_build() {
       # installed (a plain build skips when the env exists, which is why a stale
       # env never picked up additions like 'humanize'). conda env update is
       # additive — it won't remove anything the user added.
-      log "updating conda env at ${DIR}/env from ${env_file} (--rebuild)"
-      run "${conda}" env update -p "${DIR}/env" -f "${env_file}"
+      with_progress "${TOOL}: updating conda env from spec (--rebuild)" \
+        "${conda}" env update -p "${DIR}/env" -f "${env_file}"
     else
       ok "env present: ${DIR}/env"
     fi
   elif [[ -f "${env_file}" ]]; then
-    log "creating conda env at ${DIR}/env (solve can take several minutes)"
-    run "${conda}" env create -p "${DIR}/env" -f "${env_file}"
+    with_progress "${TOOL}: creating conda env (solve can take several minutes)" \
+      "${conda}" env create -p "${DIR}/env" -f "${env_file}"
   else
     die "no ${env_file} — cannot build env"
   fi
@@ -177,8 +205,8 @@ build_vsnp_local() {
   if [[ -x "${DIR}/env/bin/python" ]]; then
     ok "env present: ${DIR}/env"
   else
-    log "creating vsnp3 env at ${DIR}/env (bioconda vsnp3 + snp-dists; solve can take several minutes)"
-    run "${conda}" create -y -p "${DIR}/env" -c conda-forge -c bioconda vsnp3 snp-dists
+    with_progress "${TOOL}: creating vsnp3 env (bioconda vsnp3 + snp-dists; solve can take several minutes)" \
+      "${conda}" create -y -p "${DIR}/env" -c conda-forge -c bioconda vsnp3 snp-dists
   fi
   # 2. web layer (uvicorn is served from this same python)
   [[ -x "${DIR}/env/bin/pip" ]] && run "${DIR}/env/bin/pip" install --upgrade \
@@ -274,7 +302,8 @@ build() {
        && grep -q -- '--skip-frontend' "${DIR}/deploy/install.sh" 2>/dev/null; then
       args+=(--skip-frontend)
     fi
-    run "${DIR}/deploy/install.sh" ${args[@]+"${args[@]}"} || die "${TOOL} deploy/install.sh failed"
+    with_progress "${TOOL}: building env + frontend (deploy/install.sh)" \
+      "${DIR}/deploy/install.sh" ${args[@]+"${args[@]}"} || die "${TOOL} deploy/install.sh failed"
   elif [[ -f "${DIR}/conda_setup/environment.yml" ]]; then
     log "no deploy/install.sh in ${TOOL}; using generic build"
     generic_build

@@ -26,7 +26,7 @@ suite_version: "2026.06-dev"
 tools:
   - name: vsnp_gui
     repo: https://github.com/kapurlab/vsnp_gui.git
-    version: v0.2.3
+    version: v0.2.4
     ood_apps: [vsnp_gui]
     dev_apps: [vsnp_gui_dev]
     env: vsnp3
@@ -34,7 +34,7 @@ tools:
 
   - name: amr_plus_gui
     repo: https://github.com/kapurlab/amr_plus_gui.git
-    version: v0.1.2
+    version: v0.2.0
     ood_apps: [amr_plus_gui]
     dev_apps: [amr_plus_gui_dev]
     env: amr_plus
@@ -42,21 +42,21 @@ tools:
 
   - name: irma_gui
     repo: https://github.com/kapurlab/irma_gui.git
-    version: v0.1.2
+    version: v0.2.0
     ood_apps: [irma_gui]
     dev_apps: [irma_gui_dev]
     env: irma_gui
 
   - name: genoflu_gui
     repo: https://github.com/kapurlab/genoflu_gui.git
-    version: v0.1.2
+    version: v0.2.0
     ood_apps: [genoflu_gui]
     dev_apps: [genoflu_gui_dev]
     env: genoflu_gui
 
   - name: mlst_gui
     repo: https://github.com/kapurlab/mlst_gui.git
-    version: v0.1.1
+    version: v0.2.0
     ood_apps: [mlst_gui]
     dev_apps: [mlst_gui_dev]
     env: mlst
@@ -71,7 +71,7 @@ tools:
 
   - name: ksnp_gui
     repo: https://github.com/kapurlab/ksnp_gui.git
-    version: v0.1.2
+    version: v0.2.0
     ood_apps: [ksnp_gui]
     dev_apps: [ksnp_gui_dev]
     env: ksnp

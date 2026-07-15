@@ -52,6 +52,17 @@ ENV_NAME="$(manifest_get "${TOOL}" env)"
 # wins if one is already set in the environment.
 export CONDA_CHANNEL_PRIORITY="${CONDA_CHANNEL_PRIORITY:-strict}"
 
+# Neutralize the Anaconda `defaults` channel. Every tool's environment.yml lists
+# `- defaults` (repo.anaconda.com) alongside conda-forge/bioconda; mixing that
+# third, differently-populated channel into a large bioconda stack balloons the
+# solver's search space and is what makes e.g. amr_plus_gui grind for 15+ min at
+# 100% CPU. Rather than edit and re-tag eight separate tool repos, remap what
+# `defaults` expands to onto the channels these envs already use — so the
+# `- defaults` line resolves to conda-forge/bioconda instead of repo.anaconda.com
+# and stops widening the solve. Exported so delegated deploy/install.sh builds
+# inherit it. Operator override wins if one is already set.
+export CONDA_DEFAULT_CHANNELS="${CONDA_DEFAULT_CHANNELS:-conda-forge,bioconda}"
+
 # Progress helpers for the long, often-silent build steps (conda solve, package
 # download, delegated deploy/install.sh). The problem they solve: a solve is
 # CPU-bound and silent, a download is I/O-bound and silent, and a *stalled*

@@ -21,12 +21,12 @@
 # All tools carry a baseline tag (vsnp_gui v0.2.0; the rest v0.1.0, cut
 # 2026-06-16). Bump a pin with `bdtools update <tool>` once newer tags exist.
 
-suite_version: "2026.07"
+suite_version: "2026.07.1"
 
 tools:
   - name: vsnp_gui
     repo: https://github.com/kapurlab/vsnp_gui.git
-    version: v0.2.4
+    version: v0.2.5
     ood_apps: [vsnp_gui]
     dev_apps: [vsnp_gui_dev]
     env: vsnp3
@@ -34,7 +34,7 @@ tools:
 
   - name: amr_plus_gui
     repo: https://github.com/kapurlab/amr_plus_gui.git
-    version: v0.2.0
+    version: v0.2.1
     ood_apps: [amr_plus_gui]
     dev_apps: [amr_plus_gui_dev]
     env: amr_plus
@@ -42,21 +42,21 @@ tools:
 
   - name: irma_gui
     repo: https://github.com/kapurlab/irma_gui.git
-    version: v0.2.0
+    version: v0.2.1
     ood_apps: [irma_gui]
     dev_apps: [irma_gui_dev]
     env: irma_gui
 
   - name: genoflu_gui
     repo: https://github.com/kapurlab/genoflu_gui.git
-    version: v0.2.0
+    version: v0.2.1
     ood_apps: [genoflu_gui]
     dev_apps: [genoflu_gui_dev]
     env: genoflu_gui
 
   - name: mlst_gui
     repo: https://github.com/kapurlab/mlst_gui.git
-    version: v0.2.0
+    version: v0.2.1
     ood_apps: [mlst_gui]
     dev_apps: [mlst_gui_dev]
     env: mlst
@@ -71,7 +71,7 @@ tools:
 
   - name: ksnp_gui
     repo: https://github.com/kapurlab/ksnp_gui.git
-    version: v0.2.0
+    version: v0.2.1
     ood_apps: [ksnp_gui]
     dev_apps: [ksnp_gui_dev]
     env: ksnp

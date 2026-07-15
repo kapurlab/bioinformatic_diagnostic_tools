@@ -205,6 +205,7 @@ class Suite:
         self.tools = []    # [{"name","label","blurb","installed"}]
         # Update state: cached check + a single background apply job.
         self.updates_cache = None   # {"checked": bool, "items": [...], "any": bool}
+        self.updates_checking = False
         self.update_job = {"running": False, "done": False, "ok": None,
                            "target": None, "log": []}
         self.refresh()
@@ -269,20 +270,42 @@ class Suite:
 
     # --- Updates -----------------------------------------------------------
     def check_updates(self):
-        """Check bdtools + every tool for newer versions; cache and return it."""
-        items = []
-        bd = check_bdtools_update()
-        if bd:
-            items.append(bd)
-        items.extend(check_tool_updates())
-        cache = {
-            "checked": True,
-            "items": items,
-            "any": any(i["update_available"] for i in items),
-        }
+        """Check bdtools + every tool for newer versions; cache and return it.
+        Network-heavy (git ls-remote per tool) — always run in the background
+        via check_updates_async so it never blocks the dashboard or launches."""
+        try:
+            items = []
+            bd = check_bdtools_update()
+            if bd:
+                items.append(bd)
+            items.extend(check_tool_updates())
+            cache = {
+                "checked": True,
+                "items": items,
+                "any": any(i["update_available"] for i in items),
+            }
+        finally:
+            with self.lock:
+                self.updates_checking = False
         with self.lock:
             self.updates_cache = cache
         return cache
+
+    def check_updates_async(self, force=False):
+        """Start the update check on a background thread (no-op if one is already
+        running, or if we already have a result and force is False)."""
+        with self.lock:
+            if self.updates_checking:
+                return
+            if self.updates_cache and self.updates_cache.get("checked") and not force:
+                return
+            self.updates_checking = True
+        threading.Thread(target=self.check_updates, daemon=True).start()
+
+    def updates_state(self):
+        with self.lock:
+            cache = self.updates_cache or {"checked": False, "items": [], "any": False}
+            return dict(cache, checking=self.updates_checking)
 
     def apply_updates(self, target):
         """Start a background update of `target` ('all', a tool name, or
@@ -327,10 +350,7 @@ class Suite:
             self.update_job["done"] = True
             self.update_job["ok"] = ok
         # Refresh the update cache so the banner reflects the new state.
-        try:
-            self.check_updates()
-        except Exception:  # noqa: BLE001
-            pass
+        self.check_updates_async(force=True)
 
     def update_status(self):
         with self.lock:
@@ -382,11 +402,15 @@ PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
  .dev b{color:#7a2a1e}
  .recheck{padding:0 24px 12px;font-size:13px}
  .recheck button{background:transparent;color:var(--accent);padding:4px 0;font-weight:600}
- .updates{margin:8px 24px 0;border-radius:10px;padding:12px 14px;font-size:13.5px;
-   border:1px solid var(--line);background:var(--card)}
+ /* Subtle by default (checking / up-to-date are just a small muted line, so the
+    dashboard is usable immediately); only 'updates available' is a real banner. */
+ .updates{margin:6px 24px 0;font-size:12.5px;color:var(--muted)}
+ .updates:empty{display:none}
  .updates.checking{color:var(--muted)}
- .updates.current{background:#e9f1ea;border-color:#cfe2d1;color:#3f6b48}
- .updates.avail{background:#fbf1dc;border-color:#f0dcae;color:#7a5a1e}
+ .updates.current{color:#3f6b48}
+ .updates.avail{background:#fbf1dc;border:1px solid #f0dcae;color:#7a5a1e;
+   border-radius:10px;padding:12px 14px;font-size:13.5px;margin-top:8px}
+ .updates.avail a{color:inherit}
  .updates .uhead{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
  .updates .utitle{font-weight:650}
  .updates ul{margin:8px 0 0;padding-left:18px}
@@ -400,7 +424,7 @@ PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 </style></head><body>
 <header><h1>Kapur Lab Diagnostic Tools</h1>
 <p class="sub">Pick a tool to launch it on this machine. Each opens in a new tab.</p></header>
-<div id="updates" class="updates checking">Checking for updates…</div>
+<div id="updates" class="updates"></div>
 <div id="grid" class="grid"></div>
 <p class="recheck" id="recheck" style="display:none"><button onclick="recheck(this)">↻ Re-check readiness</button></p>
 <p class="note" id="note"></p>
@@ -468,17 +492,23 @@ async function act(name,btn){
   }catch(e){ err.textContent=String(e); }
   btn.disabled=false; btn.textContent=was; load();
 }
-// ---- Updates: check on open, show a cue, offer install buttons ----
+// ---- Updates: checked in the BACKGROUND so the dashboard is usable at once.
+//      Subtle while checking / up-to-date; a prominent banner only if updates exist.
 let updatePolling = false;
+let updatesPoll = null;
 function renderUpdates(d){
   const box = document.getElementById('updates');
-  if(!d || !d.checked){ box.className='updates checking'; box.textContent='Checking for updates…'; return; }
+  if(!d || !d.checked){
+    // Non-blocking: a tiny muted note (or nothing) — never a gate.
+    box.className='updates checking';
+    box.textContent = d && d.checking ? '↻ checking for updates in the background…' : '';
+    return;
+  }
   const items = d.items || [];
   const avail = items.filter(i=>i.update_available);
   if(!avail.length){
     box.className='updates current';
-    box.innerHTML = `<div class="uhead"><span class="utitle">✓ Everything is up to date.</span>`
-      + `<button class="link" onclick="checkUpdates(true)">Re-check</button></div>`;
+    box.innerHTML = `✓ Up to date. <a href="#" onclick="checkUpdates(true);return false" style="color:inherit">Re-check</a>`;
     return;
   }
   box.className='updates avail';
@@ -497,15 +527,23 @@ function renderUpdates(d){
     + `<div id="ulog" class="ulog" style="display:none"></div>`
     + `<div id="udone" class="udone"></div>`;
 }
+// Poll the cached result without blocking; keep polling only until it's ready.
+async function pollUpdates(){
+  try{
+    const r = await fetch('./api/updates');
+    const d = await r.json();
+    renderUpdates(d);
+    if(!d.checked){
+      clearTimeout(updatesPoll);
+      updatesPoll = setTimeout(pollUpdates, 2500);
+    }
+  }catch(e){ /* leave the dashboard alone; try again on the next tick */ }
+}
 async function checkUpdates(force){
   const box=document.getElementById('updates');
-  if(force){ box.className='updates checking'; box.textContent='Checking for updates…'; }
-  try{
-    const r = await fetch('./api/check-updates',{method:'POST'});
-    renderUpdates(await r.json());
-  }catch(e){
-    box.className='updates'; box.textContent='Could not check for updates right now.';
-  }
+  box.className='updates checking'; box.textContent='↻ checking for updates in the background…';
+  try{ await fetch('./api/check-updates',{method:'POST'}); }catch(e){}
+  pollUpdates();
 }
 async function applyUpdates(target,btn){
   if(!confirm(target==='bdtools'
@@ -540,7 +578,7 @@ async function pollUpdate(){
   tick();
 }
 load(); setInterval(load, 5000);
-checkUpdates(false);
+pollUpdates();   // background update check — the cards above are usable immediately
 </script></body></html>"""
 
 
@@ -563,8 +601,11 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/tools":
             self._send(200, json.dumps(SUITE.state()))
         elif path == "/api/updates":
-            cache = SUITE.updates_cache or {"checked": False, "items": [], "any": False}
-            self._send(200, json.dumps(cache))
+            # Non-blocking: kick off the (slow, network-heavy) check in the
+            # background the first time it's asked for, and return whatever we
+            # have right now so the page never waits on it.
+            SUITE.check_updates_async()
+            self._send(200, json.dumps(SUITE.updates_state()))
         elif path == "/api/update-status":
             self._send(200, json.dumps(SUITE.update_status()))
         else:
@@ -578,7 +619,9 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, json.dumps(SUITE.state()))
             return
         if parsed.path == "/api/check-updates":
-            self._send(200, json.dumps(SUITE.check_updates()))
+            # Manual "re-check" — force a fresh background check, return at once.
+            SUITE.check_updates_async(force=True)
+            self._send(200, json.dumps(SUITE.updates_state()))
             return
         if parsed.path == "/api/apply-updates":
             target = (parse_qs(parsed.query).get("target") or ["all"])[0]
@@ -627,6 +670,7 @@ def main():
         port = 8080 if not port_open(args.host, 8080) else free_port()
 
     SUITE = Suite()
+    SUITE.check_updates_async()  # warm the update check in the background
     httpd = ThreadingHTTPServer((args.host, port), Handler)
     url = f"http://{args.host}:{port}/"
     n_installed = sum(1 for t in SUITE.tools if t["installed"])

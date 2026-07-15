@@ -42,6 +42,16 @@ REPO="$(manifest_get "${TOOL}" repo)"
 VERSION="$(manifest_get "${TOOL}" version)"
 ENV_NAME="$(manifest_get "${TOOL}" env)"
 
+# Strict channel priority for every conda/mamba solve below. It's the
+# bioconda-recommended setting: the solver honors channel order up front
+# (conda-forge > bioconda > defaults) instead of exploring cross-channel
+# package combinations — the latter is what makes a mixed-channel
+# environment.yml solve spin at 100% CPU for minutes (or effectively hang).
+# Exported so it also reaches tools that delegate to their own
+# deploy/install.sh (their `mamba env create` inherits it). Operator override
+# wins if one is already set in the environment.
+export CONDA_CHANNEL_PRIORITY="${CONDA_CHANNEL_PRIORITY:-strict}"
+
 # --------------------------------------------------------------------------
 # 1. checkout
 # --------------------------------------------------------------------------

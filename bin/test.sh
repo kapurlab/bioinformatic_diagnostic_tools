@@ -40,7 +40,7 @@ while [[ $# -gt 0 ]]; do
 done
 [[ -n "${TARGET}" ]] || die "usage: bdtools test <tool|all> [--record] [--keep]"
 
-spec() { python3 "${TESTS_DIR}/lib/readspec.py" "$1" "$2"; }
+spec() { "${PYBIN}" "${TESTS_DIR}/lib/readspec.py" "$1" "$2"; }
 
 # Resolve the tool's env python + its bin dir (so the pipeline's CLI deps — mlst,
 # shovill, kraken2, ... — are found). Mirrors install-local.sh:resolve_python.
@@ -167,7 +167,7 @@ run_one() {  # tool -> prints a status; sets RC_FAIL on FAIL
     return 0
   fi
   [[ -f "${exp}" ]] || { echo "SKIP  ${tool}: no expected.json yet (run with --record on a known-good box)"; return 0; }
-  if python3 "${TESTS_DIR}/lib/compare.py" "${got}" "${exp}"; then
+  if "${PYBIN}" "${TESTS_DIR}/lib/compare.py" "${got}" "${exp}"; then
     ok "${tool}: PASS"
   else
     echo "FAIL  ${tool}: result did not match ${exp}"; RC_FAIL=1

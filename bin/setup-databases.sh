@@ -181,7 +181,7 @@ wire_kraken() {
   want blast  && compgen -G "${BLAST_DB}.*" >/dev/null 2>&1 && args+=(--blast-db "${BLAST_DB}")
   [[ ${#args[@]} -gt 0 ]] || return 0
   if [[ ${DRY_RUN} -eq 1 ]]; then echo "  [dry-run] db_config.py kraken ${args[*]}"; return; fi
-  python3 "${KT_BIN_DIR}/lib/db_config.py" kraken "${args[@]}"
+  "${PYBIN}" "${KT_BIN_DIR}/lib/db_config.py" kraken "${args[@]}"
 }
 
 # vsnp_gui keys its reference root off VSNP_GUI_SITE_ROOT and the launcher
@@ -209,7 +209,7 @@ wire_vsnp() {
     ok "vsnp_gui: reference_options -> ${VSNP_REFS}; registered reference locations"
   else
     if [[ ${DRY_RUN} -eq 1 ]]; then echo "  [dry-run] db_config.py vsnp --refs-root ${VSNP_REFS}"; return; fi
-    [[ -d "${VSNP_REFS}" ]] && python3 "${KT_BIN_DIR}/lib/db_config.py" vsnp --refs-root "${VSNP_REFS}"
+    [[ -d "${VSNP_REFS}" ]] && "${PYBIN}" "${KT_BIN_DIR}/lib/db_config.py" vsnp --refs-root "${VSNP_REFS}"
     info "  vsnp_gui not installed locally yet — its install will adopt these databases (${BDTOOLS_HOME}/db-root)."
   fi
 }

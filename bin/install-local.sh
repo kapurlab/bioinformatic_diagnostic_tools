@@ -570,7 +570,7 @@ fi
 # worth launching, and `bdtools doctor` gives the authoritative report.
 if [[ ${DO_BUILD} -eq 1 && ${DRY_RUN} -eq 0 ]] && have_python; then
   py_chk="$(resolve_python 2>/dev/null || true)"
-  if [[ -n "${py_chk}" ]] && ! python3 "${KT_BIN_DIR}/lib/check.py" \
+  if [[ -n "${py_chk}" ]] && ! "${PYBIN}" "${KT_BIN_DIR}/lib/check.py" \
         --tool "${TOOL}" --dir "${DIR}" --python "${py_chk}" --scope env; then
     warn "${TOOL}: the build finished but the self-check above found problems — run the suggested fix."
   fi

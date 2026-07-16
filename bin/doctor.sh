@@ -50,11 +50,11 @@ while read -r name; do
   checked=$((checked + 1))
   py="$(resolve_env_python "${dir}" "$(manifest_get "$name" env)")"
   if [[ ${JSON} -eq 1 ]]; then
-    item="$(python3 "${KT_BIN_DIR}/lib/check.py" --tool "$name" --dir "${dir}" \
+    item="$("${PYBIN}" "${KT_BIN_DIR}/lib/check.py" --tool "$name" --dir "${dir}" \
               --python "${py}" --scope "${SCOPE}" --json)" || issues=$((issues + 1))
     [[ -n "${item}" ]] && json_items+=("${item}")
   else
-    python3 "${KT_BIN_DIR}/lib/check.py" --tool "$name" --dir "${dir}" \
+    "${PYBIN}" "${KT_BIN_DIR}/lib/check.py" --tool "$name" --dir "${dir}" \
             --python "${py}" --scope "${SCOPE}" || issues=$((issues + 1))
     echo
   fi

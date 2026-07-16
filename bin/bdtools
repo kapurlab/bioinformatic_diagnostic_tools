@@ -181,7 +181,7 @@ EOF
     # now declares). Platform limitations (e.g. bracken on macOS) are reported as
     # notes, not issues, so they don't trigger a rebuild that can't help.
     local need_rebuild
-    need_rebuild="$(printf '%s' "${doctor_json}" | python3 -c '
+    need_rebuild="$(printf '%s' "${doctor_json}" | "${PYBIN}" -c '
 import sys, json
 try: data = json.load(sys.stdin)
 except Exception: data = []
@@ -238,7 +238,7 @@ cmd_dashboard() {
     ok "stopped the dashboard and any running tools."
     [[ "${mode}" == stop ]] && return 0
   fi
-  exec python3 "${KT_BIN_DIR}/dashboard.py" ${rest[@]+"${rest[@]}"}
+  exec "${PYBIN}" "${KT_BIN_DIR}/dashboard.py" ${rest[@]+"${rest[@]}"}
 }
 
 cmd_check_updates() { "${KT_BIN_DIR}/check-updates.sh" "${1:-all}"; }

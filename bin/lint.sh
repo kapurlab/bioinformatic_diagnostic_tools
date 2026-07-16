@@ -49,7 +49,7 @@ while read -r name; do
     continue
   fi
   checked=$((checked + 1))
-  python3 "${KT_BIN_DIR}/lib/lint.py" --tool "$name" --dir "${dir}" || issues=$((issues + 1))
+  "${PYBIN}" "${KT_BIN_DIR}/lib/lint.py" --tool "$name" --dir "${dir}" || issues=$((issues + 1))
   check_frontend_base "${dir}" "${name}" || issues=$((issues + 1))
 done < <(targets)
 

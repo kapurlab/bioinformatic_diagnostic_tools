@@ -51,7 +51,8 @@ def update(tool: str, updates: dict) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    sub = ap.add_subparsers(dest="tool", required=True)
+    sub = ap.add_subparsers(dest="tool")
+    sub.required = True  # set as attribute for Python 3.6 compatibility
 
     k = sub.add_parser("kraken")
     k.add_argument("--kraken-db")

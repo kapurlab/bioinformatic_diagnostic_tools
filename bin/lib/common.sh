@@ -39,12 +39,29 @@ need_writable() {
 # run CMD... — execute, or just print under --dry-run.
 run()  { if [[ "${DRY_RUN}" -eq 1 ]]; then echo "  [dry-run] $*"; else "$@"; fi; }
 
+# ---- python interpreter ----------------------------------------------------
+# Resolve the newest usable python3 (>=3.7). Some HPC/OOD hosts default
+# `python3` to an EOL 3.6 that lacks features the suite's helpers rely on
+# (e.g. argparse's add_subparsers(required=...)). Prefer an explicit override
+# ($BDTOOLS_PYTHON), then the highest minor version found on PATH, and fall
+# back to plain `python3` so behavior is unchanged where 3.6 is not an issue.
+bd_python() {
+  if [[ -n "${BDTOOLS_PYTHON:-}" ]]; then echo "${BDTOOLS_PYTHON}"; return 0; fi
+  local c
+  for c in python3.13 python3.12 python3.11 python3.10 python3.9 python3.8 python3.7; do
+    command -v "$c" >/dev/null 2>&1 && { echo "$c"; return 0; }
+  done
+  command -v python3 >/dev/null 2>&1 && { echo python3; return 0; }
+  return 1
+}
+PYBIN="$(bd_python || true)"; : "${PYBIN:=python3}"
+
 # ---- manifest access ------------------------------------------------------
-_need_python() { command -v python3 >/dev/null 2>&1 || die "python3 is required to read tools.yml"; }
-manifest_suite_version() { _need_python; python3 "${MANIFEST_PY}" "${MANIFEST}" suite_version; }
-manifest_names()         { _need_python; python3 "${MANIFEST_PY}" "${MANIFEST}" names; }
-manifest_get()           { _need_python; python3 "${MANIFEST_PY}" "${MANIFEST}" get "$1" "$2"; }
-manifest_set()           { _need_python; python3 "${MANIFEST_PY}" "${MANIFEST}" set "$1" "$2" "$3"; }
+_need_python() { command -v "${PYBIN}" >/dev/null 2>&1 || die "python3 is required to read tools.yml"; }
+manifest_suite_version() { _need_python; "${PYBIN}" "${MANIFEST_PY}" "${MANIFEST}" suite_version; }
+manifest_names()         { _need_python; "${PYBIN}" "${MANIFEST_PY}" "${MANIFEST}" names; }
+manifest_get()           { _need_python; "${PYBIN}" "${MANIFEST_PY}" "${MANIFEST}" get "$1" "$2"; }
+manifest_set()           { _need_python; "${PYBIN}" "${MANIFEST_PY}" "${MANIFEST}" set "$1" "$2" "$3"; }
 manifest_has() { manifest_names | grep -qxF "$1"; }
 
 # Resolve a tool's checkout dir: explicit $BDTOOLS_TOOLSDIR wins (e.g. the
@@ -77,7 +94,7 @@ ensure_checkout() {
 # Pick a free TCP port on localhost (used by `bdtools local`).
 find_free_port() {
   _need_python
-  python3 - <<'PY'
+  "${PYBIN}" - <<'PY'
 import socket
 s = socket.socket()
 s.bind(("127.0.0.1", 0))

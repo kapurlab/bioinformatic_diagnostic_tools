@@ -161,7 +161,7 @@ GenoFLU in Module 2.*
 
    ```
    >Seq1 [organism=Influenza A virus](A/chicken/California/24-000127-003-original/2023(H5N1)) segment 1, polymerase PB2 (PB2) gene, complete cds.
-   >Seq4 [organism=Influenza A virus](A/chicken/California/24-000127-003-original/2023(H5N1)) segment 4, hemagglutinin HA (HA) gene, complete cds.
+   >Seq4 [organism=Influenza A virus](A/chicken/California/24-000127-003-original/2023(H5N1)) segment 4, hemagglutinin (HA) gene, complete cds.
    ```
 
    This is only needed if you plan to submit sequences to NCBI; skip it for

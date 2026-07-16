@@ -501,6 +501,12 @@ launch() {
   if [[ -d "${DIR}/deploy/vsnp3-patches" ]]; then
     local site="${BDTOOLS_HOME}/vsnp3-site"
     export VSNP_GUI_SITE_ROOT="${site}"
+    # Single-user local install: collapse to one Projects root. Disable the
+    # (multi-user) shared projects root so it isn't auto-derived from SITE_ROOT
+    # and doesn't shadow the user's chosen Projects root. Present-but-empty is
+    # authoritative in the backend (see config.py load_config). The lab SERVER
+    # deployment doesn't run this launcher, so its shared sharing is unaffected.
+    export VSNP_GUI_SHARED_PROJECTS_ROOT=""
     # Self-heal the Kraken tool link for installs done before this fix, or when
     # kraken was checked out after vsnp. Point at the CHECKOUT dir (not its env) —
     # the backend appends /bin and /env itself. Idempotent; no-op if absent.
@@ -524,6 +530,8 @@ derived = {
     "vcf_db_folders_root": f"{site}/refs/vsnp3/vcf_db_folders",
     "vsnp_gui_deploy_path": f"{site}/tools/vsnp_gui",
     "audit_root": f"{site}/audit",
+    # Single-user local install: no shared projects root (one Projects root).
+    "shared_projects_root": "",
 }
 try:
     cfg = json.loads(cfgp.read_text())

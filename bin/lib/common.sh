@@ -40,21 +40,29 @@ need_writable() {
 run()  { if [[ "${DRY_RUN}" -eq 1 ]]; then echo "  [dry-run] $*"; else "$@"; fi; }
 
 # ---- python interpreter ----------------------------------------------------
-# Resolve the newest usable python3 (>=3.7). Some HPC/OOD hosts default
-# `python3` to an EOL 3.6 that lacks features the suite's helpers rely on
-# (e.g. argparse's add_subparsers(required=...)). Prefer an explicit override
-# ($BDTOOLS_PYTHON), then the highest minor version found on PATH, and fall
-# back to plain `python3` so behavior is unchanged where 3.6 is not an issue.
+# Resolve the newest usable python3 (>=3.7) with NO action required from the
+# user. Some HPC/OOD hosts default `python3` to an EOL 3.6 that lacks features
+# the suite's stdlib-only helpers rely on (e.g. argparse's
+# add_subparsers(required=...)). The suite's helpers need only a modern
+# interpreter, not a dedicated env, so we prefer, in order:
+#   1. an explicit override ($BDTOOLS_PYTHON),
+#   2. the highest python3.X on PATH (a loaded module / venv, if any),
+#   3. the conda base python already installed for the tool envs (modern,
+#      >=3.9, needs no `module load` or activation),
+#   4. plain `python3` (may be an old system 3.6 — last resort).
+# NOTE: PYBIN is assigned at the END of this file, after conda_base_dir is
+# defined, since step 3 calls it.
 bd_python() {
   if [[ -n "${BDTOOLS_PYTHON:-}" ]]; then echo "${BDTOOLS_PYTHON}"; return 0; fi
-  local c
+  local c cbase
   for c in python3.13 python3.12 python3.11 python3.10 python3.9 python3.8 python3.7; do
     command -v "$c" >/dev/null 2>&1 && { echo "$c"; return 0; }
   done
+  cbase="$(conda_base_dir 2>/dev/null || true)"
+  [[ -n "${cbase}" && -x "${cbase}/bin/python3" ]] && { echo "${cbase}/bin/python3"; return 0; }
   command -v python3 >/dev/null 2>&1 && { echo python3; return 0; }
   return 1
 }
-PYBIN="$(bd_python || true)"; : "${PYBIN:=python3}"
 
 # ---- manifest access ------------------------------------------------------
 _need_python() { command -v "${PYBIN}" >/dev/null 2>&1 || die "python3 is required to read tools.yml"; }
@@ -137,3 +145,6 @@ conda_base_dir() {
   local bin; bin="$(detect_conda 2>/dev/null || true)"
   [[ -n "${bin}" ]] && dirname "$(dirname "${bin}")"
 }
+
+# ---- resolve the suite's python (deferred until conda_base_dir exists) -----
+PYBIN="$(bd_python || true)"; : "${PYBIN:=python3}"

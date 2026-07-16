@@ -293,7 +293,17 @@ generic_build() {
     # Only fall back to the existing dist when Node is genuinely absent.
     if command -v npm >/dev/null 2>&1; then
       log "building frontend"
-      ( cd "${DIR}/frontend" && { run npm ci || run npm install; run npm run build; } )
+      # Non-fatal: a build failure (e.g. a Node older than the tool's vite needs
+      # — vite 8 wants Node >=20.19) must not brick the tool when a committed
+      # prebuilt dist exists. Fall back to that dist with a loud warning; only
+      # hard-fail if there's nothing to serve.
+      if ! ( cd "${DIR}/frontend" && { run npm ci || run npm install; run npm run build; } ); then
+        if [[ -f "${DIR}/frontend/dist/index.html" ]]; then
+          warn "frontend build failed — falling back to the committed prebuilt dist. Check Node (vite needs Node >=20.19; try 'module load nodejs')."
+        else
+          die "frontend build failed and there is no prebuilt dist to fall back to (need Node >=20.19 for the frontend build)"
+        fi
+      fi
     elif [[ ! -f "${DIR}/frontend/dist/index.html" ]]; then
       warn "npm not found and no prebuilt dist — frontend not built"
     else
@@ -409,7 +419,17 @@ build_vsnp_local() {
     # Only fall back to the existing dist when Node is genuinely absent.
     if command -v npm >/dev/null 2>&1; then
       log "building frontend"
-      ( cd "${DIR}/frontend" && { run npm ci || run npm install; run npm run build; } )
+      # Non-fatal: a build failure (e.g. a Node older than the tool's vite needs
+      # — vite 8 wants Node >=20.19) must not brick the tool when a committed
+      # prebuilt dist exists. Fall back to that dist with a loud warning; only
+      # hard-fail if there's nothing to serve.
+      if ! ( cd "${DIR}/frontend" && { run npm ci || run npm install; run npm run build; } ); then
+        if [[ -f "${DIR}/frontend/dist/index.html" ]]; then
+          warn "frontend build failed — falling back to the committed prebuilt dist. Check Node (vite needs Node >=20.19; try 'module load nodejs')."
+        else
+          die "frontend build failed and there is no prebuilt dist to fall back to (need Node >=20.19 for the frontend build)"
+        fi
+      fi
     elif [[ ! -f "${DIR}/frontend/dist/index.html" ]]; then
       warn "npm not found and no prebuilt dist — frontend not built"
     else

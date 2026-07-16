@@ -21,7 +21,7 @@
 # All tools carry a baseline tag (vsnp_gui v0.2.0; the rest v0.1.0, cut
 # 2026-06-16). Bump a pin with `bdtools update <tool>` once newer tags exist.
 
-suite_version: "2026.07.1"
+suite_version: "2026.07.2"
 
 tools:
   - name: vsnp_gui
@@ -34,7 +34,7 @@ tools:
 
   - name: amr_plus_gui
     repo: https://github.com/kapurlab/amr_plus_gui.git
-    version: v0.2.3
+    version: v0.2.4
     ood_apps: [amr_plus_gui]
     dev_apps: [amr_plus_gui_dev]
     env: amr_plus
@@ -42,14 +42,14 @@ tools:
 
   - name: irma_gui
     repo: https://github.com/kapurlab/irma_gui.git
-    version: v0.2.3
+    version: v0.2.4
     ood_apps: [irma_gui]
     dev_apps: [irma_gui_dev]
     env: irma_gui
 
   - name: genoflu_gui
     repo: https://github.com/kapurlab/genoflu_gui.git
-    version: v0.2.3
+    version: v0.2.4
     ood_apps: [genoflu_gui]
     dev_apps: [genoflu_gui_dev]
     env: genoflu_gui
@@ -78,7 +78,7 @@ tools:
 
   - name: ncbi_submit_gui
     repo: https://github.com/kapurlab/ncbi_submit_gui.git
-    version: v0.1.4
+    version: v0.1.5
     ood_apps: [ncbi_submit_gui]
     dev_apps: [ncbi_submit_gui_dev]
     env: ncbi_submit

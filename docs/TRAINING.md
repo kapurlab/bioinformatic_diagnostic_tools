@@ -274,7 +274,7 @@ that IRMA produced. This is the pattern you'd use for genomes assembled elsewher
 
 **What it does.** vSNP3 (USDA) is the suite's high-resolution SNP tool for
 bacteria and viruses. It answers *"how closely related are these isolates?"* —
-the core question in outbreak and surveillance work. This example will use TB as
+the application is for outbreak surveillance. This example will use TB as
 the practice organism.
 
 **The two-step model — the single most important concept:**
@@ -284,10 +284,13 @@ the practice organism.
   sample.
 - **Step 2 — compare many samples.** Collect the Step 1 VCFs with zero coverage
   (`zc.vcf`), build a **SNP table** (who differs from whom, and where) and a
-  **phylogenetic tree**.
+  **phylogenetic tree**. Using **defining SNPs**, samples are arranged into
+  meaningful small groups to speed analysis time and provide detailed focus to
+  the relevant samples.
 
 The power of this split: you run Step 1 once, then re-run Step 2 as often as you
-like — adding samples, changing thresholds — **without re-aligning anything.**
+like — adding samples, changing thresholds — **without repeating the major
+computation workload of alignment and SNP calling.**
 
 ### The data
 

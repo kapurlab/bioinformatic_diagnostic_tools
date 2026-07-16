@@ -31,7 +31,18 @@
 # Common options: --prefix DIR, --site-conf PATH (server/site-init), --dry-run, -h|--help
 set -euo pipefail
 
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
+# Resolve this script's real path, following symlinks, so `bdtools` can be
+# symlinked (into the repo root, onto $PATH, ~/bin, …) and still find its libs.
+# Portable for bash 3.2 (macOS) — no `readlink -f`. Handles relative/absolute
+# targets and symlink chains.
+_bdt_src="${BASH_SOURCE[0]}"
+while [[ -h "${_bdt_src}" ]]; do
+  _bdt_dir="$(cd -P "$(dirname "${_bdt_src}")" && pwd)"
+  _bdt_src="$(readlink "${_bdt_src}")"
+  [[ "${_bdt_src}" != /* ]] && _bdt_src="${_bdt_dir}/${_bdt_src}"
+done
+_bdt_dir="$(cd -P "$(dirname "${_bdt_src}")" && pwd)"
+source "${_bdt_dir}/lib/common.sh"
 
 usage() { sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'; }
 

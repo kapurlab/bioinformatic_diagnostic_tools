@@ -219,25 +219,96 @@ cmd_local() {
   "${KT_BIN_DIR}/install-local.sh" --run-only "$@"
 }
 
+# Pick a python that can run the reverse-proxy dashboard (needs starlette+httpx+
+# uvicorn — present in every tool's conda env). Prints its path, or nothing.
+_dashboard_proxy_python() {
+  local cand
+  for cand in \
+      "${BDTOOLS_TOOLSDIR:-/srv/kapurlab/tools}"/*/env/bin/python \
+      "${HOME}/.local/share/bdtools/checkouts"/*/env/bin/python \
+      "${HOME}"/miniforge3/envs/*/bin/python \
+      "${HOME}"/miniforge3/bin/python; do
+    [[ -x "${cand}" ]] || continue
+    if "${cand}" -c 'import starlette, httpx, uvicorn' >/dev/null 2>&1; then
+      echo "${cand}"; return 0
+    fi
+  done
+  return 1
+}
+
+# Should the local dashboard require a one-time session token? Personal machines
+# (your own Mac / a WSL box) don't need one — loopback is yours alone. A shared
+# multi-user server does: other accounts share 127.0.0.1. Override: set
+# BDTOOLS_DASHBOARD_AUTH=1 (force on) or =0 (force off).
+_dashboard_wants_token() {
+  case "${BDTOOLS_DASHBOARD_AUTH:-}" in
+    1|true|yes|on)  return 0;;
+    0|false|no|off) return 1;;
+  esac
+  [[ "$(uname -s)" == "Darwin" ]] && return 1                      # macOS desktop
+  [[ -n "${WSL_DISTRO_NAME:-}" ]] && return 1                      # WSL2
+  grep -qiE 'microsoft|wsl' /proc/version 2>/dev/null && return 1  # older WSL
+  return 0                                                          # assume shared server
+}
+
 cmd_dashboard() {
-  # Local landing page: lists installed GUIs and launches the one you pick.
+  # Landing page that lists installed GUIs and launches the one you pick. It
+  # prefers the single-port reverse-proxy dashboard (bin/ood_dashboard/app.py):
+  # each tool runs on a private loopback port and is served under /t/<tool>/, so
+  # only ONE port ever needs to be reachable. Over SSH, forward just that port.
+  # Falls back to the legacy per-tool-port dashboard if the proxy deps are absent.
   #   --restart  stop the running dashboard + any tools, then start fresh
   #              (use this after a `git pull` so new code takes effect)
   #   --stop     stop the running dashboard + any tools, and exit
-  local mode=serve rest=() a
-  for a in "$@"; do
-    case "$a" in
-      --restart) mode=restart;;
-      --stop)    mode=stop;;
-      *)         rest+=("$a");;
+  #   --port N   dashboard port (default 8080)   --no-browser  don't auto-open
+  local mode=serve rest=() port=8080 no_browser=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --restart)    mode=restart; shift;;
+      --stop)       mode=stop; shift;;
+      --no-browser) no_browser=1; rest+=("$1"); shift;;
+      --port=*)     port="${1#--port=}"; rest+=("$1"); shift;;
+      --port)       port="${2:-8080}"; rest+=("$1"); shift
+                    if [[ $# -gt 0 ]]; then rest+=("$1"); shift; fi;;
+      *)            rest+=("$1"); shift;;
     esac
   done
+
   if [[ "${mode}" != serve ]]; then
-    pkill -f "${KT_BIN_DIR}/dashboard.py" 2>/dev/null || true   # the dashboard server
-    pkill -f "uvicorn app.main:app"       2>/dev/null || true   # any tool servers it launched
+    pkill -f "uvicorn app:app"            2>/dev/null || true   # the proxy dashboard
+    pkill -f "${KT_BIN_DIR}/dashboard.py" 2>/dev/null || true   # the legacy dashboard
+    pkill -f "uvicorn app.main:app"       2>/dev/null || true   # any tool servers
     ok "stopped the dashboard and any running tools."
     [[ "${mode}" == stop ]] && return 0
   fi
+
+  local pyproxy; pyproxy="$(_dashboard_proxy_python || true)"
+  if [[ -n "${pyproxy}" ]]; then
+    export BDTOOLS_LOCAL=1
+    local want_token=0; _dashboard_wants_token && want_token=1
+    local url="http://127.0.0.1:${port}/"
+    if [[ ${want_token} -eq 1 ]]; then
+      export BDTOOLS_SESSION_TOKEN="$("${pyproxy}" -c 'import secrets; print(secrets.token_urlsafe(24))')"
+      url="http://127.0.0.1:${port}/?t=${BDTOOLS_SESSION_TOKEN}"
+    fi
+    local bar="================================================================"
+    printf '\n%s\n  Kapur Lab Diagnostic Tools — dashboard starting (single-port proxy).\n\n  Open this in your web browser:\n      %s\n\n' "${bar}" "${url}"
+    [[ ${want_token} -eq 1 ]] && printf '  This link carries a one-time session key — treat it like a password.\n  Other accounts on this server cannot open the dashboard without it.\n\n'
+    printf '  Working over SSH? Forward just this one port from your machine:\n      ssh -L %s:127.0.0.1:%s <this-host>\n\n  Keep this window open while you work (Ctrl-C stops everything).\n%s\n\n' "${port}" "${port}" "${bar}"
+    if [[ ${no_browser} -eq 0 ]]; then
+      ( sleep 1.5
+        for o in open xdg-open wslview; do
+          command -v "$o" >/dev/null 2>&1 && { "$o" "${url}" >/dev/null 2>&1; break; }
+        done ) &
+    fi
+    cd "${KT_BIN_DIR}/ood_dashboard" || die "cannot cd to ${KT_BIN_DIR}/ood_dashboard"
+    exec "${pyproxy}" -m uvicorn app:app --host 127.0.0.1 --port "${port}" --log-level warning
+  fi
+
+  # Fallback: proxy deps absent — legacy dashboard (each tool on its own port; over
+  # SSH you'd forward each one). Install any tool to pull in starlette/httpx/uvicorn.
+  warn "reverse-proxy deps (starlette/httpx/uvicorn) not found — using the legacy dashboard."
+  warn "tools will open on their own ports. Install a tool to enable single-port mode."
   exec "${PYBIN}" "${KT_BIN_DIR}/dashboard.py" ${rest[@]+"${rest[@]}"}
 }
 

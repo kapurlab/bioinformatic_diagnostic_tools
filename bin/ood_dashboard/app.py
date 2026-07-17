@@ -1,31 +1,39 @@
 #!/usr/bin/env python3
-"""ood_dashboard — the single authenticated OOD entry point for the tool suite.
+"""ood_dashboard — the authenticated reverse-proxy entry point for the tool suite.
 
-One OOD batch_connect app runs THIS on a full compute node. It:
+Serves the whole suite behind ONE port. It:
   * lists the installed GUIs and launches each on demand as a uvicorn bound to
-    127.0.0.1 on the SAME node (via bin/lib/tool_launch.py) — so no other user
-    and no other node can reach a tool directly;
+    127.0.0.1 (via bin/lib/tool_launch.py) — so no other host/user reaches a
+    tool directly;
   * reverse-proxies each tool under /t/<tool>/ (this process is the only thing
-    OOD's /rnode proxy reaches);
-  * enforces authentication ONCE here, so the 8 tools need no auth code:
-      - a per-session random token (OOD's $password), presented as a one-time
-        ?t=... link and converted to an HttpOnly cookie; and
+    the outside reaches);
+  * enforces authentication ONCE here, so the tools need no auth code:
+      - a per-session random token, presented as a one-time ?t=... link and
+        converted to an HttpOnly cookie; and
       - an OOD-username check: X-Forwarded-User (injected + overwritten by
         mod_ood_proxy, so unspoofable) must equal the session owner.
 
-Resource consolidation: the node is allocated ONCE by the dashboard's OOD card;
-every tool the user opens shares that allocation instead of a job per tool.
+Two deployments share this one app:
+  * OOD — one batch_connect app runs it on a full compute node (bound 0.0.0.0,
+    reached only via OOD's /rnode proxy); the node is allocated ONCE and every
+    tool shares that allocation instead of a job per tool.
+  * Local (`bdtools dashboard`, BDTOOLS_LOCAL=1) — bound to 127.0.0.1 on a
+    laptop/WSL/SSH box; a single forwarded port serves every tool. Local mode
+    additionally exposes readiness badges + a self-update UI (see landing()).
 
 Config (environment):
-  BDTOOLS_SESSION_TOKEN[_FILE]  the per-session secret (from OOD $password)
+  BDTOOLS_LOCAL                 "1" => local mode (rich landing + update routes)
+  BDTOOLS_SESSION_TOKEN[_FILE]  the per-session secret (OOD $password, or minted
+                                by `bdtools dashboard` on a shared host)
   BDTOOLS_SESSION_OWNER         the launching user ($USER); enforced vs X-Forwarded-User
   BDTOOLS_STRICT_USER_HEADER    "1" => require the header to be present (403 if absent)
   BDTOOLS_TOOLSDIR / BDTOOLS_MANIFEST / BDTOOLS_HOME  passed through to tool_launch
 
-Run:  uvicorn app:app --host 0.0.0.0 --port $port   (from bin/ood_dashboard/)
+Run:  uvicorn app:app --host <0.0.0.0|127.0.0.1> --port $port   (from bin/ood_dashboard/)
 Deps: starlette, httpx, uvicorn — all present in the tool conda envs.
 """
 import asyncio
+import functools
 import html
 import os
 import socket
@@ -45,6 +53,12 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(_HERE), "lib"))
 import tool_launch  # noqa: E402
 import manifest  # noqa: E402
+import suite_common as sc  # noqa: E402  (shared, stdlib-only helpers)
+
+# Local mode (bdtools dashboard on a laptop/WSL/SSH box) enables the readiness
+# badges and the self-update UI. Under OOD this stays off: users can't update a
+# shared install, and readiness is the admin's concern, not per-session.
+LOCAL = os.environ.get("BDTOOLS_LOCAL", "").strip() in ("1", "true", "yes")
 
 _REPO_DIR = os.path.dirname(os.path.dirname(_HERE))
 _MANIFEST = os.environ.get("BDTOOLS_MANIFEST", os.path.join(_REPO_DIR, "tools.yml"))
@@ -53,33 +67,10 @@ _MANIFEST = os.environ.get("BDTOOLS_MANIFEST", os.path.join(_REPO_DIR, "tools.ym
 HOP_BY_HOP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
               "te", "trailer", "transfer-encoding", "upgrade"}
 
-PRETTY = {
-    "vsnp_gui": "vSNP3", "amr_plus_gui": "AMRFinderPlus", "irma_gui": "IRMA",
-    "genoflu_gui": "GenoFLU", "mlst_gui": "MLST", "kraken_id_parse_gui": "Kraken ID / Parse",
-    "ksnp_gui": "kSNP", "ncbi_submit_gui": "NCBI Submit", "mhc_gui": "Bovine MHC Typer",
-}
-BLURB = {
-    "vsnp_gui": "SNP analysis & phylogeny (TB / Brucella)",
-    "amr_plus_gui": "Antimicrobial resistance genes (AMRFinderPlus)",
-    "irma_gui": "Influenza / SARS-CoV-2 assembly (CDC IRMA)",
-    "genoflu_gui": "H5 2.3.4.4b influenza genotyping",
-    "mlst_gui": "Multi-locus sequence typing",
-    "kraken_id_parse_gui": "Taxonomic identification (Kraken2)",
-    "ksnp_gui": "Reference-free SNP phylogeny (kSNP4)",
-    "ncbi_submit_gui": "Prepare SRA / GenBank submissions",
-    "mhc_gui": "Bovine MHC (BoLA) typing from Nanopore amplicons",
-}
-# Static per-tool development notices, shown as a banner on the card. For tools
-# not yet validated for diagnostic use — independent of runtime readiness.
-CAVEAT = {
-    "mhc_gui": ("This tool is under active development. Results are preliminary, "
-                "have not been fully validated, and should not be treated as "
-                "definitive; interpret with caution and confirm by orthogonal methods."),
-}
-
-
-def pretty(name):
-    return PRETTY.get(name, name.replace("_gui", "").replace("_", " ").upper())
+# Display tables + the update/readiness helpers live in suite_common so the
+# legacy stdlib dashboard and this proxy dashboard stay in lock-step.
+PRETTY, BLURB, CAVEAT, pretty = sc.PRETTY, sc.BLURB, sc.CAVEAT, sc.pretty
+UPDATES = sc.UpdateManager()
 
 
 # ----- config -----
@@ -126,6 +117,15 @@ class Suite:
         self.lock = asyncio.Lock()
         self.running = {}  # tool -> {"port", "proc"}
         self.tools = self._discover()
+        self.readiness = {}  # name -> doctor record; filled lazily in local mode
+
+    async def refresh_readiness(self):
+        """Populate the readiness map (local mode only). `bdtools doctor --json`
+        is slow and network-touching, so run it off the event loop."""
+        if not LOCAL:
+            return
+        loop = asyncio.get_event_loop()
+        self.readiness = await loop.run_in_executor(None, sc.readiness_map)
 
     def _discover(self):
         out = []
@@ -148,7 +148,7 @@ class Suite:
         async with self.lock:
             cur = self.running.get(name)
             if cur and cur["proc"].returncode is None and await _port_open(cur["port"]):
-                return f"/t/{name}/", None
+                return f"t/{name}/", None
             try:
                 plan = tool_launch.resolve(name, 0)
             except Exception as exc:
@@ -171,7 +171,7 @@ class Suite:
             if proc.returncode is not None:
                 return None, f"the tool exited early — see {logf.name}"
             if await _port_open(port):
-                return f"/t/{name}/", None
+                return f"t/{name}/", None
             await asyncio.sleep(0.5)
         return None, "timed out waiting for the tool to start (first launch may still be building)"
 
@@ -184,8 +184,18 @@ class Suite:
     async def state(self):
         out = []
         for t in self.tools:
-            out.append(dict(t, running=self.port_of(t["name"]) is not None,
-                            url=(f"/t/{t['name']}/" if self.port_of(t["name"]) else None)))
+            running = self.port_of(t["name"]) is not None
+            r = self.readiness.get(t["name"]) if t.get("installed") else None
+            out.append(dict(
+                t,
+                running=running,
+                url=(f"t/{t['name']}/" if running else None),
+                # ready is None when unknown (doctor unavailable / not local); the
+                # UI only badges an explicit False.
+                ready=(r["ok"] if r else None),
+                issues=(r.get("issues", []) if r else []),
+                notes=(r.get("notes", []) if r else []),
+            ))
         return out
 
     async def shutdown(self):
@@ -218,9 +228,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 resp.set_cookie(COOKIE, TOKEN, httponly=True, samesite="lax", path="/")
                 return resp
             if request.cookies.get(COOKIE) != TOKEN:
-                return PlainTextResponse(
-                    "This session is private. Open it from your own OnDemand session card.",
-                    status_code=403)
+                msg = ("This dashboard is private. Open the http://…/?t=… link printed "
+                       "in the terminal where you started it."
+                       if LOCAL else
+                       "This session is private. Open it from your own OnDemand session card.")
+                return PlainTextResponse(msg, status_code=403)
         # 2) OOD username match. mod_ood_proxy overwrites X-Forwarded-User with the
         #    authenticated portal user, so a client cannot forge it.
         xfu = request.headers.get("x-forwarded-user", "").strip()
@@ -233,7 +245,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
 
 # ----- landing + control plane -----
-PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
+# The OOD landing: a lean grid (no self-update UI — users can't update a shared
+# install). Local mode serves the full-featured page from the legacy dashboard
+# (readiness badges + self-update), reused verbatim so there's one template.
+SIMPLE_PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Kapur Lab Diagnostic Tools</title><style>
  :root{{--bg:#f6f3ee;--card:#fff;--ink:#2c2a26;--muted:#7c756a;--accent:#a8553a;--accent2:#6b8f71;--line:#e6ded2}}
@@ -281,9 +296,20 @@ load();setInterval(load,5000);
 </script></body></html>"""
 
 
+@functools.lru_cache(maxsize=1)
+def _rich_page():
+    # The full local landing page (readiness + self-update UI) is owned by the
+    # legacy dashboard module; import lazily so the OOD path never touches it.
+    sys.path.insert(0, os.path.dirname(_HERE))  # bin/
+    import dashboard  # noqa: E402
+    return dashboard.PAGE
+
+
 async def landing(request):
+    if LOCAL:
+        return HTMLResponse(_rich_page())
     who = f"Signed in as {html.escape(OWNER)}." if OWNER else ""
-    return HTMLResponse(PAGE.format(who=who))
+    return HTMLResponse(SIMPLE_PAGE.format(who=who))
 
 
 async def api_tools(request):
@@ -298,6 +324,38 @@ async def api_launch(request):
     if url:
         return JSONResponse({"url": url})
     return JSONResponse({"error": err or "launch failed"}, status_code=500)
+
+
+# ----- updates + readiness (local mode only) -----
+def _valid_targets():
+    return {"all", "bdtools"} | {t["name"] for t in SUITE.tools}
+
+
+async def api_updates(request):
+    # Non-blocking: kick off the (slow) check on first ask, return what we have.
+    UPDATES.check_async()
+    return JSONResponse(UPDATES.state())
+
+
+async def api_check_updates(request):
+    UPDATES.check_async(force=True)
+    return JSONResponse(UPDATES.state())
+
+
+async def api_apply_updates(request):
+    target = request.query_params.get("target", "all")
+    started, err = UPDATES.apply(target, _valid_targets())
+    return JSONResponse({"started": started, "error": err}, status_code=200 if started else 409)
+
+
+async def api_update_status(request):
+    return JSONResponse(UPDATES.job_status())
+
+
+async def api_recheck(request):
+    # Re-run readiness after the user installs a database / fixes a dep.
+    await SUITE.refresh_readiness()
+    return JSONResponse(await SUITE.state())
 
 
 # ----- reverse proxy -----
@@ -362,6 +420,10 @@ def build_app():
         global SUITE, CLIENT
         SUITE = Suite()
         CLIENT = httpx.AsyncClient(timeout=httpx.Timeout(10.0, read=300.0), follow_redirects=False)
+        if LOCAL:
+            # Warm both in the background so the page is usable immediately.
+            asyncio.create_task(SUITE.refresh_readiness())
+            UPDATES.check_async()
         try:
             yield
         finally:
@@ -372,6 +434,17 @@ def build_app():
         Route("/", landing),
         Route("/api/tools", api_tools),
         Route("/api/launch", api_launch, methods=["POST"]),
+    ]
+    if LOCAL:
+        # Self-update + readiness control plane — local only (see landing()).
+        routes += [
+            Route("/api/updates", api_updates),
+            Route("/api/check-updates", api_check_updates, methods=["POST"]),
+            Route("/api/apply-updates", api_apply_updates, methods=["POST"]),
+            Route("/api/update-status", api_update_status),
+            Route("/api/recheck", api_recheck, methods=["POST"]),
+        ]
+    routes += [
         Route("/t/{tool}", proxy_noslash),
         Route("/t/{tool}/{path:path}", proxy,
               methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]),

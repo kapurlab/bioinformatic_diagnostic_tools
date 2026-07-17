@@ -37,6 +37,29 @@ reverse proxy.
   Tool frontends already use relative URLs and already run under a sub-path
   (`/rnode/…`), so serving them under `/t/<tool>/` works the same way.
 
+## Also powers local mode (single-port `bdtools dashboard`)
+
+The same `bin/ood_dashboard/app.py` is what `bdtools dashboard` now runs locally
+(with `BDTOOLS_LOCAL=1`), bound to `127.0.0.1` instead of `0.0.0.0`. This gives
+laptop / WSL / SSH users the same one-port model: every tool is served under
+`/t/<tool>/`, so working over SSH needs only a single forward
+(`ssh -L 8080:127.0.0.1:8080 <host>`) instead of chasing a random port per tool.
+
+Differences from OOD:
+- **Auth.** No `mod_ood_proxy`, so there's no `X-Forwarded-User`. The launcher
+  auto-mints a per-session token on shared multi-user hosts (any non-macOS,
+  non-WSL machine) and prints a `?t=…` URL; personal Mac/WSL run tokenless
+  (loopback is single-user). Override with `BDTOOLS_DASHBOARD_AUTH=1|0`.
+- **Extra UI.** Local mode adds readiness badges and a self-update panel
+  (`/api/updates`, `/api/apply-updates`, `/api/recheck`) — hidden under OOD,
+  where users can't update a shared install.
+- **Fallback.** If a python with `starlette`+`httpx`+`uvicorn` isn't found,
+  `bdtools dashboard` falls back to the legacy `bin/dashboard.py` (each tool on
+  its own port). Installing any tool provides the deps and enables proxy mode.
+
+Shared logic (display tables, readiness, update check/apply) lives in
+`bin/lib/suite_common.py`, imported by both dashboards.
+
 ## Install (sysadmin)
 
 Build each tool's environment **without** its per-tool card, then install the

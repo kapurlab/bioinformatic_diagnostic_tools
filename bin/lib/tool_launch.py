@@ -106,21 +106,31 @@ def resolve(tool, port, host="127.0.0.1"):
     if not os.path.isdir(os.path.join(d, spec["workdir"])):
         raise RuntimeError("%s: no %s/ at %s (tool not installed here?)" % (tool, spec["workdir"], d))
 
-    # ---- pick the env + python (shared -> personal -> base), mirroring script.sh.erb
+    # ---- pick the env + python (shared -> own -> personal -> base), mirroring
+    # script.sh.erb but with one extra fallback for local per-user installs.
     tools_root = os.path.dirname(d)
+    own_env = os.path.join(d, "env")   # the tool's OWN built env (<dir>/env)
     if spec["shared_env_sibling"]:
         shared_env = os.path.join(tools_root, spec["shared_env_sibling"])
     else:
-        shared_env = os.path.join(d, "env")
+        shared_env = own_env
     personal_env = os.path.expanduser(os.path.join("~/miniforge3/envs", _manifest_env_name(tool)))
     base_python = os.path.expanduser("~/miniforge3/bin/python")
 
+    def _has_python(p):
+        return bool(p) and os.path.isfile(os.path.join(p, "bin", "python"))
+
+    # sandbox override -> shared/sibling env -> the tool's own <dir>/env -> personal
+    # conda env. The own-env step matters for a *local* install of a sibling-env
+    # tool (e.g. vsnp_gui): there is no sibling <tools_root>/vsnp3 checkout, and the
+    # GUI's server deps (uvicorn/fastapi) live in <dir>/env — NOT in the bare vsnp3
+    # analysis conda env, which would otherwise be picked and fail to start uvicorn.
     env_dir = None
-    if sb_env and os.path.isfile(os.path.join(sb_env, "bin", "python")):
-        env_dir = sb_env
-    elif os.path.isfile(os.path.join(shared_env, "bin", "python")):
-        env_dir = shared_env
-    elif os.path.isdir(personal_env):
+    for cand in (sb_env, shared_env, own_env):
+        if _has_python(cand):
+            env_dir = cand
+            break
+    if env_dir is None and os.path.isdir(personal_env):
         env_dir = personal_env
 
     if env_dir:

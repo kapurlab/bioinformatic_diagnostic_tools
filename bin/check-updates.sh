@@ -80,8 +80,16 @@ apply_one() {
   fi
 
   log "updating ${name} -> ${target}"
-  run git -C "$dir" fetch --tags --depth 1 origin "${target}"
-  run git -C "$dir" checkout -q "${target}" || run git -C "$dir" checkout -q -B "${target}" "origin/${target}"
+  run git -C "$dir" fetch --tags --force --depth 1 origin "${target}"
+  # Force past locally-modified build artifacts. A managed checkout's working
+  # tree gets dirtied every install because the frontend is rebuilt in place
+  # (frontend/dist + package-lock are tracked, but regenerated with whatever
+  # Node/vite is on the box, so the hashes differ from what's committed). A
+  # plain `git checkout <tag>` aborts on that; -f is safe here because the very
+  # next step rebuilds env + frontend. Fall back to FETCH_HEAD when the tag
+  # didn't materialize as a local ref (shallow tag fetches land there).
+  run git -C "$dir" checkout -f -q "${target}" \
+    || run git -C "$dir" checkout -f -q FETCH_HEAD
   if [[ -n "$latest" && "$latest" != "$pinned" ]]; then
     log "bumping manifest pin: ${name} ${pinned} -> ${latest}"
     run manifest_set "$name" version "$latest"

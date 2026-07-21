@@ -1,4 +1,4 @@
-# bioinformatic_diagnostic_tools
+# bioinformatic_diagnostic_tools (bdtools)
 
 The single point to **install, run, and update** the Kapur Lab suite of
 bioinformatics GUIs (vSNP, IRMA, AMR, MLST, GenoFLU, kSNP, Kraken ID-Parse,
@@ -15,7 +15,7 @@ bioinformatic_diagnostic_tools/
 └── docs/              per-environment runbooks + sysadmin guide
 ```
 
-## Install with a Claude agent (recommended)
+## Install with a Claude agent (if available)
 
 The easiest path: let a [Claude Code](https://claude.com/claude-code) agent
 detect your system and install the right way. Clone the repo and point the agent
@@ -36,11 +36,7 @@ The agent figures out whether you're on a personal computer, an Open OnDemand
 cluster (as a user or an admin), and installs accordingly — production build
 only, no developer cards. The build flow is **install → validate → dashboard**:
 after building it validates against known samples and then hands you the access
-point (the local dashboard, or your OOD dashboard). To validate on demand:
-
-```bash
-claude "Follow AGENTS.md to validate this deployment with bdtools test all and report PASS/FAIL/SKIP."
-```
+point (the local dashboard, or your OOD dashboard).
 
 > No agent? The same steps by hand are in [INSTALL.md](INSTALL.md) and the
 > per-environment runbooks below.
@@ -52,14 +48,20 @@ This is the **local** path: no Open OnDemand, the tools run on your own machine.
 same as `install --local all`. **On an HPC / Open OnDemand cluster, do not use
 this** — jump to [Installing on Open OnDemand](#installing-on-open-ondemand-hpc).
 
-> **Before you start** you need **git** and a **conda/miniforge**
-> ([Miniforge](https://github.com/conda-forge/miniforge)); the installer stops
-> with a clear message if either is missing. On **Apple Silicon Macs (M1/M2/M3…)**
-> the env is built as `osx-64` under **Rosetta 2** (bioconda has no native arm64
-> builds for the pipeline toolchain) — install it once with `softwareupdate
-> --install-rosetta --agree-to-license`. Node.js/npm is only needed when building
-> a tool from a branch (release tarballs ship the frontend prebuilt). Full
-> platform notes: [docs/INSTALL_LOCAL.md](docs/INSTALL_LOCAL.md).
+> **Before you start** you need **git** and **conda/miniforge** — the installer
+> stops with a clear message if either is missing (it does **not** install conda
+> for you). If you don't have conda yet, install Miniforge first (one-time):
+>
+> ```bash
+> # If needed, install Miniforge (one-time) — Linux / macOS / WSL2:
+> curl -L -O "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-$(uname)-$(uname -m).sh"
+> bash Miniforge3-$(uname)-$(uname -m).sh
+> ```
+>
+> **WSL2** is Linux — use the commands above as-is. On **macOS**, if you've never
+> used the Terminal, first run `xcode-select --install` (this also provides
+> `git`). **Apple Silicon Macs (M1/M2/M3…)** also need Rosetta 2 once:
+> `softwareupdate --install-rosetta --agree-to-license`.
 
 > 💽 **On an HPC / shared cluster?** Set **`BDTOOLS_HOME`** to large
 > **scratch/work/group** storage *before* `install all` — cluster home dirs are

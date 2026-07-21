@@ -360,16 +360,22 @@ build_vsnp_local() {
   #    Prefer a database-setup-managed reference set (bdtools setup-databases
   #    writes BDTOOLS_HOME/db-root) so we don't clone a second copy; otherwise
   #    fall back to a vsnp_gui-private clone.
-  local refs db_root="" vsnp_deps=""
+  local refs db_root="" vsnp_deps="" refs_mode="supplemental"
   [[ -f "${BDTOOLS_HOME}/db-root" ]] && db_root="$(cat "${BDTOOLS_HOME}/db-root" 2>/dev/null || true)"
   if [[ -n "${db_root}" && -n "$(ls -A "${db_root}/vsnp3/reference_options" 2>/dev/null)" ]]; then
     refs="${db_root}/vsnp3/reference_options"
+    refs_mode="shared"   # database-setup set is authoritative — expose it whole
     ok "using database-setup reference options: ${refs}"
     [[ -d "${db_root}/vsnp3/vsnp_dependencies" ]] && vsnp_deps="${db_root}/vsnp3/vsnp_dependencies"
   else
+    # Fallback: a vsnp_gui-private USDA-VS clone used as a CACHE. We don't expose
+    # it wholesale — the site block below registers ONLY the references that
+    # aren't already available via the locations vsnp3 already knows about (what
+    # `vsnp3_path_adder.py -s` lists), so a shared set the user has registered
+    # (e.g. /srv/kapurlab/refs/vsnp3/reference_options) is never duplicated.
     refs="${BDTOOLS_HOME}/vsnp3-refs/vSNP_reference_options"
     if [[ -n "$(ls -A "${refs}" 2>/dev/null)" ]]; then
-      ok "reference options present: ${refs}"
+      ok "reference options cache present: ${refs}"
     else
       log "downloading vSNP reference options (USDA-VS) -> ${refs}"
       run mkdir -p "$(dirname "${refs}")"
@@ -384,7 +390,6 @@ build_vsnp_local() {
   if [[ ${DRY_RUN} -eq 0 ]]; then
     local site="${BDTOOLS_HOME}/vsnp3-site"
     mkdir -p "${site}/refs/vsnp3/vcf_db_folders" "${site}/tools" "${site}/projects" "${site}/audit"
-    ln -sfn "${refs}" "${site}/refs/vsnp3/reference_options"   # GUI reference root
     ln -sfn "${DIR}/env" "${site}/tools/vsnp3"                  # GUI vsnp3_path
     # Kraken ID Parse is a sibling tool the vSNP backend shells out to from Step 1.
     # Link the CHECKOUT dir here — NOT its env like vsnp3 above — because the
@@ -401,7 +406,48 @@ build_vsnp_local() {
     local rop="${site}/tools/vsnp3/dependencies/reference_options_paths.txt"
     local refpath="${site}/refs/vsnp3/reference_options"
     mkdir -p "${site}/tools/vsnp3/dependencies"
-    grep -qxF "${refpath}" "${rop}" 2>/dev/null || { echo "${refpath}" >> "${rop}"; }
+    touch "${rop}"
+    if [[ "${refs_mode}" == "shared" ]]; then
+      # Authoritative shared set — expose it whole (symlink) and register it.
+      ln -sfn "${refs}" "${refpath}"
+      grep -qxF "${refpath}" "${rop}" 2>/dev/null || echo "${refpath}" >> "${rop}"
+    else
+      # Supplemental: expose ONLY references not already available elsewhere.
+      # "Already available" = every reference subdir name reachable from the
+      # other paths currently registered (i.e. what `vsnp3_path_adder.py -s`
+      # lists), so e.g. a user-registered /srv/kapurlab/refs set is not
+      # duplicated. Missing ones are symlinked into refpath from the cache.
+      local already; already="$(
+        while IFS= read -r p; do
+          [[ -z "$p" ]] && continue
+          [[ "$p" == "${refpath}" ]] && continue     # ignore our own managed dir
+          [[ -d "$p" ]] || continue
+          for d in "$p"/*/; do [[ -d "$d" ]] && basename "$d"; done
+        done < "${rop}" | sort -u
+      )"
+      # Rebuild refpath as a real dir of symlinks (it may currently be a symlink
+      # to the full cache from an older install — replace it, don't follow it).
+      rm -rf "${refpath}"
+      mkdir -p "${refpath}"
+      local added=0 name
+      for d in "${refs}"/*/; do
+        [[ -d "$d" ]] || continue
+        name="$(basename "$d")"
+        grep -qxF "${name}" <<< "${already}" && continue   # already available → skip
+        ln -sfn "$d" "${refpath}/${name}"
+        added=$((added+1))
+      done
+      if [[ ${added} -gt 0 ]]; then
+        grep -qxF "${refpath}" "${rop}" 2>/dev/null || echo "${refpath}" >> "${rop}"
+        ok "added ${added} supplemental reference(s) not already available -> ${refpath}"
+      else
+        # Nothing new to contribute — don't leave a redundant registration behind.
+        if grep -qxF "${refpath}" "${rop}" 2>/dev/null; then
+          grep -vxF "${refpath}" "${rop}" > "${rop}.tmp" && mv "${rop}.tmp" "${rop}"
+        fi
+        ok "all USDA-VS references already available (per vsnp3_path_adder.py -s); none added"
+      fi
+    fi
     # Register the USDA vsnp_dependencies reference set too, when database-setup
     # provided it (extra references like the Brucella/MTBC test references).
     [[ -n "${vsnp_deps}" ]] && { grep -qxF "${vsnp_deps}" "${rop}" 2>/dev/null || echo "${vsnp_deps}" >> "${rop}"; }

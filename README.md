@@ -38,8 +38,8 @@ only, no developer cards. The build flow is **install → validate → dashboard
 after building it validates against known samples and then hands you the access
 point (the local dashboard, or your OOD dashboard).
 
-> No agent? The same steps by hand are in [INSTALL.md](INSTALL.md) and the
-> per-environment runbooks below.
+> No agent? See the same steps by hand at the [Quick start](#-quick-start--personal-computer-linux--macos--wsl2)
+> below. For more detail see [INSTALL.md](INSTALL.md).
 
 ## 🚀 Quick start — personal computer (Linux / macOS / WSL2)
 
@@ -80,6 +80,7 @@ cd bioinformatic_diagnostic_tools
 # HPC/cluster? first set large-storage BDTOOLS_HOME (home quotas are too small — see note above)
 bin/bdtools list                 # what's in the suite
 bin/bdtools install all          # same as: install --local all   (Linux / macOS / WSL2)
+# If prompted to install databases, pick the best location and say yes (see "Reference databases" below).
 bin/bdtools dashboard            # landing page: pick a GUI -> opens at http://127.0.0.1:8080/
 bin/bdtools test all             # validate against known samples (PASS/FAIL/SKIP)
 ```

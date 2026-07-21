@@ -32,7 +32,7 @@ PRETTY = {
     "mhc_gui": "Bovine MHC Typer",
 }
 BLURB = {
-    "vsnp_gui": "SNP analysis & phylogeny (TB / Brucella)",
+    "vsnp_gui": "SNP analysis & phylogeny (High resolution genotyping)",
     "amr_plus_gui": "Antimicrobial resistance genes (AMRFinderPlus)",
     "irma_gui": "Influenza / SARS-CoV-2 assembly (CDC IRMA)",
     "genoflu_gui": "H5 2.3.4.4b influenza genotyping",

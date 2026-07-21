@@ -248,8 +248,36 @@ class UpdateManager:
             if len(self.job["log"]) > 2000:
                 self.job["log"] = self.job["log"][-2000:]
 
+    def _reconcile_manifest(self):
+        """Discard a leftover local pin auto-bump so `pull --ff-only` can run.
+
+        No-op unless tools.yml is the only dirty tracked file. Best-effort:
+        any git error is logged and swallowed so the pull still proceeds.
+        """
+        try:
+            out = subprocess.run(
+                ["git", "-C", REPO_DIR, "status", "--porcelain", "--untracked-files=no"],
+                capture_output=True, text=True, check=True).stdout
+            dirty = [ln[3:] for ln in out.splitlines() if ln.strip()]
+            if dirty == ["tools.yml"]:
+                self._log("$ git checkout -- tools.yml  (discarding local pin auto-bump)")
+                subprocess.run(["git", "-C", REPO_DIR, "checkout", "--", "tools.yml"],
+                               check=True, capture_output=True, text=True)
+        except (OSError, subprocess.SubprocessError) as exc:
+            self._log(f"note: could not reconcile tools.yml before pull ({exc})")
+
     def _run(self, target):
         if target == "bdtools":
+            # `bdtools update <tool>` auto-bumps the pin in tools.yml in place
+            # (check-updates.sh) and never commits it — by design, so a box can
+            # track newer tool releases even when the committed pin lags. But on
+            # a checkout that also pulls an authoritative manifest, that leftover
+            # dirty tools.yml makes `pull --ff-only` abort. Origin is the source
+            # of truth for the pin and the tool checkout stays at its newer tag
+            # regardless, so discard the local auto-bump before pulling — but
+            # only when tools.yml is the *sole* dirty tracked file, to avoid
+            # clobbering any other in-progress edit.
+            self._reconcile_manifest()
             cmd = ["git", "-C", REPO_DIR, "pull", "--ff-only"]
             self._log("$ git pull --ff-only  (updating bdtools)")
         else:

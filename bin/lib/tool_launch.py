@@ -75,6 +75,33 @@ def _manifest_env_name(tool):
     raise KeyError("unknown tool: %s" % tool)
 
 
+def _conda_bases():
+    """Candidate conda base dirs, mirroring common.sh:detect_conda.
+
+    The personal-env fallback must find whatever conda the user actually has —
+    NOT just miniforge3. common.sh already probes this list; tool_launch has to
+    agree, or a tool installed into (say) ~/miniconda3/envs/<env> shows up as
+    "not installed" in the dashboard even though `bdtools doctor` sees it.
+    Order matters: honor explicit overrides first, then the common install bases.
+    """
+    seen, bases = set(), []
+
+    def add(b):
+        if b and b not in seen:
+            seen.add(b)
+            bases.append(b)
+
+    add(os.environ.get("CONDA_BASE", "").strip())
+    exe = os.environ.get("CONDA_EXE", "").strip()
+    if exe:
+        add(os.path.dirname(os.path.dirname(exe)))  # <base>/bin/conda -> <base>
+    for b in ("~/miniforge3", "~/miniconda3", "~/mambaforge", "~/anaconda3",
+              "/opt/miniforge3", "/opt/miniconda3",
+              "/opt/homebrew/Caskroom/miniforge/base"):
+        add(os.path.expanduser(b))
+    return [b for b in bases if os.path.isdir(b)]
+
+
 def _sandbox_env(tool):
     """Per-user sandbox overrides from ~/.config/<tool>/sandbox.env (BDTOOLS_APP_*).
 
@@ -114,8 +141,13 @@ def resolve(tool, port, host="127.0.0.1"):
         shared_env = os.path.join(tools_root, spec["shared_env_sibling"])
     else:
         shared_env = own_env
-    personal_env = os.path.expanduser(os.path.join("~/miniforge3/envs", _manifest_env_name(tool)))
-    base_python = os.path.expanduser("~/miniforge3/bin/python")
+    # Personal-install fallback: <conda base>/envs/<manifest env> and, last of
+    # all, the conda base python. Probe every conda base the user might have
+    # (common.sh does the same) rather than assuming miniforge3.
+    env_name = _manifest_env_name(tool)
+    conda_bases = _conda_bases()
+    personal_envs = [os.path.join(b, "envs", env_name) for b in conda_bases]
+    base_pythons = [os.path.join(b, "bin", "python") for b in conda_bases]
 
     def _has_python(p):
         return bool(p) and os.path.isfile(os.path.join(p, "bin", "python"))
@@ -130,16 +162,16 @@ def resolve(tool, port, host="127.0.0.1"):
         if _has_python(cand):
             env_dir = cand
             break
-    if env_dir is None and os.path.isdir(personal_env):
-        env_dir = personal_env
+    if env_dir is None:
+        env_dir = next((p for p in personal_envs if _has_python(p)), None)
 
     if env_dir:
         python = os.path.join(env_dir, "bin", "python")
-    elif os.path.isfile(base_python):
-        python = base_python
     else:
-        raise RuntimeError(
-            "%s: no python found (looked for %s, %s, %s)" % (tool, shared_env, personal_env, base_python))
+        python = next((p for p in base_pythons if os.path.isfile(p)), None)
+    if not python:
+        looked = ", ".join([shared_env] + personal_envs + base_pythons)
+        raise RuntimeError("%s: no python found (looked for %s)" % (tool, looked))
 
     # ---- build the environment overrides
     env = dict(os.environ)

@@ -221,17 +221,48 @@ cmd_local() {
 
 # Pick a python that can run the reverse-proxy dashboard (needs starlette+httpx+
 # uvicorn — present in every tool's conda env). Prints its path, or nothing.
+#
+# The candidate list MUST agree with tool_launch.py:_conda_bases(): that helper
+# probes CONDA_BASE/CONDA_EXE and ~/miniconda3, ~/mambaforge, ~/anaconda3, /opt/…
+# — not just ~/miniforge3. If this selector searched fewer places than the
+# launcher, a box whose only proxy-capable env lives in (say) a group
+# /…/miniconda3/envs/<tool> would silently fall back to the legacy multi-port
+# dashboard even though the launcher could happily run every tool from it.
 _dashboard_proxy_python() {
-  local cand
+  local cand b
+
+  # Explicit override always wins (set BDTOOLS_DASHBOARD_PYTHON=/path/to/python).
+  if [[ -n "${BDTOOLS_DASHBOARD_PYTHON:-}" && -x "${BDTOOLS_DASHBOARD_PYTHON}" ]] \
+     && "${BDTOOLS_DASHBOARD_PYTHON}" -c 'import starlette, httpx, uvicorn' >/dev/null 2>&1; then
+    echo "${BDTOOLS_DASHBOARD_PYTHON}"; return 0
+  fi
+
+  # Conda bases to probe, mirroring tool_launch.py:_conda_bases() (order = priority).
+  local bases=()
+  [[ -n "${CONDA_BASE:-}" ]] && bases+=("${CONDA_BASE}")
+  [[ -n "${CONDA_EXE:-}"  ]] && bases+=("$(dirname "$(dirname "${CONDA_EXE}")")")
+  local condabin; condabin="$(command -v conda 2>/dev/null || true)"
+  [[ -n "${condabin}" ]] && bases+=("$(dirname "$(dirname "${condabin}")")")
+  [[ -n "${CONDA_PREFIX:-}" ]] && bases+=("${CONDA_PREFIX}")  # the active env itself
+  bases+=("${HOME}/miniforge3" "${HOME}/miniconda3" "${HOME}/mambaforge" \
+          "${HOME}/anaconda3" /opt/miniforge3 /opt/miniconda3)
+
+  # Tool checkouts first (own <dir>/env), then every conda base's envs + base python.
   for cand in \
       "${BDTOOLS_TOOLSDIR:-/srv/kapurlab/tools}"/*/env/bin/python \
-      "${HOME}/.local/share/bdtools/checkouts"/*/env/bin/python \
-      "${HOME}"/miniforge3/envs/*/bin/python \
-      "${HOME}"/miniforge3/bin/python; do
+      "${HOME}/.local/share/bdtools/checkouts"/*/env/bin/python; do
     [[ -x "${cand}" ]] || continue
     if "${cand}" -c 'import starlette, httpx, uvicorn' >/dev/null 2>&1; then
       echo "${cand}"; return 0
     fi
+  done
+  for b in "${bases[@]}"; do
+    for cand in "${b}"/envs/*/bin/python "${b}"/bin/python; do
+      [[ -x "${cand}" ]] || continue
+      if "${cand}" -c 'import starlette, httpx, uvicorn' >/dev/null 2>&1; then
+        echo "${cand}"; return 0
+      fi
+    done
   done
   return 1
 }

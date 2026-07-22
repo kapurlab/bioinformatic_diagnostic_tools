@@ -54,16 +54,26 @@ def _spec(tool):
     return s
 
 
+def _bdtools_home():
+    """Mirror common.sh: $BDTOOLS_HOME, else the XDG-friendly per-user default.
+
+    Single source of truth so tool_dir() and the vsnp_gui site-root resolution
+    in resolve() agree with install-local.sh, which builds its site tree at
+    <BDTOOLS_HOME>/vsnp3-site. Works identically on Mac/WSL/Linux — pure path
+    logic, no assumption about where the install lives."""
+    home = os.environ.get("BDTOOLS_HOME", "").strip()
+    if not home:
+        base = os.environ.get("XDG_DATA_HOME", "").strip() or os.path.expanduser("~/.local/share")
+        home = os.path.join(base, "bdtools")
+    return home
+
+
 def tool_dir(name):
     """Mirror common.sh:tool_dir — explicit BDTOOLS_TOOLSDIR wins, else per-user."""
     td = os.environ.get("BDTOOLS_TOOLSDIR", "").strip()
     if td and os.path.isdir(os.path.join(td, name)):
         return os.path.join(td, name)
-    home = os.environ.get("BDTOOLS_HOME", "").strip()
-    if not home:
-        base = os.environ.get("XDG_DATA_HOME", "").strip() or os.path.expanduser("~/.local/share")
-        home = os.path.join(base, "bdtools")
-    return os.path.join(home, "checkouts", name)
+    return os.path.join(_bdtools_home(), "checkouts", name)
 
 
 def _manifest_env_name(tool):
@@ -186,10 +196,26 @@ def resolve(tool, port, host="127.0.0.1"):
         env["PYTHONPATH"] = os.pathsep.join(pp + ([env["PYTHONPATH"]] if env.get("PYTHONPATH") else []))
     if spec["set_conda_prefix"] and env_dir:
         env["CONDA_PREFIX"] = env_dir
-    # vsnp_gui: on a --server node its backend reads shared paths from defaults
-    # (/srv/... or SITE_ROOT) — same as its own script.sh.erb, which sets nothing
-    # extra. VSNP_GUI_SITE_ROOT is only needed for local/sandbox and is passed
-    # through from the environment if already set (dict(os.environ) above).
+    # vsnp_gui resolves its shared paths — references, VCF-db root, the vsnp3 env,
+    # and the SIBLING Kraken install — from VSNP_GUI_SITE_ROOT, read ONCE at process
+    # start (backend config.py). The Kraken path (_KRAKEN_GUI_ROOT) is derived from
+    # that env var, NOT a config.json key, so a correct config.json can't repair it.
+    # On a SERVER deployment those paths live under /srv/... (the backend default)
+    # and script.sh.erb sets nothing extra. On a LOCAL/group install, install-local.sh
+    # builds a self-contained site tree at <BDTOOLS_HOME>/vsnp3-site and points the
+    # GUI there; this launch path must do the SAME, or the backend falls back to
+    # /srv/kapurlab and e.g. "Run Kraken" 503s ("Kraken ID Parse is not installed at
+    # /srv/kapurlab/tools/kraken_id_parse_gui"). Discriminator (server vs local) is
+    # simply whether that site tree exists — install-local.sh creates it only for
+    # local installs. setdefault() never overrides a value the caller already set, so
+    # an explicit --server / script.sh.erb export of VSNP_GUI_SITE_ROOT still wins.
+    if tool == "vsnp_gui":
+        _site = os.path.join(_bdtools_home(), "vsnp3-site")
+        if os.path.isdir(_site):
+            env.setdefault("VSNP_GUI_SITE_ROOT", _site)
+            # Single-user local install: one Projects root. "" is authoritative-empty
+            # in the backend (disables the multi-user shared root); mirrors install-local.sh.
+            env.setdefault("VSNP_GUI_SHARED_PROJECTS_ROOT", "")
 
     argv = [python, "-m", "uvicorn", spec["app"],
             "--host", host, "--port", str(port), "--log-level", "info"]

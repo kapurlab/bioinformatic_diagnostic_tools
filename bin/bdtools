@@ -354,7 +354,12 @@ cmd_dashboard() {
   local _stop=0; trap '_stop=1' INT TERM
   local rc=0
   while :; do
-    "${runcmd[@]}"; rc=$?
+    # `|| rc=$?` keeps the non-zero exit "tested" so `set -e` does NOT abort the
+    # script here — the whole restart mechanism depends on us seeing rc, not dying
+    # on it. Exit 42 = relaunch (the browser "Restart" button); any other code ends
+    # the loop (0 = "Shut down"/normal stop, 130 = Ctrl-C).
+    rc=0
+    "${runcmd[@]}" || rc=$?
     if [[ ${rc} -eq 42 && ${_stop} -eq 0 ]]; then
       printf '\n  ↻ Restarting the dashboard (requested from your browser)…\n\n'
       continue

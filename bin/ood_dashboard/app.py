@@ -439,26 +439,52 @@ class AuthMiddleware(BaseHTTPMiddleware):
 # (readiness badges + self-update), reused verbatim so there's one template.
 SIMPLE_PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Kapur Lab Diagnostic Tools</title><style>
- :root{{--bg:#f6f3ee;--card:#fff;--ink:#2c2a26;--muted:#7c756a;--accent:#a8553a;--accent2:#6b8f71;--line:#e6ded2}}
+<title>Kapur Lab Diagnostic Tools</title>
+<script>
+const THEME_KEY='bdtools-theme';
+function preferredTheme(){{try{{const v=localStorage.getItem(THEME_KEY);if(['light','dark','system'].includes(v))return v;}}catch(e){{}}return 'system';}}
+function resolvedTheme(m){{return m==='system'?(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'):m;}}
+function applyTheme(m,persist=true){{document.documentElement.dataset.theme=resolvedTheme(m);document.documentElement.dataset.themeMode=m;
+ document.documentElement.style.colorScheme=resolvedTheme(m);if(persist){{try{{localStorage.setItem(THEME_KEY,m);}}catch(e){{}}}}
+ document.querySelectorAll('[data-theme-choice]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.themeChoice===m)));}}
+applyTheme(preferredTheme(),false);
+matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change',()=>{{if(document.documentElement.dataset.themeMode==='system')applyTheme('system',false);}});
+addEventListener('storage',e=>{{if(e.key===THEME_KEY)applyTheme(preferredTheme(),false);}});
+</script><style>
+ :root{{--bg:#f6f3ee;--card:#fff;--ink:#2c2a26;--muted:#7c756a;--accent:#a8553a;--accent2:#6b8f71;--line:#e6ded2;--soft:#efe9df;--button-ink:#fff}}
+ html[data-theme="dark"]{{--bg:#0c1217;--card:#141d24;--ink:#e8eef1;--muted:#9aa9b2;--accent:#dc8b6d;--accent2:#76ae83;--line:#2b3a44;--soft:#1c2931;--button-ink:#10191d}}
  *{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}}
- header{{padding:28px 24px 8px}}h1{{margin:0;font-size:22px}}p.sub{{margin:4px 0 0;color:var(--muted)}}
+ header{{padding:28px 24px 8px}}.hbar{{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}}
+ h1{{margin:0;font-size:22px}}p.sub{{margin:4px 0 0;color:var(--muted)}}
  .who{{color:var(--muted);font-size:13px;padding:2px 24px 0}}
  .grid{{display:grid;gap:16px;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));padding:20px 24px 40px}}
  .card{{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:8px}}
  .name{{font-weight:650;font-size:16px}}.blurb{{color:var(--muted);font-size:13px;min-height:34px}}
  .row{{display:flex;align-items:center;justify-content:space-between;margin-top:4px}}
- button{{font:inherit;border:0;border-radius:8px;padding:8px 14px;cursor:pointer;background:var(--accent);color:#fff;font-weight:600}}
+ button{{font:inherit;border:0;border-radius:8px;padding:8px 14px;cursor:pointer;background:var(--accent);color:var(--button-ink);font-weight:600}}
  button:disabled{{background:#cfc7ba;cursor:not-allowed}}button.open{{background:var(--accent2)}}
- .pill{{font-size:12px;padding:2px 9px;border-radius:999px;background:#efe9df;color:var(--muted)}}
+ .pill{{font-size:12px;padding:2px 9px;border-radius:999px;background:var(--soft);color:var(--muted)}}
  .pill.on{{background:#e2efe4;color:#3f6b48}}.err{{color:#b23b2e;font-size:12px;min-height:14px}}
  .dev{{background:#fbecec;border:1px solid #ecc9c4;border-radius:8px;padding:8px 10px;font-size:12px;color:#8a3324}}
+ .theme-switch{{display:inline-flex;gap:2px;padding:3px;background:var(--soft);border:1px solid var(--line);border-radius:10px}}
+ .theme-switch button{{min-width:34px;padding:5px 8px;background:transparent;color:var(--muted);border-radius:7px}}
+ .theme-switch button[aria-pressed="true"]{{background:var(--card);color:var(--ink);box-shadow:0 1px 4px rgba(0,0,0,.16)}}
+ .theme-switch button:focus-visible{{outline:2px solid var(--accent);outline-offset:2px}}
+ html[data-theme="dark"] .pill.on{{background:#183326;color:#9bd8a7}}
+ html[data-theme="dark"] .dev{{background:#3a2223;border-color:#633638;color:#f0a09b}}
+ html[data-theme="dark"] .err{{color:#f0a09b}}
 </style></head><body>
-<header><h1>Kapur Lab Diagnostic Tools</h1>
-<p class="sub">One session, one allocation. Pick a tool to launch it on this node.</p></header>
+<header><div class="hbar"><div><h1>Kapur Lab Diagnostic Tools</h1>
+<p class="sub">One session, one allocation. Pick a tool to launch it on this node.</p></div>
+<div class="theme-switch" role="group" aria-label="Appearance">
+ <button data-theme-choice="light" aria-label="Use light theme" title="Light" onclick="applyTheme('light')">☀</button>
+ <button data-theme-choice="system" aria-label="Use system theme" title="System" onclick="applyTheme('system')">◐</button>
+ <button data-theme-choice="dark" aria-label="Use dark theme" title="Dark" onclick="applyTheme('dark')">☾</button>
+</div></div></header>
 <p class="who">{who} <span style="opacity:.75">Running on {host}.</span></p>
 <div id="grid" class="grid"></div>
 <script>
+applyTheme(document.documentElement.dataset.themeMode||'system',false);
 async function load(){{
  const r=await fetch('./api/tools');const tools=await r.json();
  const g=document.getElementById('grid');g.innerHTML='';

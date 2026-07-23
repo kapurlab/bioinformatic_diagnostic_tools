@@ -30,6 +30,9 @@ for user testing before coordinated releases.
   says it captures commands launched directly by the orchestrator.
 - The Bovine MHC tool now has a complete doctor dependency contract; optional
   AMRFinder/rclone integrations are reported as notes rather than core failures.
+- The dashboard and all nine GUI headers offer polished Light, Dark, and System
+  modes. The browser preference is persisted and shared across proxied tools,
+  follows OS changes in System mode, and is applied before first paint.
 
 ## Coordinated branches
 

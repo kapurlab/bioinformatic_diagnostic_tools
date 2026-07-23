@@ -156,6 +156,11 @@ the job—or stop it from that tool's own interface—then try again. Terminal
 `dashboard --stop`/`--restart` commands use the same guard; they never use broad
 process-name kills.
 
+**Light, dark, or system appearance.** Use the compact appearance control in the
+dashboard or any tool header. The choice is saved in the browser and shared
+across tools when they run through the consolidated dashboard. System mode
+tracks the operating-system preference automatically.
+
 ## 💾 Reference databases
 
 A few tools need large third-party **reference databases** that aren't shipped

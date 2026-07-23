@@ -224,6 +224,17 @@ class StateFileTests(unittest.TestCase):
             ROOT / "bin/bdtools"
         ).read_text(encoding="utf-8"))
 
+    @unittest.skipUnless(HAS_PROXY_DEPS, "proxy dashboard dependencies are not installed")
+    def test_dashboard_pages_expose_persisted_accessible_themes(self):
+        dashboard = (ROOT / "bin/dashboard.py").read_text(encoding="utf-8")
+        self.assertIn("bdtools-theme", dashboard)
+        self.assertIn('data-theme-choice="dark"', dashboard)
+        self.assertIn('aria-label="Appearance"', dashboard)
+        rendered_ood = APP.SIMPLE_PAGE.format(who="Signed in.", host="compute-1")
+        self.assertIn("bdtools-theme", rendered_ood)
+        self.assertIn('data-theme-choice="light"', rendered_ood)
+        self.assertIn('html[data-theme="dark"]', rendered_ood)
+
     def test_suite_self_update_refuses_dirty_checkout(self):
         manager = SC.UpdateManager()
         manager.job = {

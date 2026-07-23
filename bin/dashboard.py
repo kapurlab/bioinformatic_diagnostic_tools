@@ -386,11 +386,41 @@ def _schedule_exit(code):
 PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Kapur Lab Diagnostic Tools</title>
+<script>
+const THEME_KEY='bdtools-theme';
+function preferredTheme(){
+  try{const v=localStorage.getItem(THEME_KEY);if(['light','dark','system'].includes(v))return v;}catch(e){}
+  return 'system';
+}
+function resolvedTheme(mode){
+  return mode==='system'?(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'):mode;
+}
+function applyTheme(mode,persist=true){
+  document.documentElement.dataset.theme=resolvedTheme(mode);
+  document.documentElement.dataset.themeMode=mode;
+  document.documentElement.style.colorScheme=resolvedTheme(mode);
+  if(persist){try{localStorage.setItem(THEME_KEY,mode);}catch(e){}}
+  document.querySelectorAll('[data-theme-choice]').forEach(b=>{
+    const on=b.dataset.themeChoice===mode;b.setAttribute('aria-pressed',String(on));
+  });
+}
+applyTheme(preferredTheme(),false);
+matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change',()=>{
+  if(document.documentElement.dataset.themeMode==='system')applyTheme('system',false);
+});
+addEventListener('storage',e=>{if(e.key===THEME_KEY)applyTheme(preferredTheme(),false);});
+</script>
 <style>
  :root{--bg:#f6f3ee;--card:#fff;--ink:#2c2a26;--muted:#7c756a;--accent:#a8553a;
-       --accent2:#6b8f71;--line:#e6ded2;}
+       --accent2:#6b8f71;--line:#e6ded2;--soft:#efe9df;--code:#f3e7cf;
+       --success-bg:#e2efe4;--success-ink:#3f6b48;--warn-bg:#fbedd6;--warn-ink:#8a5a12;
+       --danger-bg:#fbecec;--danger-line:#ecc9c4;--danger-ink:#8a3324;--button-ink:#fff;}
+ html[data-theme="dark"]{--bg:#0c1217;--card:#141d24;--ink:#e8eef1;--muted:#9aa9b2;
+   --accent:#dc8b6d;--accent2:#76ae83;--line:#2b3a44;--soft:#1c2931;--code:#26343c;
+   --success-bg:#183326;--success-ink:#9bd8a7;--warn-bg:#3b2e19;--warn-ink:#f1c77b;
+   --danger-bg:#3a2223;--danger-line:#633638;--danger-ink:#f0a09b;--button-ink:#10191d;}
  *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--ink);
-   font:15px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+   font:15px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;transition:background .2s,color .2s}
  header{padding:28px 24px 8px}h1{margin:0;font-size:22px}
  p.sub{margin:4px 0 0;color:var(--muted)}
  .grid{display:grid;gap:16px;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));
@@ -402,25 +432,25 @@ PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
  .blurb{color:var(--muted);font-size:13px;min-height:34px}
  .row{display:flex;align-items:center;justify-content:space-between;margin-top:4px}
  button{font:inherit;border:0;border-radius:8px;padding:8px 14px;cursor:pointer;
-   background:var(--accent);color:#fff;font-weight:600}
+   background:var(--accent);color:var(--button-ink);font-weight:600}
  button:disabled{background:#cfc7ba;cursor:not-allowed}
  button.open{background:var(--accent2)}
- .pill{font-size:12px;padding:2px 9px;border-radius:999px;background:#efe9df;color:var(--muted)}
- .pill.on{background:#e2efe4;color:#3f6b48}
- .pill.warn{background:#fbedd6;color:#9a6212}
+ .pill{font-size:12px;padding:2px 9px;border-radius:999px;background:var(--soft);color:var(--muted)}
+ .pill.on{background:var(--success-bg);color:var(--success-ink)}
+ .pill.warn{background:var(--warn-bg);color:var(--warn-ink)}
  .note{padding:0 24px;color:var(--muted);font-size:13px}
  a.foot{color:var(--accent)}
  .err{color:#b23b2e;font-size:12px;min-height:14px}
  .setup{background:#fbf5ea;border:1px solid #f0e2c8;border-radius:8px;padding:8px 10px;
    font-size:12px;color:#7a5a1e}
  .setup b{color:#6b4f1a}
- .setup code{background:#f3e7cf;padding:1px 5px;border-radius:4px;
+ .setup code{background:var(--code);padding:1px 5px;border-radius:4px;
    font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;
    user-select:all;word-break:break-all}
  .plat{font-size:12px;color:var(--muted);font-style:italic}
- .dev{background:#fbecec;border:1px solid #ecc9c4;border-radius:8px;padding:8px 10px;
-   font-size:12px;color:#8a3324}
- .dev b{color:#7a2a1e}
+ .dev{background:var(--danger-bg);border:1px solid var(--danger-line);border-radius:8px;padding:8px 10px;
+   font-size:12px;color:var(--danger-ink)}
+ .dev b{color:var(--danger-ink)}
  .recheck{padding:0 24px 12px;font-size:13px}
  .recheck button{background:transparent;color:var(--accent);padding:4px 0;font-weight:600}
  /* Subtle by default (checking / up-to-date are just a small muted line, so the
@@ -443,6 +473,14 @@ PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
    font:12px/1.45 ui-monospace,Menlo,Consolas,monospace;max-height:220px;overflow:auto;white-space:pre-wrap}
  .udone{margin-top:8px;font-weight:600}
  .hbar{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap}
+ .head-actions{display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap;justify-content:flex-end}
+ .theme-switch{display:inline-flex;gap:2px;padding:3px;background:var(--soft);border:1px solid var(--line);
+   border-radius:10px;box-shadow:0 1px 2px rgba(0,0,0,.06)}
+ .theme-switch button{min-width:34px;padding:5px 8px;background:transparent;color:var(--muted);
+   border-radius:7px;font-size:14px;line-height:1.1}
+ .theme-switch button[aria-pressed="true"]{background:var(--card);color:var(--ink);
+   box-shadow:0 1px 4px rgba(0,0,0,.16)}
+ .theme-switch button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
  .ctl{text-align:right}
  .host{color:var(--muted);font-size:12.5px;margin-bottom:6px}
  .host b{color:var(--ink)}
@@ -456,23 +494,36 @@ PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
    text-align:center;box-shadow:0 8px 40px rgba(0,0,0,.25)}
  .obox h2{margin:14px 0 8px;font-size:19px}
  .obox p{margin:0;color:var(--muted);font-size:14px;line-height:1.5}
- .obox code{background:#f3e7cf;padding:1px 6px;border-radius:4px;
+ .obox code{background:var(--code);padding:1px 6px;border-radius:4px;
    font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px;user-select:all}
  .ospin{width:34px;height:34px;border:3px solid var(--line);border-top-color:var(--accent);
    border-radius:50%;margin:0 auto;animation:spin 1s linear infinite}
  .ospin.done{animation:none;border:0;font-size:34px;line-height:34px;width:auto;height:auto}
+ html[data-theme="dark"] .setup{background:#2e281d;border-color:#55472d;color:#e5c98f}
+ html[data-theme="dark"] .setup b{color:#f0d59d}
+ html[data-theme="dark"] .updates.current{color:var(--success-ink)}
+ html[data-theme="dark"] .updates.avail{background:#302719;border-color:#5d4928;color:#ecd09a}
+ html[data-theme="dark"] button:disabled{background:#34414a;color:#89959c}
+ html[data-theme="dark"] .ulog{background:#080d11;color:#dce6eb}
+ html[data-theme="dark"] .err{color:#f0a09b}
  @keyframes spin{to{transform:rotate(360deg)}}
 </style></head><body>
 <header><div class="hbar">
   <div><h1>Kapur Lab Diagnostic Tools</h1>
   <p class="sub">Pick a tool to launch it on this machine. Each opens in a new tab.</p></div>
+  <div class="head-actions">
+  <div class="theme-switch" role="group" aria-label="Appearance">
+    <button data-theme-choice="light" aria-label="Use light theme" title="Light" onclick="applyTheme('light')">☀</button>
+    <button data-theme-choice="system" aria-label="Use system theme" title="System" onclick="applyTheme('system')">◐</button>
+    <button data-theme-choice="dark" aria-label="Use dark theme" title="Dark" onclick="applyTheme('dark')">☾</button>
+  </div>
   <div class="ctl" id="ctl" style="display:none">
     <div class="host" id="host"></div>
     <div class="ctlbtns">
       <button class="restart" onclick="restartDash()">↻ Restart dashboard</button>
       <button class="shutdown" onclick="shutdownDash()">⏻ Shut down</button>
     </div>
-  </div>
+  </div></div>
 </div></header>
 <div id="overlay" class="overlay" style="display:none"><div class="obox">
   <div class="ospin" id="ospin"></div>
@@ -483,6 +534,7 @@ PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <p class="recheck" id="recheck" style="display:none"><button onclick="recheck(this)">↻ Re-check readiness</button></p>
 <p class="note" id="note"></p>
 <script>
+applyTheme(document.documentElement.dataset.themeMode||'system',false);
 function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
 let controlToken='';
 async function ensureControl(){

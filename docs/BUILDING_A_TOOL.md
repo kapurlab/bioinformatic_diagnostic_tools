@@ -43,6 +43,12 @@ already mostly follow (see the canonical guide in
    documented output contract is cwd), record the effective subprocess cwd, and
    describe its scope honestly: an orchestrator can capture commands it launches
    directly, not commands launched internally by a child executable.
+9. **Participate in the suite appearance contract.** Offer Light, Dark, and
+   System choices in the application header, persist the mode under the
+   `bdtools-theme` local-storage key, set `data-theme` on the document root
+   before first paint, and express surfaces/text/status colors as CSS variables.
+   Under the consolidated proxy this makes one user choice apply across every
+   tool, while standalone tools retain the same control.
 
 ## Manifest entry
 

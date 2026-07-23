@@ -292,18 +292,29 @@ cmd_dashboard() {
   #              (use this after a `git pull` so new code takes effect)
   #   --stop     stop the running dashboard + any tools, and exit
   #   --port N   dashboard port (default 8080)   --no-browser  don't auto-open
-  local mode=serve rest=() port=8080 no_browser=0
+  #   --tools-dir DIR  run tool source from DIR/<tool> (feature-worktree testing)
+  local mode=serve rest=() port=8080 no_browser=0 tools_dir=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --restart)    mode=restart; shift;;
       --stop)       mode=stop; shift;;
       --no-browser) no_browser=1; rest+=("$1"); shift;;
+      --tools-dir=*) tools_dir="${1#--tools-dir=}"; shift;;
+      --tools-dir)   [[ $# -ge 2 ]] || die "--tools-dir requires a directory"
+                     tools_dir="$2"; shift 2;;
       --port=*)     port="${1#--port=}"; rest+=("$1"); shift;;
       --port)       port="${2:-8080}"; rest+=("$1"); shift
                     if [[ $# -gt 0 ]]; then rest+=("$1"); shift; fi;;
       *)            rest+=("$1"); shift;;
     esac
   done
+
+  if [[ -n "${tools_dir}" ]]; then
+    [[ -d "${tools_dir}" ]] || die "--tools-dir does not exist: ${tools_dir}"
+    BDTOOLS_TOOLSDIR="$(cd "${tools_dir}" && pwd -P)"
+    export BDTOOLS_TOOLSDIR
+    info "Testing tool source from ${BDTOOLS_TOOLSDIR}"
+  fi
 
   export BDTOOLS_DASHBOARD_STATE_FILE="${BDTOOLS_HOME}/dashboard-state.json"
   export BDTOOLS_DASHBOARD_PORT="${port}"

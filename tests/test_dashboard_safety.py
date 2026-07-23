@@ -239,8 +239,11 @@ class StateFileTests(unittest.TestCase):
 
     def test_page_uses_custom_control_header(self):
         dashboard = (ROOT / "bin/dashboard.py").read_text(encoding="utf-8")
+        launcher = (ROOT / "bin/bdtools").read_text(encoding="utf-8")
         self.assertIn("X-Bdtools-Control", dashboard)
         self.assertIn("controlFetch('./api/restart'", dashboard)
+        self.assertIn("--tools-dir", launcher)
+        self.assertIn("export BDTOOLS_TOOLSDIR", launcher)
         self.assertNotIn('pkill -f "uvicorn app.main:app"', (
             ROOT / "bin/bdtools"
         ).read_text(encoding="utf-8"))

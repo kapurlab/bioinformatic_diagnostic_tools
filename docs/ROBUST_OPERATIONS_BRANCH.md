@@ -37,10 +37,10 @@ for user testing before coordinated releases.
 ## Testing tool feature worktrees
 
 Exercise feature worktrees through the real dashboard without replacing an
-installed checkout by setting `BDTOOLS_TOOLSDIR` to their common parent:
+installed checkout by naming their common parent explicitly:
 
 ```bash
-BDTOOLS_TOOLSDIR=/path/to/tool-worktrees bin/bdtools dashboard
+bin/bdtools dashboard --tools-dir /path/to/tool-worktrees
 ```
 
 The launcher uses the feature source while safely reusing the matching local

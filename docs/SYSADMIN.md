@@ -41,8 +41,9 @@ Phases (`preflight toolchain app verify`, all idempotent, `--dry-run`-able):
 
 - **preflight** — checks OOD core is present, conda/npm available, the
   `CLUSTER_NAME` cluster is defined, and the sys-apps dir is writable.
-- **toolchain** — checks out the pinned tool at `TOOLS_ROOT/<tool>` and builds
-  its conda env + frontend via the tool's own `deploy/install.sh`.
+- **toolchain** — checks out the pinned tool at `TOOLS_ROOT/<tool>`, verifies an
+  existing checkout is at the exact manifest commit, and builds its conda env +
+  frontend via the tool's own `deploy/install.sh`.
 - **app** — renders each `ood/apps/<app>` into the sys-apps dir, rewriting the
   Kapur Lab literals (paths, cluster name, group names) from `site.conf`.
 - **verify** — confirms the env, frontend, and card are in place.
@@ -80,6 +81,26 @@ per-user sandbox (no admin): `bdtools install --sandbox <tool>` (see
   just warns if the named cluster isn't defined.
 - **Scheduler** — the cards use a `basic` `batch_connect` template (single
   proxied port). Slurm is assumed; other schedulers need the usual adapter.
+
+## Updating a server deployment
+
+Server source trees are not managed by `bdtools update`. That command performs
+a force checkout and is intentionally limited to bdtools-owned personal
+checkouts. A server tree may carry reviewed site or licensing commits, so
+`install --server` instead verifies that its `HEAD` is exactly the version
+pinned in `tools.yml` and refuses to build stale or locally diverged source.
+
+For each tool being promoted:
+
+1. Fetch the new tag in `TOOLS_ROOT/<tool>`.
+2. Reconcile any site/licensing work with that tag on a reviewed release branch.
+3. Update the matching `tools.yml` pin only after the tool release exists.
+4. Run `install --server ... --dry-run`, then run it for real.
+5. Run `bdtools doctor <tool>` and `bdtools test <tool>`.
+
+This explicit gate prevents a successful-looking rebuild from continuing to run
+an older commit. `check-updates` remains safe and read-only against server
+trees; only the mutating `update` command is restricted.
 
 ## Reference databases
 

@@ -305,12 +305,33 @@ cmd_dashboard() {
     esac
   done
 
+  export BDTOOLS_DASHBOARD_STATE_FILE="${BDTOOLS_HOME}/dashboard-state.json"
+  export BDTOOLS_DASHBOARD_PORT="${port}"
+
   if [[ "${mode}" != serve ]]; then
-    pkill -f "uvicorn app:app"            2>/dev/null || true   # the proxy dashboard
-    pkill -f "${KT_BIN_DIR}/dashboard.py" 2>/dev/null || true   # the legacy dashboard
-    pkill -f "uvicorn app.main:app"       2>/dev/null || true   # any tool servers
-    ok "stopped the dashboard and any running tools."
-    [[ "${mode}" == stop ]] && return 0
+    # Never use broad pkill patterns here: they can orphan detached analyses and
+    # can hit an unrelated server owned by the same account. Route the request
+    # through the running dashboard, which checks every tool's /api/jobs first.
+    local ctl_rc=0 ctl_action="${mode}"
+    "${PYBIN}" "${KT_BIN_DIR}/lib/dashboard_control.py" \
+      "${BDTOOLS_DASHBOARD_STATE_FILE}" "${ctl_action}" || ctl_rc=$?
+    if [[ ${ctl_rc} -eq 0 ]]; then
+      ok "dashboard ${mode} requested safely."
+      return 0
+    fi
+    if [[ ${ctl_rc} -eq 2 ]]; then
+      warn "dashboard ${mode} was blocked; resolve the active/unverifiable work above."
+      return 1
+    fi
+    if [[ "${mode}" == stop ]]; then
+      info "No running dashboard was recorded."
+      return 0
+    fi
+    # No state record: only start a new dashboard if the requested port is free.
+    # This protects an older unregistered dashboard from being killed blindly.
+    if "${PYBIN}" -c 'import socket,sys; s=socket.socket(); s.settimeout(.5); sys.exit(0 if s.connect_ex(("127.0.0.1", int(sys.argv[1]))) == 0 else 1)' "${port}"; then
+      die "port ${port} is already in use but no safe dashboard state record exists — use the existing dashboard's browser controls or stop its terminal with Ctrl-C"
+    fi
   fi
 
   # Decide which server to run (single-port proxy preferred; legacy fallback),
@@ -319,6 +340,7 @@ cmd_dashboard() {
   local pyproxy; pyproxy="$(_dashboard_proxy_python || true)"
   if [[ -n "${pyproxy}" ]]; then
     export BDTOOLS_LOCAL=1
+    export BDTOOLS_CONTROL_TOKEN="$("${pyproxy}" -c 'import secrets; print(secrets.token_urlsafe(32))')"
     local want_token=0; _dashboard_wants_token && want_token=1
     local url="http://127.0.0.1:${port}/"
     if [[ ${want_token} -eq 1 ]]; then

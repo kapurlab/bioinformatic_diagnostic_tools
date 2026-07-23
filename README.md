@@ -2,9 +2,10 @@
 
 The single point to **install, run, and update** the Kapur Lab suite of
 bioinformatics GUIs (vSNP, IRMA, AMR, MLST, GenoFLU, kSNP, Kraken ID-Parse,
-NCBI-Submit). Each tool lives in its own repo and is released independently;
-this umbrella repo pins the set in a manifest ([`tools.yml`](tools.yml)) and
-drives a uniform install/update experience across environments.
+NCBI-Submit, and the developmental Bovine MHC Typer). Each tool lives in its own
+repo and is released independently; this umbrella repo pins the set in a
+manifest ([`tools.yml`](tools.yml)) and drives a uniform install/update
+experience across environments.
 
 ```
 bioinformatic_diagnostic_tools/
@@ -146,6 +147,14 @@ To get it back, pick whichever is easiest:
 You only ever need to remember one thing: **open the dashboard, then click your
 tool.** Single tool instead? `bin/bdtools local <tool> --port 8080`, then open
 http://127.0.0.1:8080/.
+
+**Safe restarts, shutdowns, and updates.** Analyses run independently so they can
+survive a browser disconnect. The dashboard therefore checks every launched
+tool before stopping or updating anything. If a job is running or a tool cannot
+be verified, the operation is blocked and names the tool/job to resolve. Finish
+the job—or stop it from that tool's own interface—then try again. Terminal
+`dashboard --stop`/`--restart` commands use the same guard; they never use broad
+process-name kills.
 
 ## 💾 Reference databases
 
@@ -365,6 +374,13 @@ is in effect when tools rebuild. On local (macOS/Linux) installs, launching a GU
 after updating also self-heals its shared-tool links (e.g. vSNP3's link to Kraken
 ID Parse).
 
+`bdtools update` intentionally manages personal bdtools checkouts only; it will
+not force-checkout an external or server source tree. For OOD production,
+reconcile each server checkout with the version pinned in `tools.yml`, review
+any site/licensing commits, then run `install --server --dry-run` followed by
+the real install. The server installer refuses stale or divergent source; see
+[docs/SYSADMIN.md](docs/SYSADMIN.md#updating-a-server-deployment).
+
 The manifest is the source of truth: tagging this repo (`suite-YYYY.MM`) pins
 the entire set, so any site can reproduce an exact deployment. Maintainers: see
 [docs/RELEASING.md](docs/RELEASING.md) for cutting tags and publishing GitHub
@@ -382,12 +398,13 @@ bdtools test mlst_gui     # one tool
 
 Each test downloads a fixed SRA/GenBank accession, runs the tool headlessly, and
 compares the result to a committed expected (golden) result. All seven diagnostic
-GUIs have recorded goldens (`ncbi_submit_gui`, the submission tool, is not tested
-by design). The tier-2 tools (`kraken_id_parse_gui`, `vsnp_gui`) need an external
-reference DB and **SKIP** cleanly when it's absent — a SKIP is not a failure. The
-accessions and expected values are in [`tests/`](tests/) — see
-[tests/README.md](tests/README.md) for the coverage table and how the golden
-results were established. These are the suite's diagnostic-validation baseline.
+GUIs have recorded goldens (`ncbi_submit_gui` and the developmental `mhc_gui`
+have no golden by design and SKIP). The tier-2 tools (`kraken_id_parse_gui`,
+`vsnp_gui`) need an external reference DB and **SKIP** cleanly when it's absent
+— a SKIP is not a failure. The accessions and expected values are in
+[`tests/`](tests/) — see [tests/README.md](tests/README.md) for the coverage
+table and how the golden results were established. These are the suite's
+diagnostic-validation baseline.
 
 ## 🩺 Troubleshooting (local installs)
 

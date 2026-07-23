@@ -36,6 +36,7 @@ import asyncio
 import functools
 import html
 import os
+import secrets
 import socket
 import sys
 import time
@@ -62,6 +63,8 @@ LOCAL = os.environ.get("BDTOOLS_LOCAL", "").strip() in ("1", "true", "yes")
 
 _REPO_DIR = os.path.dirname(os.path.dirname(_HERE))
 _MANIFEST = os.environ.get("BDTOOLS_MANIFEST", os.path.join(_REPO_DIR, "tools.yml"))
+_STATE_FILE = os.environ.get("BDTOOLS_DASHBOARD_STATE_FILE", "").strip()
+_DASHBOARD_PORT = int(os.environ.get("BDTOOLS_DASHBOARD_PORT", "8080"))
 
 # Hop-by-hop headers must not be forwarded (RFC 7230 §6.1).
 HOP_BY_HOP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
@@ -91,6 +94,12 @@ TOKEN = _load_token()
 OWNER = os.environ.get("BDTOOLS_SESSION_OWNER", "").strip()
 STRICT_USER = os.environ.get("BDTOOLS_STRICT_USER_HEADER", "").strip() in ("1", "true", "yes")
 COOKIE = "bdtools_session"
+# Local control-plane requests always require a custom-header token, including
+# on tokenless personal Macs/WSL. A hostile web page can submit a plain POST to
+# 127.0.0.1, but it cannot add this header without a CORS preflight (we expose no
+# CORS policy). OOD does not register these mutation routes.
+CONTROL_TOKEN = os.environ.get("BDTOOLS_CONTROL_TOKEN", "").strip() or secrets.token_urlsafe(32)
+ACTIVE_JOB_STATES = {"queued", "running", "stopping", "cancelling"}
 
 
 def _free_port():
@@ -116,6 +125,9 @@ class Suite:
     def __init__(self):
         self.lock = asyncio.Lock()
         self.running = {}  # tool -> {"port", "proc"}
+        self.starting = {}  # tool -> one shared startup Task
+        self.quiescing = False
+        self.updating = set()
         self.tools = self._discover()
         self.readiness = {}  # name -> doctor record; filled lazily in local mode
 
@@ -144,43 +156,74 @@ class Suite:
                         "installed": installed})
         return out
 
-    async def launch(self, name):
+    async def _start_tool(self, name):
+        """Start one backend. launch() ensures only one task calls this per tool."""
+        try:
+            plan = tool_launch.resolve(name, 0)
+        except Exception as exc:
+            return None, str(exc)
+        port = _free_port()
+        plan = tool_launch.resolve(name, port)
+        logdir = os.path.join(os.environ.get(
+            "BDTOOLS_HOME", os.path.expanduser("~/.local/share/bdtools")
+        ), "dashboard-logs")
+        os.makedirs(logdir, exist_ok=True)
+        logf = open(os.path.join(logdir, f"{name}.log"), "ab")
+        try:
+            logf.write(tool_launch.log_header(plan).encode())
+            logf.flush()
+            proc = await asyncio.create_subprocess_exec(
+                *plan["argv"], cwd=plan["cwd"], env=plan["env"],
+                stdout=logf, stderr=asyncio.subprocess.STDOUT)
+        except OSError as exc:
+            logf.close()
+            return None, str(exc)
         async with self.lock:
-            cur = self.running.get(name)
-            if cur and cur["proc"].returncode is None and await _port_open(cur["port"]):
-                return f"t/{name}/", None
-            try:
-                plan = tool_launch.resolve(name, 0)
-            except Exception as exc:
-                return None, str(exc)
-            port = _free_port()
-            plan = tool_launch.resolve(name, port)
-            logdir = os.path.join(os.environ.get("BDTOOLS_HOME",
-                     os.path.expanduser("~/.local/share/bdtools")), "dashboard-logs")
-            os.makedirs(logdir, exist_ok=True)
-            logf = open(os.path.join(logdir, f"{name}.log"), "ab")
-            # Record the exact, copy-pasteable terminal command for this run so the
-            # log is self-documenting and reproducible (see tool_launch.log_header).
-            try:
-                logf.write(tool_launch.log_header(plan).encode())
-                logf.flush()
-            except Exception:
-                pass
-            try:
-                proc = await asyncio.create_subprocess_exec(
-                    *plan["argv"], cwd=plan["cwd"], env=plan["env"],
-                    stdout=logf, stderr=asyncio.subprocess.STDOUT)
-            except OSError as exc:
-                return None, str(exc)
-            self.running[name] = {"port": port, "proc": proc}
-        # wait (outside the lock) for the tool's uvicorn to come up
+            self.running[name] = {"port": port, "proc": proc, "log": logf}
         for _ in range(120):  # ~60s
             if proc.returncode is not None:
+                async with self.lock:
+                    if self.running.get(name, {}).get("proc") is proc:
+                        self.running.pop(name, None)
+                logf.close()
                 return None, f"the tool exited early — see {logf.name}"
             if await _port_open(port):
                 return f"t/{name}/", None
             await asyncio.sleep(0.5)
+        try:
+            proc.terminate()
+        except ProcessLookupError:
+            pass
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=5)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+        async with self.lock:
+            if self.running.get(name, {}).get("proc") is proc:
+                self.running.pop(name, None)
+        logf.close()
         return None, "timed out waiting for the tool to start (first launch may still be building)"
+
+    async def launch(self, name):
+        async with self.lock:
+            if self.quiescing:
+                return None, "the dashboard is shutting down or restarting"
+            if name in self.updating or "*" in self.updating:
+                return None, f"{name} is being updated; wait for the update to finish"
+            cur = self.running.get(name)
+            if cur and cur["proc"].returncode is None and await _port_open(cur["port"]):
+                return f"t/{name}/", None
+            task = self.starting.get(name)
+            if task is None:
+                task = asyncio.create_task(self._start_tool(name))
+                self.starting[name] = task
+        try:
+            return await task
+        finally:
+            async with self.lock:
+                if self.starting.get(name) is task and task.done():
+                    self.starting.pop(name, None)
 
     def port_of(self, name):
         cur = self.running.get(name)
@@ -189,14 +232,25 @@ class Suite:
         return None
 
     async def state(self):
+        async with self.lock:
+            dead = [(name, v) for name, v in self.running.items()
+                    if v["proc"].returncode is not None]
+            for name, v in dead:
+                self.running.pop(name, None)
+                if v.get("log"):
+                    v["log"].close()
         out = []
         for t in self.tools:
-            running = self.port_of(t["name"]) is not None
+            port = self.port_of(t["name"])
+            starting = t["name"] in self.starting
+            running = bool(port is not None and not starting and await _port_open(port))
             r = self.readiness.get(t["name"]) if t.get("installed") else None
             out.append(dict(
                 t,
                 running=running,
                 url=(f"t/{t['name']}/" if running else None),
+                starting=starting,
+                updating=(t["name"] in self.updating or "*" in self.updating),
                 # ready is None when unknown (doctor unavailable / not local); the
                 # UI only badges an explicit False.
                 ready=(r["ok"] if r else None),
@@ -205,14 +259,115 @@ class Suite:
             ))
         return out
 
-    async def shutdown(self):
+    async def activity(self, names=None):
+        """Return a conservative snapshot of active analysis jobs.
+
+        An unreachable/malformed job endpoint is an unsafe state: lifecycle and
+        tool updates are refused instead of risking an orphaned analysis.
+        """
+        active, errors = [], []
+        selected = set(names or self.running)
         for name, v in list(self.running.items()):
-            p = v["proc"]
-            if p.returncode is None:
+            if name not in selected:
+                continue
+            p, port = v["proc"], v["port"]
+            if p.returncode is not None:
+                continue
+            try:
+                response = await CLIENT.get(f"http://127.0.0.1:{port}/api/jobs", timeout=5.0)
+                response.raise_for_status()
+                jobs = response.json()
+                if not isinstance(jobs, list):
+                    raise ValueError("expected a JSON list")
+                for job in jobs:
+                    if str(job.get("status", "")).lower() in ACTIVE_JOB_STATES:
+                        active.append({
+                            "tool": name,
+                            "id": str(job.get("id", "")),
+                            "name": str(job.get("name", "")),
+                            "status": str(job.get("status", "")),
+                        })
+            except Exception as exc:
+                errors.append({"tool": name, "error": str(exc)})
+        return {"safe": not active and not errors, "active": active, "errors": errors}
+
+    async def begin_quiesce(self, names=None):
+        async with self.lock:
+            self.quiescing = True
+            starting = list(self.starting.items())
+        if names is not None:
+            selected = set(names)
+            starting = [(name, task) for name, task in starting if name in selected]
+        if starting:
+            _, pending = await asyncio.wait(
+                [task for _, task in starting], timeout=65,
+            )
+            if pending:
+                errors = [
+                    {"tool": name, "error": "tool startup is still in progress"}
+                    for name, task in starting if task in pending
+                ]
+                async with self.lock:
+                    self.quiescing = False
+                return {"safe": False, "active": [], "errors": errors}
+        snapshot = await self.activity(names)
+        if not snapshot["safe"]:
+            async with self.lock:
+                self.quiescing = False
+        return snapshot
+
+    async def stop_backends(self, names=None):
+        """Terminate selected idle backends, wait, then kill only on timeout."""
+        selected = set(names or self.running)
+        entries = [(n, v) for n, v in list(self.running.items()) if n in selected]
+        for _, v in entries:
+            if v["proc"].returncode is None:
                 try:
-                    p.terminate()
+                    v["proc"].terminate()
                 except ProcessLookupError:
                     pass
+        waiting = [v["proc"].wait() for _, v in entries if v["proc"].returncode is None]
+        if waiting:
+            try:
+                await asyncio.wait_for(asyncio.gather(*waiting), timeout=10)
+            except asyncio.TimeoutError:
+                for _, v in entries:
+                    if v["proc"].returncode is None:
+                        try:
+                            v["proc"].kill()
+                        except ProcessLookupError:
+                            pass
+                await asyncio.gather(
+                    *(v["proc"].wait() for _, v in entries if v["proc"].returncode is None),
+                    return_exceptions=True,
+                )
+        async with self.lock:
+            for name, v in entries:
+                self.running.pop(name, None)
+                logf = v.get("log")
+                if logf:
+                    logf.close()
+
+    async def prepare_update(self, target):
+        if target == "bdtools":
+            return {"safe": True, "active": [], "errors": []}
+        names = set(self.running) if target == "all" else {target}
+        snapshot = await self.begin_quiesce(names)
+        if not snapshot["safe"]:
+            return snapshot
+        await self.stop_backends(names)
+        async with self.lock:
+            self.updating = {"*"} if target == "all" else {target}
+            self.quiescing = False
+        return snapshot
+
+    async def finish_update(self):
+        async with self.lock:
+            self.updating.clear()
+            self.tools = self._discover()
+
+    async def shutdown(self):
+        await self.stop_backends()
 
 
 SUITE = None
@@ -224,8 +379,16 @@ class AuthMiddleware(BaseHTTPMiddleware):
     """Token cookie bootstrap + unspoofable X-Forwarded-User match, enforced once."""
 
     async def dispatch(self, request, call_next):
+        local_control_ok = (
+            LOCAL
+            and request.url.path.startswith("/api/")
+            and request.method not in ("GET", "HEAD", "OPTIONS")
+            and secrets.compare_digest(
+                request.headers.get("x-bdtools-control", ""), CONTROL_TOKEN
+            )
+        )
         # 1) token bootstrap: ?t=<token> on any GET -> set cookie, strip the param.
-        if TOKEN:
+        if TOKEN and not local_control_ok:
             qt = request.query_params.get("t")
             if qt is not None:
                 if qt != TOKEN:
@@ -248,6 +411,25 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 return PlainTextResponse("forbidden (user mismatch)", status_code=403)
         elif STRICT_USER:
             return PlainTextResponse("forbidden (missing user header)", status_code=403)
+        # 3) Local control-plane CSRF defense. Requiring a non-simple custom
+        # header prevents a malicious website from posting to localhost; its
+        # browser preflight receives no CORS permission. Tool API requests under
+        # /t/<tool>/ are intentionally outside this dashboard-control check.
+        if (LOCAL and request.url.path.startswith("/api/")
+                and request.method not in ("GET", "HEAD", "OPTIONS")):
+            supplied = request.headers.get("x-bdtools-control", "")
+            if not secrets.compare_digest(supplied, CONTROL_TOKEN):
+                return PlainTextResponse("forbidden (missing control token)", status_code=403)
+        # Tool frontends are same-origin through this proxy. Refuse cross-site
+        # mutation attempts before they reach a backend, including simple HTML
+        # form submissions that do not trigger a CORS preflight.
+        if (LOCAL and request.url.path.startswith("/t/")
+                and request.method not in ("GET", "HEAD", "OPTIONS")):
+            if request.headers.get("sec-fetch-site", "").lower() == "cross-site":
+                return PlainTextResponse("forbidden (cross-site request)", status_code=403)
+            origin = request.headers.get("origin", "")
+            if origin and origin.rstrip("/") != str(request.base_url).rstrip("/"):
+                return PlainTextResponse("forbidden (origin mismatch)", status_code=403)
         return await call_next(request)
 
 
@@ -343,6 +525,7 @@ async def api_info(request):
         "host": socket.gethostname(),
         "local": LOCAL,
         "can_control": LOCAL,
+        "control_token": CONTROL_TOKEN if LOCAL else "",
     })
 
 
@@ -358,14 +541,39 @@ async def _delayed_exit(code):
         if SUITE is not None:
             await SUITE.shutdown()
     finally:
+        sc.remove_dashboard_state(_STATE_FILE)
         os._exit(code)
 
 
 async def api_shutdown(request):
+    if UPDATES.job_status()["running"]:
+        return JSONResponse(
+            {"error": "an update is still running", "safe": False,
+             "active": [], "errors": [{"tool": "dashboard", "error": "update in progress"}]},
+            status_code=409,
+        )
+    snapshot = await SUITE.begin_quiesce()
+    if not snapshot["safe"]:
+        return JSONResponse(
+            {"error": "active or unverifiable analyses prevent shutdown", **snapshot},
+            status_code=409,
+        )
     return JSONResponse({"stopping": True}, background=BackgroundTask(_delayed_exit, 0))
 
 
 async def api_restart(request):
+    if UPDATES.job_status()["running"]:
+        return JSONResponse(
+            {"error": "an update is still running", "safe": False,
+             "active": [], "errors": [{"tool": "dashboard", "error": "update in progress"}]},
+            status_code=409,
+        )
+    snapshot = await SUITE.begin_quiesce()
+    if not snapshot["safe"]:
+        return JSONResponse(
+            {"error": "active or unverifiable analyses prevent restart", **snapshot},
+            status_code=409,
+        )
     return JSONResponse({"restarting": True}, background=BackgroundTask(_delayed_exit, 42))
 
 
@@ -387,18 +595,40 @@ async def api_check_updates(request):
 
 async def api_apply_updates(request):
     target = request.query_params.get("target", "all")
+    if target not in _valid_targets():
+        return JSONResponse({"started": False, "error": f"unknown update target: {target}"},
+                            status_code=400)
+    if UPDATES.job_status()["running"]:
+        return JSONResponse({"started": False, "error": "an update is already running"},
+                            status_code=409)
+    snapshot = await SUITE.prepare_update(target)
+    if not snapshot["safe"]:
+        return JSONResponse(
+            {"started": False, "error": "active or unverifiable analyses prevent updates",
+             **snapshot},
+            status_code=409,
+        )
     started, err = UPDATES.apply(target, _valid_targets())
+    if not started and target != "bdtools":
+        await SUITE.finish_update()
     return JSONResponse({"started": started, "error": err}, status_code=200 if started else 409)
 
 
 async def api_update_status(request):
-    return JSONResponse(UPDATES.job_status())
+    status = UPDATES.job_status()
+    if status["done"] and SUITE.updating:
+        await SUITE.finish_update()
+    return JSONResponse(status)
 
 
 async def api_recheck(request):
     # Re-run readiness after the user installs a database / fixes a dep.
     await SUITE.refresh_readiness()
     return JSONResponse(await SUITE.state())
+
+
+async def api_activity(request):
+    return JSONResponse(await SUITE.activity())
 
 
 # ----- reverse proxy -----
@@ -414,6 +644,9 @@ async def proxy(request):
     if port is None:
         return PlainTextResponse(f"{tool} is not running — launch it from the dashboard.",
                                  status_code=502)
+    if SUITE.quiescing and request.method not in ("GET", "HEAD", "OPTIONS"):
+        return PlainTextResponse("dashboard is checking for active jobs; try again shortly",
+                                 status_code=503)
     url = f"http://127.0.0.1:{port}/{sub}"
     if request.url.query:
         url += "?" + request.url.query
@@ -464,6 +697,7 @@ def build_app():
         SUITE = Suite()
         CLIENT = httpx.AsyncClient(timeout=httpx.Timeout(10.0, read=300.0), follow_redirects=False)
         if LOCAL:
+            sc.write_dashboard_state(_STATE_FILE, _DASHBOARD_PORT, CONTROL_TOKEN)
             # Warm both in the background so the page is usable immediately.
             asyncio.create_task(SUITE.refresh_readiness())
             UPDATES.check_async()
@@ -472,6 +706,8 @@ def build_app():
         finally:
             await SUITE.shutdown()
             await CLIENT.aclose()
+            if LOCAL:
+                sc.remove_dashboard_state(_STATE_FILE)
 
     routes = [
         Route("/", landing),
@@ -487,6 +723,7 @@ def build_app():
             Route("/api/apply-updates", api_apply_updates, methods=["POST"]),
             Route("/api/update-status", api_update_status),
             Route("/api/recheck", api_recheck, methods=["POST"]),
+            Route("/api/activity", api_activity),
             # Lifecycle: stop everything (Shut down) or relaunch (Restart). Local
             # only — never expose these on the shared OOD node.
             Route("/api/shutdown", api_shutdown, methods=["POST"]),

@@ -166,6 +166,15 @@ def run_checks(tool, env_py, scope):
         lines.append((SKIP, msg, None))
         notes.append(msg)
 
+    optional_missing = [
+        b for b in spec.get("optional_binaries", []) if not has_binary(b, env_bin)
+    ]
+    if optional_missing:
+        msg = (f"optional integrations unavailable: {', '.join(optional_missing)} "
+               "(core analysis is still runnable)")
+        lines.append((SKIP, msg, None))
+        notes.append(msg)
+
     if scope == "all":
         for db in spec.get("databases", []):
             ok, detail = check_db(tool, db)

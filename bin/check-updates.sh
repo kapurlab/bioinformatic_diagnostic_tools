@@ -52,7 +52,7 @@ report_one() {
 }
 
 apply_one() {
-  local name="$1" dir repo pinned latest target current
+  local name="$1" dir repo pinned latest target current dirty_path
   dir="$(tool_dir "$name")"; repo="$(manifest_get "$name" repo)"; pinned="$(manifest_get "$name" version)"
   latest="$(latest_tag "$repo")"
   target="${latest:-$pinned}"   # newest tag, else stay on the pinned branch
@@ -66,6 +66,38 @@ apply_one() {
     NOT_INSTALLED+=("${name}")
     return 0
   fi
+
+  # `update` owns only bdtools' per-user managed checkouts. A server source tree
+  # may contain reviewed site/licensing commits and must never be subjected to
+  # the force checkout below. Server deployments are pinned and validated by
+  # install-server.sh instead.
+  if [[ "${dir}" != "${BDTOOLS_HOME}/checkouts/${name}" ]]; then
+    die "refusing to update external checkout: ${dir}
+       'bdtools update' force-refreshes managed personal checkouts only.
+       For a server deployment, reconcile the source with the tools.yml pin,
+       review any site/licensing commits, then run:
+       bin/bdtools install --server ${name} --site-conf <path> --dry-run"
+  fi
+
+  # A force checkout is acceptable for files the installer itself regenerates,
+  # but never for arbitrary source edits. Refuse before fetch/checkout so a
+  # personal experiment remains exactly where the user left it.
+  while IFS= read -r dirty_path; do
+    [[ -n "${dirty_path}" ]] || continue
+    case "${dirty_path}" in
+      frontend/dist/*|frontend/package-lock.json) ;;
+      *)
+        die "${name} has local source changes: ${dirty_path}
+       Refusing to overwrite them during update. Commit/stash the change, or
+       use a separate developer checkout, then rerun."
+        ;;
+    esac
+  done < <(
+    {
+      git -C "${dir}" diff --name-only
+      git -C "${dir}" diff --cached --name-only
+    } | sort -u
+  )
 
   # Fast path: already on the target tag AND the env is built. A rebuild here
   # would re-solve and re-download for zero change — this is exactly what made

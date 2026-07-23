@@ -14,6 +14,7 @@ import os
 import socket
 import subprocess
 import threading
+import time
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_DIR = os.path.dirname(os.path.dirname(_HERE))
@@ -72,6 +73,47 @@ def port_open(host, port, timeout=0.5):
             return True
     except OSError:
         return False
+
+
+def write_dashboard_state(path, port, control_token):
+    """Atomically write the private local-dashboard control record."""
+    if not path:
+        return
+    directory = os.path.dirname(path)
+    os.makedirs(directory, exist_ok=True)
+    tmp = f"{path}.{os.getpid()}.tmp"
+    payload = {
+        "pid": os.getpid(),
+        "port": int(port),
+        "control_token": control_token,
+        "started_at": int(time.time()),
+    }
+    try:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle)
+            handle.write("\n")
+        os.replace(tmp, path)
+        os.chmod(path, 0o600)
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+
+def remove_dashboard_state(path):
+    """Remove our state record, but never delete a newer process's record."""
+    if not path:
+        return
+    try:
+        with open(path, encoding="utf-8") as handle:
+            payload = json.load(handle)
+        if int(payload.get("pid", -1)) != os.getpid():
+            return
+        os.unlink(path)
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        pass
 
 
 def list_tools():
@@ -202,6 +244,7 @@ class UpdateManager:
 
     # --- checking ----------------------------------------------------------
     def _check(self):
+        cache = None
         try:
             items = []
             bd = check_bdtools_update()
@@ -210,6 +253,8 @@ class UpdateManager:
             items.extend(check_tool_updates())
             cache = {"checked": True, "items": items,
                      "any": any(i["update_available"] for i in items)}
+        except Exception as exc:
+            cache = {"checked": True, "items": [], "any": False, "error": str(exc)}
         finally:
             with self.lock:
                 self.updates_checking = False
@@ -239,7 +284,10 @@ class UpdateManager:
             if self.job["running"]:
                 return False, "an update is already running"
             self.job = {"running": True, "done": False, "ok": None, "target": target, "log": []}
-        threading.Thread(target=self._run, args=(target,), daemon=True).start()
+        # Non-daemon by design: if the user presses Ctrl-C during an update,
+        # Python waits for the checkout/environment operation instead of
+        # orphaning it halfway through.
+        threading.Thread(target=self._run, args=(target,), daemon=False).start()
         return True, None
 
     def _log(self, msg):
@@ -248,52 +296,42 @@ class UpdateManager:
             if len(self.job["log"]) > 2000:
                 self.job["log"] = self.job["log"][-2000:]
 
-    def _reconcile_manifest(self):
-        """Discard a leftover local pin auto-bump so `pull --ff-only` can run.
-
-        No-op unless tools.yml is the only dirty tracked file. Best-effort:
-        any git error is logged and swallowed so the pull still proceeds.
-        """
-        try:
-            out = subprocess.run(
-                ["git", "-C", REPO_DIR, "status", "--porcelain", "--untracked-files=no"],
-                capture_output=True, text=True, check=True).stdout
-            dirty = [ln[3:] for ln in out.splitlines() if ln.strip()]
-            if dirty == ["tools.yml"]:
-                self._log("$ git checkout -- tools.yml  (discarding local pin auto-bump)")
-                subprocess.run(["git", "-C", REPO_DIR, "checkout", "--", "tools.yml"],
-                               check=True, capture_output=True, text=True)
-        except (OSError, subprocess.SubprocessError) as exc:
-            self._log(f"note: could not reconcile tools.yml before pull ({exc})")
-
     def _run(self, target):
+        cmd = None
         if target == "bdtools":
-            # `bdtools update <tool>` auto-bumps the pin in tools.yml in place
-            # (check-updates.sh) and never commits it — by design, so a box can
-            # track newer tool releases even when the committed pin lags. But on
-            # a checkout that also pulls an authoritative manifest, that leftover
-            # dirty tools.yml makes `pull --ff-only` abort. Origin is the source
-            # of truth for the pin and the tool checkout stays at its newer tag
-            # regardless, so discard the local auto-bump before pulling — but
-            # only when tools.yml is the *sole* dirty tracked file, to avoid
-            # clobbering any other in-progress edit.
-            self._reconcile_manifest()
-            cmd = ["git", "-C", REPO_DIR, "pull", "--ff-only"]
-            self._log("$ git pull --ff-only  (updating bdtools)")
+            # Never merge an update into a locally edited suite checkout and
+            # never discard tools.yml on the user's behalf. A clean tree makes
+            # the exact scope of `pull --ff-only` reviewable and reproducible.
+            try:
+                dirty = subprocess.run(
+                    ["git", "-C", REPO_DIR, "status", "--porcelain"],
+                    capture_output=True, text=True, check=True, timeout=30,
+                ).stdout.strip()
+            except (OSError, subprocess.SubprocessError) as exc:
+                dirty = f"(could not inspect checkout: {exc})"
+            if dirty:
+                self._log("ERROR: bdtools checkout has local changes; refusing to pull.")
+                self._log("Commit/stash them, or update from a separate clean checkout.")
+                for line in dirty.splitlines()[:20]:
+                    self._log(f"  {line}")
+            else:
+                cmd = ["git", "-C", REPO_DIR, "pull", "--ff-only"]
+                self._log("$ git pull --ff-only  (updating bdtools)")
         else:
             cmd = [BDTOOLS, "update", target]
             self._log(f"$ bdtools update {target}")
             self._log("Rebuilding environments — this can take several minutes per tool…")
         ok = False
-        try:
-            proc = subprocess.Popen(cmd, cwd=REPO_DIR, stdout=subprocess.PIPE,
-                                    stderr=subprocess.STDOUT, text=True, bufsize=1)
-            for line in proc.stdout:
-                self._log(line.rstrip())
-            ok = proc.wait() == 0
-        except (OSError, subprocess.SubprocessError) as exc:
-            self._log(f"ERROR: {exc}")
-            ok = False
+        if cmd is not None:
+            try:
+                proc = subprocess.Popen(cmd, cwd=REPO_DIR, stdout=subprocess.PIPE,
+                                        stderr=subprocess.STDOUT, text=True, bufsize=1)
+                for line in proc.stdout:
+                    self._log(line.rstrip())
+                ok = proc.wait() == 0
+            except (OSError, subprocess.SubprocessError) as exc:
+                self._log(f"ERROR: {exc}")
+                ok = False
         self._log("")
         self._log("✅ Done." if ok else "⚠ Update finished with errors — see the log above.")
         with self.lock:

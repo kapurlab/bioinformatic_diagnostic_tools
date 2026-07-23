@@ -84,7 +84,8 @@ Notes:
 Which `<tool>`? Use a name from `bin/bdtools list`, or `all`. If the user didn't
 say, ask which tool(s) they want. The tools are: `vsnp_gui`, `amr_plus_gui`,
 `irma_gui`, `genoflu_gui`, `mlst_gui`, `kraken_id_parse_gui`, `ksnp_gui`,
-`ncbi_submit_gui`.
+`ncbi_submit_gui`, `mhc_gui`. `mhc_gui` is clearly marked developmental in the
+dashboard and must not be presented as validated diagnostic output.
 
 > **`vsnp_gui` installs locally too, but it's heavier.** Unlike the others it has
 > no `environment.yml`; `bdtools install --local vsnp_gui` builds the bioconda
@@ -191,7 +192,8 @@ Coverage today: all seven diagnostic GUIs are validated — `mlst_gui`,
 `kraken_id_parse_gui` have recorded golden results. The last three are **tier 2**
 (they need an external reference DB — Kraken2/BLAST or the vsnp3 reference set)
 and SKIP cleanly when that DB is absent. `ncbi_submit_gui` (the SRA/GenBank
-submission tool) has no validation test by design. So on a machine with the DBs,
+submission tool) and the developmental `mhc_gui` have no golden validation test
+by design and SKIP. So on a machine with the DBs,
 `bdtools test all` PASSing all seven is the expected good result; on a fresh
 laptop the tier-2 tools SKIP and the rest PASS.
 

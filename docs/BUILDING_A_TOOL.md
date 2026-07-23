@@ -32,6 +32,17 @@ already mostly follow (see the canonical guide in
    keyed on a DBs root.
 6. **Release with semantic-version git tags** (+ a GitHub Release) so the umbrella
    manifest can pin them and `check-updates` can see them.
+7. **Expose the management job contract** — `GET /api/jobs` returns a JSON list
+   of job objects containing at least `id`, `name`, and `status`. Active states
+   are `queued`, `running`, `stopping`, or `cancelling`. The consolidated
+   dashboard treats a missing/unreachable/malformed endpoint as unsafe and
+   blocks restart, shutdown, and tool updates. This conservative contract is
+   what prevents detached analyses from being orphaned as the suite grows.
+8. **Pipeline command provenance follows the real output location.** Entry-point
+   capture must resolve `--outdir` (falling back to cwd only for tools whose
+   documented output contract is cwd), record the effective subprocess cwd, and
+   describe its scope honestly: an orchestrator can capture commands it launches
+   directly, not commands launched internally by a child executable.
 
 ## Manifest entry
 

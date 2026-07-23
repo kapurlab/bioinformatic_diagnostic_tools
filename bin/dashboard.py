@@ -16,6 +16,7 @@ import argparse
 import html
 import json
 import os
+import secrets
 import socket
 import subprocess
 import sys
@@ -24,10 +25,14 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
+from urllib.request import urlopen
 
 BIN_DIR = Path(__file__).resolve().parent
 REPO_DIR = BIN_DIR.parent
 BDTOOLS = str(BIN_DIR / "bdtools")
+CONTROL_TOKEN = os.environ.get("BDTOOLS_CONTROL_TOKEN", "").strip() or secrets.token_urlsafe(32)
+STATE_FILE = os.environ.get("BDTOOLS_DASHBOARD_STATE_FILE", "").strip()
+ACTIVE_JOB_STATES = {"queued", "running", "stopping", "cancelling"}
 
 # Display tables + subprocess/update helpers are shared with the proxy dashboard
 # (bin/ood_dashboard/app.py) so the two can never drift apart.
@@ -35,6 +40,7 @@ sys.path.insert(0, str(BIN_DIR / "lib"))
 from suite_common import (  # noqa: E402
     BLURB, CAVEAT, pretty, free_port, port_open, list_tools,
     tool_python, readiness_map, check_tool_updates, check_bdtools_update,
+    write_dashboard_state, remove_dashboard_state,
 )
 
 
@@ -44,6 +50,9 @@ class Suite:
     def __init__(self):
         self.lock = threading.Lock()
         self.running = {}  # name -> {"port": int, "proc": Popen, "url": str}
+        self.starting = {}  # name -> {"event": Event, "result": (url, error)}
+        self.quiescing = False
+        self.updating = set()
         self.tools = []    # [{"name","label","blurb","installed"}]
         # Update state: cached check + a single background apply job.
         self.updates_cache = None   # {"checked": bool, "items": [...], "any": bool}
@@ -75,18 +84,46 @@ class Suite:
 
     def state(self):
         with self.lock:
-            running = {n: v["url"] for n, v in self.running.items()
-                       if v["proc"].poll() is None and port_open("127.0.0.1", v["port"])}
-            # drop any that died
-            self.running = {n: v for n, v in self.running.items() if n in running}
-            return [dict(t, running=running.get(t["name"]), url=running.get(t["name"]))
+            alive = {n: v for n, v in self.running.items() if v["proc"].poll() is None}
+            running = {n: v["url"] for n, v in alive.items()
+                       if port_open("127.0.0.1", v["port"])}
+            # Drop only exited processes. A live process with a closed port is
+            # still in startup and must remain tracked.
+            for n, v in self.running.items():
+                if n not in alive and v.get("log"):
+                    v["log"].close()
+            self.running = alive
+            return [dict(
+                        t,
+                        running=running.get(t["name"]),
+                        url=running.get(t["name"]),
+                        starting=t["name"] in self.starting,
+                        updating=(t["name"] in self.updating or "*" in self.updating),
+                    )
                     for t in self.tools]
 
     def launch(self, name):
         with self.lock:
+            if self.quiescing:
+                return None, "the dashboard is shutting down or restarting"
+            if name in self.updating or "*" in self.updating:
+                return None, f"{name} is being updated; wait for the update to finish"
             cur = self.running.get(name)
             if cur and cur["proc"].poll() is None and port_open("127.0.0.1", cur["port"]):
                 return cur["url"], None
+            pending = self.starting.get(name)
+            creator = pending is None
+            if creator:
+                pending = {"event": threading.Event(), "result": (None, "startup interrupted")}
+                self.starting[name] = pending
+        if not creator:
+            if not pending["event"].wait(65):
+                return None, "timed out waiting for the existing startup request"
+            return pending["result"]
+
+        result = (None, "startup interrupted")
+        logf = None
+        try:
             port = free_port()
             url = f"http://127.0.0.1:{port}/"
             logdir = Path(os.environ.get("BDTOOLS_HOME",
@@ -99,16 +136,132 @@ class Suite:
                     cwd=str(REPO_DIR), stdout=logf, stderr=logf,
                     start_new_session=True, env=os.environ.copy())
             except OSError as exc:
-                return None, str(exc)
-            self.running[name] = {"port": port, "proc": proc, "url": url}
-        # wait for the tool's uvicorn to come up
-        for _ in range(120):  # up to ~60s
-            if proc.poll() is not None:
-                return None, f"the tool exited early — see {logf.name}"
-            if port_open("127.0.0.1", port):
-                return url, None
-            time.sleep(0.5)
-        return None, "timed out waiting for the tool to start (first launch may still be building)"
+                result = (None, str(exc))
+                return result
+            with self.lock:
+                self.running[name] = {
+                    "port": port, "proc": proc, "url": url, "log": logf,
+                }
+            for _ in range(120):  # up to ~60s
+                if proc.poll() is not None:
+                    result = (None, f"the tool exited early — see {logf.name}")
+                    return result
+                if port_open("127.0.0.1", port):
+                    result = (url, None)
+                    return result
+                time.sleep(0.5)
+            result = (None, "timed out waiting for the tool to start (first launch may still be building)")
+            return result
+        finally:
+            with self.lock:
+                pending["result"] = result
+                pending["event"].set()
+                self.starting.pop(name, None)
+                failed = self.running.get(name) if result[0] is None else None
+                if failed and failed.get("log") is logf:
+                    self.running.pop(name, None)
+            if failed:
+                proc = failed["proc"]
+                if proc.poll() is None:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait(timeout=5)
+            if result[0] is None and logf is not None:
+                logf.close()
+
+    def activity(self, names=None):
+        active, errors = [], []
+        with self.lock:
+            entries = list(self.running.items())
+        selected = set(names or dict(entries))
+        for name, v in entries:
+            if name not in selected:
+                continue
+            if v["proc"].poll() is not None:
+                continue
+            try:
+                with urlopen(f"http://127.0.0.1:{v['port']}/api/jobs", timeout=5) as response:
+                    jobs = json.loads(response.read().decode("utf-8"))
+                if not isinstance(jobs, list):
+                    raise ValueError("expected a JSON list")
+                for job in jobs:
+                    if str(job.get("status", "")).lower() in ACTIVE_JOB_STATES:
+                        active.append({
+                            "tool": name,
+                            "id": str(job.get("id", "")),
+                            "name": str(job.get("name", "")),
+                            "status": str(job.get("status", "")),
+                        })
+            except Exception as exc:
+                errors.append({"tool": name, "error": str(exc)})
+        return {"safe": not active and not errors, "active": active, "errors": errors}
+
+    def begin_quiesce(self, names=None):
+        with self.lock:
+            self.quiescing = True
+            starting = list(self.starting.items())
+        selected = set(names) if names is not None else None
+        deadline = time.monotonic() + 65
+        startup_errors = []
+        for name, pending in starting:
+            if selected is not None and name not in selected:
+                continue
+            remaining = max(0, deadline - time.monotonic())
+            if not pending["event"].wait(remaining):
+                startup_errors.append({
+                    "tool": name, "error": "tool startup is still in progress",
+                })
+        if startup_errors:
+            with self.lock:
+                self.quiescing = False
+            return {"safe": False, "active": [], "errors": startup_errors}
+        snapshot = self.activity(names)
+        if not snapshot["safe"]:
+            with self.lock:
+                self.quiescing = False
+        return snapshot
+
+    def stop_backends(self, names=None):
+        with self.lock:
+            selected = set(names or self.running)
+            entries = [(n, v) for n, v in self.running.items() if n in selected]
+        for _, v in entries:
+            if v["proc"].poll() is None:
+                v["proc"].terminate()
+        deadline = time.monotonic() + 10
+        for _, v in entries:
+            remaining = max(0, deadline - time.monotonic())
+            try:
+                v["proc"].wait(timeout=remaining)
+            except subprocess.TimeoutExpired:
+                v["proc"].kill()
+                v["proc"].wait(timeout=5)
+        with self.lock:
+            for name, v in entries:
+                self.running.pop(name, None)
+                if v.get("log"):
+                    v["log"].close()
+
+    def prepare_update(self, target):
+        if target == "bdtools":
+            return {"safe": True, "active": [], "errors": []}
+        names = set(self.running) if target == "all" else {target}
+        snapshot = self.begin_quiesce(names)
+        if not snapshot["safe"]:
+            return snapshot
+        self.stop_backends(names)
+        with self.lock:
+            self.updating = {"*"} if target == "all" else {target}
+            self.quiescing = False
+        return snapshot
+
+    def finish_update(self):
+        with self.lock:
+            self.updating.clear()
+        self.refresh()
 
     # --- Updates -----------------------------------------------------------
     def check_updates(self):
@@ -126,6 +279,8 @@ class Suite:
                 "items": items,
                 "any": any(i["update_available"] for i in items),
             }
+        except Exception as exc:
+            cache = {"checked": True, "items": [], "any": False, "error": str(exc)}
         finally:
             with self.lock:
                 self.updates_checking = False
@@ -157,7 +312,9 @@ class Suite:
                 return False, "an update is already running"
             self.update_job = {"running": True, "done": False, "ok": None,
                                "target": target, "log": []}
-        threading.Thread(target=self._run_update, args=(target,), daemon=True).start()
+        # Keep the interpreter alive through Ctrl-C until the update finishes;
+        # abandoning a checkout/environment rebuild mid-flight is unsafe.
+        threading.Thread(target=self._run_update, args=(target,), daemon=False).start()
         return True, None
 
     def _log(self, msg):
@@ -197,8 +354,11 @@ class Suite:
     def update_status(self):
         with self.lock:
             j = self.update_job
-            return {"running": j["running"], "done": j["done"], "ok": j["ok"],
-                    "target": j["target"], "log": j["log"][-400:]}
+            status = {"running": j["running"], "done": j["done"], "ok": j["ok"],
+                      "target": j["target"], "log": j["log"][-400:]}
+        if status["done"] and self.updating:
+            self.finish_update()
+        return status
 
 
 SUITE = None
@@ -208,14 +368,7 @@ def _stop_tools():
     """Terminate every tool server this dashboard launched (best effort)."""
     if SUITE is None:
         return
-    with SUITE.lock:
-        procs = [v["proc"] for v in SUITE.running.values()]
-    for p in procs:
-        try:
-            if p.poll() is None:
-                p.terminate()
-        except Exception:
-            pass
+    SUITE.stop_backends()
 
 
 def _schedule_exit(code):
@@ -225,6 +378,7 @@ def _schedule_exit(code):
     def run():
         time.sleep(0.4)
         _stop_tools()
+        remove_dashboard_state(STATE_FILE)
         os._exit(code)
     threading.Thread(target=run, daemon=True).start()
 
@@ -330,6 +484,20 @@ PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <p class="note" id="note"></p>
 <script>
 function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+let controlToken='';
+async function ensureControl(){
+  if(controlToken) return controlToken;
+  const r=await fetch('./api/info',{cache:'no-store'});
+  if(!r.ok) throw new Error('could not obtain dashboard control token');
+  const d=await r.json(); controlToken=d.control_token||'';
+  return controlToken;
+}
+async function controlFetch(url,options={}){
+  const token=await ensureControl();
+  const headers=new Headers(options.headers||{});
+  if(token) headers.set('X-Bdtools-Control',token);
+  return fetch(url,{...options,headers});
+}
 function setupBlock(t){
   // Installed but not runnable yet: list what's missing + the fix commands.
   if(!t.installed || t.ready!==false || !(t.issues&&t.issues.length)) return '';
@@ -355,7 +523,9 @@ async function load(){
     const needs = t.installed && t.ready===false;
     if(needs) anyIssues=true;
     const c=document.createElement('div'); c.className='card';
-    const pill = t.running ? `<span class="pill on">running</span>`
+    const pill = t.updating ? `<span class="pill warn">updating</span>`
+      : t.starting ? `<span class="pill">starting</span>`
+      : t.running ? `<span class="pill on">running</span>`
       : needs ? `<span class="pill warn">needs setup</span>`
       : `<span class="pill">${t.installed?'installed':'not installed'}</span>`;
     c.innerHTML = `<div class="name">${t.label}</div>
@@ -365,8 +535,8 @@ async function load(){
       ${noteBlock(t)}
       <div class="row">
         ${pill}
-        <button ${t.installed?'':'disabled'} data-tool="${t.name}" class="${t.running?'open':''}">
-          ${t.running?'Open':'Launch'}</button>
+        <button ${(t.installed&&!t.updating)?'':'disabled'} data-tool="${t.name}" class="${t.running?'open':''}">
+          ${t.updating?'Updating…':t.starting?'Starting…':t.running?'Open':'Launch'}</button>
       </div><div class="err" id="err-${t.name}"></div>`;
     const b=c.querySelector('button');
     b.onclick=()=>act(t.name,b);
@@ -378,14 +548,14 @@ async function load(){
 }
 async function recheck(btn){
   btn.disabled=true; const was=btn.textContent; btn.textContent='Checking…';
-  try{ await fetch('./api/recheck',{method:'POST'}); }catch(e){}
+  try{ await controlFetch('./api/recheck',{method:'POST'}); }catch(e){}
   await load(); btn.disabled=false; btn.textContent=was;
 }
 async function act(name,btn){
   const err=document.getElementById('err-'+name); err.textContent='';
   btn.disabled=true; const was=btn.textContent; btn.textContent='Starting…';
   try{
-    const r=await fetch('./api/launch?tool='+encodeURIComponent(name),{method:'POST'});
+    const r=await controlFetch('./api/launch?tool='+encodeURIComponent(name),{method:'POST'});
     const j=await r.json();
     if(j.url){ window.open(j.url,'_blank'); }
     else { err.textContent = j.error || 'failed to launch'; }
@@ -423,7 +593,7 @@ function renderUpdates(d){
     + `<span class="uactions">${actions}</span></div>`
     + `<ul>${li}</ul>`
     + `<div class="udesc" style="margin-top:6px;color:#7a5a1e">Installing rebuilds the tool's environment and can take a few minutes. `
-    + `When it finishes, <b>close this window and reopen the dashboard</b> to load the new version.</div>`
+    + `Idle tool servers are stopped first. When it finishes, use <b>Restart dashboard</b> to load the new version.</div>`
     + `<div id="ulog" class="ulog" style="display:none"></div>`
     + `<div id="udone" class="udone"></div>`;
 }
@@ -442,7 +612,7 @@ async function pollUpdates(){
 async function checkUpdates(force){
   const box=document.getElementById('updates');
   box.className='updates checking'; box.textContent='↻ checking for updates in the background…';
-  try{ await fetch('./api/check-updates',{method:'POST'}); }catch(e){}
+  try{ await controlFetch('./api/check-updates',{method:'POST'}); }catch(e){}
   pollUpdates();
 }
 async function applyUpdates(target,btn){
@@ -452,9 +622,13 @@ async function applyUpdates(target,btn){
   document.querySelectorAll('.updates button').forEach(b=>b.disabled=true);
   const log=document.getElementById('ulog'); if(log){ log.style.display='block'; log.textContent='Starting…\\n'; }
   try{
-    const r=await fetch('./api/apply-updates?target='+encodeURIComponent(target),{method:'POST'});
+    const r=await controlFetch('./api/apply-updates?target='+encodeURIComponent(target),{method:'POST'});
     const j=await r.json();
-    if(!j.started){ if(log) log.textContent += (j.error||'could not start')+'\\n'; return; }
+    if(!j.started){
+      if(log) log.textContent += describeBlock(j)+'\\n';
+      document.querySelectorAll('.updates button').forEach(b=>b.disabled=false);
+      return;
+    }
     pollUpdate();
   }catch(e){ if(log) log.textContent += String(e)+'\\n'; }
 }
@@ -468,7 +642,7 @@ async function pollUpdate(){
       if(s.done){
         updatePolling=false;
         if(done) done.innerHTML = s.ok
-          ? '✅ Updates installed. <b>Close this window and reopen the dashboard</b> to load the new versions.'
+          ? '✅ Updates installed. Use <b>Restart dashboard</b> above to load the new versions.'
           : '⚠ Update finished with errors — see the log above.';
         return;
       }
@@ -481,10 +655,21 @@ async function pollUpdate(){
 async function loadInfo(){
   try{
     const r = await fetch('./api/info'); const d = await r.json();
+    controlToken=d.control_token||'';
     document.getElementById('host').innerHTML =
       'This dashboard is running on <b>'+esc(d.host)+'</b>.';
     if(d.can_control) document.getElementById('ctl').style.display='';
   }catch(e){ /* leave controls hidden */ }
+}
+function describeBlock(j){
+  let msg=(j&&j.error)||'operation blocked';
+  const active=(j&&j.active)||[], errors=(j&&j.errors)||[];
+  if(active.length) msg+='\\n\\nActive analyses:\\n'+active.map(x=>
+    '• '+x.tool+' — '+(x.name||x.id||'job')+' ('+x.status+')').join('\\n');
+  if(errors.length) msg+='\\n\\nCould not verify:\\n'+errors.map(x=>
+    '• '+x.tool+' — '+x.error).join('\\n');
+  msg+='\\n\\nWait for active jobs to finish (or stop them in the tool), then try again.';
+  return msg;
 }
 function overlay(title,msg,doneGlyph){
   document.getElementById('otitle').textContent = title;
@@ -497,12 +682,20 @@ function overlay(title,msg,doneGlyph){
 async function shutdownDash(){
   if(!confirm(
     "Shut the dashboard completely down?\\n\\n"+
-    "This stops every running tool AND the dashboard itself — the "+
+    "This stops every idle tool server AND the dashboard itself — the "+
     "“./bdtools dashboard” command in your terminal will exit. Use this when "+
-    "you want to be sure nothing is left running (e.g. before an update).\\n\\n"+
+    "you are done working. If an analysis is running, shutdown is safely blocked "+
+    "until it finishes or you stop it in that tool.\\n\\n"+
     "A web page cannot start it back up, so to reopen it you'll go to a terminal and run:\\n"+
     "    ./bdtools dashboard")) return;
-  try{ await fetch('./api/shutdown',{method:'POST'}); }catch(e){}
+  try{
+    const r=await controlFetch('./api/shutdown',{method:'POST'});
+    if(!r.ok){
+      const j=await r.json();
+      alert(describeBlock(j));
+      return;
+    }
+  }catch(e){ alert(String(e)); return; }
   overlay('Dashboard shut down',
     'Everything has stopped. You can close this tab.<br><br>'+
     'To start it again, run <code>./bdtools dashboard</code> in a terminal.','⏻');
@@ -510,12 +703,20 @@ async function shutdownDash(){
 async function restartDash(){
   if(!confirm(
     "Restart the dashboard?\\n\\n"+
-    "This stops every running tool and relaunches the dashboard so any updated "+
+    "This stops idle tool servers and relaunches the dashboard so any updated "+
     "code takes effect. It comes back on this same web address within a few "+
-    "seconds and this page will reconnect on its own — no need to touch the terminal.")) return;
+    "seconds and this page will reconnect on its own. Active analyses safely block "+
+    "restart until they finish or are stopped in their tool.")) return;
+  try{
+    const r=await controlFetch('./api/restart',{method:'POST'});
+    if(!r.ok){
+      const j=await r.json();
+      alert(describeBlock(j));
+      return;
+    }
+  }catch(e){ alert(String(e)); return; }
   overlay('Restarting the dashboard…',
-    'Stopping tools and reloading updated code. This page will reconnect automatically.');
-  try{ await fetch('./api/restart',{method:'POST'}); }catch(e){}
+    'Stopping idle tool servers and reloading updated code. This page will reconnect automatically.');
   // The server exits, the terminal supervisor relaunches it on the same port;
   // poll until it answers again, then reload to the fresh dashboard.
   let tries=0;
@@ -557,7 +758,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, PAGE, "text/html; charset=utf-8")
         elif path == "/api/info":
             self._send(200, json.dumps(
-                {"host": socket.gethostname(), "local": True, "can_control": True}))
+                {"host": socket.gethostname(), "local": True, "can_control": True,
+                 "control_token": CONTROL_TOKEN}))
         elif path == "/api/tools":
             self._send(200, json.dumps(SUITE.state()))
         elif path == "/api/updates":
@@ -568,16 +770,48 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, json.dumps(SUITE.updates_state()))
         elif path == "/api/update-status":
             self._send(200, json.dumps(SUITE.update_status()))
+        elif path == "/api/activity":
+            self._send(200, json.dumps(SUITE.activity()))
         else:
             self._send(404, json.dumps({"error": "not found"}))
 
     def do_POST(self):
         parsed = urlparse(self.path)
+        supplied = self.headers.get("X-Bdtools-Control", "")
+        if not secrets.compare_digest(supplied, CONTROL_TOKEN):
+            self._send(403, json.dumps({"error": "forbidden (missing control token)"}))
+            return
         if parsed.path == "/api/shutdown":
+            if SUITE.update_job["running"]:
+                self._send(409, json.dumps({
+                    "error": "an update is still running", "safe": False,
+                    "active": [], "errors": [{"tool": "dashboard", "error": "update in progress"}],
+                }))
+                return
+            snapshot = SUITE.begin_quiesce()
+            if not snapshot["safe"]:
+                self._send(409, json.dumps({
+                    "error": "active or unverifiable analyses prevent shutdown",
+                    **snapshot,
+                }))
+                return
             self._send(200, json.dumps({"stopping": True}))
             _schedule_exit(0)
             return
         if parsed.path == "/api/restart":
+            if SUITE.update_job["running"]:
+                self._send(409, json.dumps({
+                    "error": "an update is still running", "safe": False,
+                    "active": [], "errors": [{"tool": "dashboard", "error": "update in progress"}],
+                }))
+                return
+            snapshot = SUITE.begin_quiesce()
+            if not snapshot["safe"]:
+                self._send(409, json.dumps({
+                    "error": "active or unverifiable analyses prevent restart",
+                    **snapshot,
+                }))
+                return
             self._send(200, json.dumps({"restarting": True}))
             _schedule_exit(42)
             return
@@ -597,7 +831,22 @@ class Handler(BaseHTTPRequestHandler):
             if target not in valid:
                 self._send(400, json.dumps({"error": f"unknown update target: {target}"}))
                 return
+            if SUITE.update_job["running"]:
+                self._send(409, json.dumps({
+                    "started": False, "error": "an update is already running",
+                }))
+                return
+            snapshot = SUITE.prepare_update(target)
+            if not snapshot["safe"]:
+                self._send(409, json.dumps({
+                    "started": False,
+                    "error": "active or unverifiable analyses prevent updates",
+                    **snapshot,
+                }))
+                return
             started, err = SUITE.apply_updates(target)
+            if not started and target != "bdtools":
+                SUITE.finish_update()
             code = 200 if started else 409
             self._send(code, json.dumps({"started": started, "error": err}))
             return
@@ -640,6 +889,7 @@ def main():
     SUITE = Suite()
     SUITE.check_updates_async()  # warm the update check in the background
     httpd = ThreadingHTTPServer((args.host, port), Handler)
+    write_dashboard_state(STATE_FILE, port, CONTROL_TOKEN)
     url = f"http://{args.host}:{port}/"
     n_installed = sum(1 for t in SUITE.tools if t["installed"])
     bar = "=" * 64
@@ -663,6 +913,9 @@ def main():
         httpd.serve_forever()
     except KeyboardInterrupt:
         print("\nDashboard stopped. Re-open it any time with 'bin/bdtools dashboard'.")
+    finally:
+        _stop_tools()
+        remove_dashboard_state(STATE_FILE)
 
 
 def _is_dashboard(host, port):

@@ -9,8 +9,9 @@ config key the path lives under and the command that installs it).
 Keep these honest — only list things the code genuinely requires. A wrong entry
 produces a false alarm, which erodes trust in the check. Binary/module lists
 were derived by grepping each tool's imports and subprocess calls; extend them
-as tools change. `os` gates a tool to a platform (kSNP4 ships Linux-only ELF
-binaries, so it can't run on macOS even under Rosetta).
+as tools change. `optional_binaries` are reported as non-failing integration
+notes. `os` gates a tool to a platform (kSNP4 ships Linux-only ELF binaries, so
+it can't run on macOS even under Rosetta).
 
 Database `kind`:
   dir          a directory that must exist and be non-empty
@@ -64,6 +65,14 @@ REQUIREMENTS = {
     "irma_gui":   {"modules": _WEB, "binaries": ["IRMA", "seqkit"]},
     "ksnp_gui":   {"modules": _WEB, "binaries": ["seqkit"], "os": "linux"},
     "ncbi_submit_gui": {"modules": _WEB, "binaries": []},
+    "mhc_gui": {
+        "modules": _WEB + ["aiofiles", "openpyxl"],
+        "binaries": ["nanoq", "minimap2", "samtools", "bcftools", "vsearch",
+                     "spoa", "medaka_consensus", "blastn"],
+        # These power optional integrations in the dashboard, not MHC typing.
+        # Doctor reports their absence without declaring the core tool broken.
+        "optional_binaries": ["amrfinder", "rclone"],
+    },
 }
 
 

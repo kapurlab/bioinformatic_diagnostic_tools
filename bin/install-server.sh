@@ -108,6 +108,44 @@ subst() {
       "$1"
 }
 
+# Refuse to build or verify a server deployment from source that disagrees with
+# the suite manifest.  Existing server trees often carry local licensing/site
+# commits, so automatically forcing a tag checkout here would either lose those
+# changes or silently deploy an unreviewed merge.  The operator must reconcile
+# the tree deliberately, after which this check becomes a reproducibility guard.
+assert_pinned_source() {
+  [[ ${DASHBOARD} -eq 0 && -d "${DIR}/.git" ]] || return 0
+
+  local current wanted
+  current="$(git -C "${DIR}" rev-parse HEAD 2>/dev/null)" \
+    || die "cannot read the current commit in ${DIR}"
+
+  if ! wanted="$(git -C "${DIR}" rev-parse "${VERSION}^{commit}" 2>/dev/null)"; then
+    if [[ ${DRY_RUN} -eq 1 ]]; then
+      warn "pin ${VERSION} is not present locally; the real run will fetch and verify it"
+      return 0
+    fi
+    log "fetching pinned ref ${VERSION} for verification"
+    git -C "${DIR}" fetch --tags --force origin "${VERSION}" \
+      || die "cannot fetch ${TOOL} pin ${VERSION} from origin"
+    wanted="$(git -C "${DIR}" rev-parse "${VERSION}^{commit}" 2>/dev/null)" \
+      || wanted="$(git -C "${DIR}" rev-parse FETCH_HEAD^{commit} 2>/dev/null)" \
+      || die "cannot resolve ${TOOL} pin ${VERSION} after fetching it"
+  fi
+
+  if [[ "${current}" != "${wanted}" ]]; then
+    local dirty="clean"
+    [[ -n "$(git -C "${DIR}" status --porcelain 2>/dev/null)" ]] && dirty="has local changes"
+    die "${TOOL} server source is not at the manifest pin ${VERSION}.
+       current: ${current}
+       expected: ${wanted}
+       tree: ${dirty}
+       Refusing to build stale or unreviewed source. Reconcile the server branch
+       with ${VERSION} (preserving any site/licensing commits), review it, then rerun."
+  fi
+  ok "source matches manifest pin ${VERSION} (${current:0:12})"
+}
+
 # ---------------------------------------------------------------------------
 phase_preflight() {
   log "preflight — ${TOOL}"
@@ -146,6 +184,7 @@ phase_toolchain() {
     run mkdir -p "${TOOLS_ROOT}"
     run git clone --branch "${VERSION}" --depth 1 "${REPO}" "${DIR}" || die "git clone failed"
   fi
+  assert_pinned_source
   # Build env + frontend via the tool's own no-sudo installer (shared env at <dir>/env).
   if [[ -x "${DIR}/deploy/install.sh" ]]; then
     local a=(); [[ ${DRY_RUN} -eq 1 ]] && a+=(--dry-run)
@@ -219,6 +258,7 @@ phase_verify() {
     info "Final manual check: launch 'Diagnostic Tools Dashboard' in OOD; confirm the landing page loads and a tool opens through /rnode."
     return
   fi
+  assert_pinned_source
   [[ -x "${DIR}/env/bin/python" ]] && ok "env python present" || warn "no ${DIR}/env/bin/python (toolchain not built?)"
   [[ -f "${DIR}/frontend/dist/index.html" ]] && ok "frontend built" || warn "frontend/dist missing"
   local app

@@ -147,7 +147,11 @@ def main():
     spec = requirements.for_tool(args.tool)
     blob = declared_blob(root)
     # requirements.py is also a declaration source (the curated contract).
-    spec_tokens = " ".join(spec.get("modules", []) + spec.get("binaries", [])).lower()
+    spec_tokens = " ".join(
+        spec.get("modules", [])
+        + spec.get("binaries", [])
+        + spec.get("optional_binaries", [])
+    ).lower()
     blob_all = blob + "\n" + spec_tokens
 
     imports, binaries, local = scan(root)

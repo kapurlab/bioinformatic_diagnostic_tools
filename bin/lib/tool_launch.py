@@ -165,13 +165,25 @@ def resolve(tool, port, host="127.0.0.1"):
     def _has_python(p):
         return bool(p) and os.path.isfile(os.path.join(p, "bin", "python"))
 
-    # sandbox override -> shared/sibling env -> the tool's own <dir>/env -> personal
-    # conda env. The own-env step matters for a *local* install of a sibling-env
+    # A source-tree override is useful for testing a feature branch without
+    # rebuilding large analysis environments. In that case, reuse the matching
+    # installed checkout's env after checking the override tree itself. This
+    # changes code only: databases, conda packages, and user data remain in the
+    # normal local installation.
+    source_override_env = ""
+    if os.environ.get("BDTOOLS_TOOLSDIR", "").strip() and not sb_dir:
+        installed_dir = os.path.join(_bdtools_home(), "checkouts", tool)
+        if os.path.abspath(d) != os.path.abspath(installed_dir):
+            source_override_env = os.path.join(installed_dir, "env")
+
+    # sandbox override -> shared/sibling env -> the tool's own <dir>/env ->
+    # installed env for an explicit source override -> personal conda env.
+    # The own-env step matters for a *local* install of a sibling-env
     # tool (e.g. vsnp_gui): there is no sibling <tools_root>/vsnp3 checkout, and the
     # GUI's server deps (uvicorn/fastapi) live in <dir>/env — NOT in the bare vsnp3
     # analysis conda env, which would otherwise be picked and fail to start uvicorn.
     env_dir = None
-    for cand in (sb_env, shared_env, own_env):
+    for cand in (sb_env, shared_env, own_env, source_override_env):
         if _has_python(cand):
             env_dir = cand
             break

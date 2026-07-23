@@ -34,6 +34,20 @@ for user testing before coordinated releases.
   modes. The browser preference is persisted and shared across proxied tools,
   follows OS changes in System mode, and is applied before first paint.
 
+## Testing tool feature worktrees
+
+Exercise feature worktrees through the real dashboard without replacing an
+installed checkout by setting `BDTOOLS_TOOLSDIR` to their common parent:
+
+```bash
+BDTOOLS_TOOLSDIR=/path/to/tool-worktrees bin/bdtools dashboard
+```
+
+The launcher uses the feature source while safely reusing the matching local
+installation's Python environment, databases, and user configuration. Build
+each worktree's `frontend/dist` first so its backend serves the feature bundle
+rather than an older committed bundle.
+
 ## Coordinated branches
 
 Every affected repository uses the same branch name:

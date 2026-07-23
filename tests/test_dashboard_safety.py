@@ -22,6 +22,7 @@ def load_module(name, path):
 
 
 SC = load_module("bdtools_suite_common", ROOT / "bin/lib/suite_common.py")
+TL = load_module("bdtools_tool_launch", ROOT / "bin/lib/tool_launch.py")
 try:
     APP = load_module("bdtools_dashboard_app", ROOT / "bin/ood_dashboard/app.py")
     HAS_PROXY_DEPS = True
@@ -204,6 +205,26 @@ class DashboardSafetyTests(unittest.IsolatedAsyncioTestCase):
 
 
 class StateFileTests(unittest.TestCase):
+    def test_source_override_reuses_installed_environment(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_root = root / "feature-tools"
+            source_tool = source_root / "mlst_gui"
+            (source_tool / "backend").mkdir(parents=True)
+            bdtools_home = root / "bdtools-home"
+            installed_env = bdtools_home / "checkouts/mlst_gui/env"
+            (installed_env / "bin").mkdir(parents=True)
+            (installed_env / "bin/python").touch()
+            with mock.patch.dict(os.environ, {
+                "BDTOOLS_TOOLSDIR": str(source_root),
+                "BDTOOLS_HOME": str(bdtools_home),
+            }, clear=False):
+                with mock.patch.object(TL, "_conda_bases", return_value=[]):
+                    plan = TL.resolve("mlst_gui", 8124)
+        self.assertEqual(plan["dir"], str(source_tool))
+        self.assertEqual(plan["env_dir"], str(installed_env))
+        self.assertEqual(plan["python"], str(installed_env / "bin/python"))
+
     def test_state_file_is_private_and_pid_scoped(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "dashboard-state.json"

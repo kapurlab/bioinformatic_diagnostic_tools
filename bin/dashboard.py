@@ -496,11 +496,11 @@ function overlay(title,msg,doneGlyph){
 }
 async function shutdownDash(){
   if(!confirm(
-    "Shut the dashboard completely down?\n\n"+
+    "Shut the dashboard completely down?\\n\\n"+
     "This stops every running tool AND the dashboard itself — the "+
     "“./bdtools dashboard” command in your terminal will exit. Use this when "+
-    "you want to be sure nothing is left running (e.g. before an update).\n\n"+
-    "A web page cannot start it back up, so to reopen it you'll go to a terminal and run:\n"+
+    "you want to be sure nothing is left running (e.g. before an update).\\n\\n"+
+    "A web page cannot start it back up, so to reopen it you'll go to a terminal and run:\\n"+
     "    ./bdtools dashboard")) return;
   try{ await fetch('./api/shutdown',{method:'POST'}); }catch(e){}
   overlay('Dashboard shut down',
@@ -509,7 +509,7 @@ async function shutdownDash(){
 }
 async function restartDash(){
   if(!confirm(
-    "Restart the dashboard?\n\n"+
+    "Restart the dashboard?\\n\\n"+
     "This stops every running tool and relaunches the dashboard so any updated "+
     "code takes effect. It comes back on this same web address within a few "+
     "seconds and this page will reconnect on its own — no need to touch the terminal.")) return;

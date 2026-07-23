@@ -313,6 +313,9 @@ cmd_dashboard() {
     [[ "${mode}" == stop ]] && return 0
   fi
 
+  # Decide which server to run (single-port proxy preferred; legacy fallback),
+  # then run it under a restart supervisor below.
+  local rundir; local -a runcmd=()
   local pyproxy; pyproxy="$(_dashboard_proxy_python || true)"
   if [[ -n "${pyproxy}" ]]; then
     export BDTOOLS_LOCAL=1
@@ -332,15 +335,33 @@ cmd_dashboard() {
           command -v "$o" >/dev/null 2>&1 && { "$o" "${url}" >/dev/null 2>&1; break; }
         done ) &
     fi
-    cd "${KT_BIN_DIR}/ood_dashboard" || die "cannot cd to ${KT_BIN_DIR}/ood_dashboard"
-    exec "${pyproxy}" -m uvicorn app:app --host 127.0.0.1 --port "${port}" --log-level warning
+    rundir="${KT_BIN_DIR}/ood_dashboard"
+    runcmd=("${pyproxy}" -m uvicorn app:app --host 127.0.0.1 --port "${port}" --log-level warning)
+  else
+    # Fallback: proxy deps absent — legacy dashboard (each tool on its own port; over
+    # SSH you'd forward each one). Install any tool to pull in starlette/httpx/uvicorn.
+    warn "reverse-proxy deps (starlette/httpx/uvicorn) not found — using the legacy dashboard."
+    warn "tools will open on their own ports. Install a tool to enable single-port mode."
+    rundir="${KT_BIN_DIR}"
+    runcmd=("${PYBIN}" "${KT_BIN_DIR}/dashboard.py" ${rest[@]+"${rest[@]}"})
   fi
 
-  # Fallback: proxy deps absent — legacy dashboard (each tool on its own port; over
-  # SSH you'd forward each one). Install any tool to pull in starlette/httpx/uvicorn.
-  warn "reverse-proxy deps (starlette/httpx/uvicorn) not found — using the legacy dashboard."
-  warn "tools will open on their own ports. Install a tool to enable single-port mode."
-  exec "${PYBIN}" "${KT_BIN_DIR}/dashboard.py" ${rest[@]+"${rest[@]}"}
+  cd "${rundir}" || die "cannot cd to ${rundir}"
+  # Restart supervisor. The dashboard exits 42 to REQUEST a relaunch — that's the
+  # in-browser "Restart" button, so updated code takes effect without you having
+  # to come back to this terminal. Any other exit (0 = the "Shut down" button or a
+  # normal stop, 130 = Ctrl-C) ends the loop and returns you to the shell.
+  local _stop=0; trap '_stop=1' INT TERM
+  local rc=0
+  while :; do
+    "${runcmd[@]}"; rc=$?
+    if [[ ${rc} -eq 42 && ${_stop} -eq 0 ]]; then
+      printf '\n  ↻ Restarting the dashboard (requested from your browser)…\n\n'
+      continue
+    fi
+    break
+  done
+  exit ${rc}
 }
 
 cmd_check_updates() { "${KT_BIN_DIR}/check-updates.sh" "${1:-all}"; }

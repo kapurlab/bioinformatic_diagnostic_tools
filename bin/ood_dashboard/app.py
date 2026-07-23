@@ -159,6 +159,13 @@ class Suite:
                      os.path.expanduser("~/.local/share/bdtools")), "dashboard-logs")
             os.makedirs(logdir, exist_ok=True)
             logf = open(os.path.join(logdir, f"{name}.log"), "ab")
+            # Record the exact, copy-pasteable terminal command for this run so the
+            # log is self-documenting and reproducible (see tool_launch.log_header).
+            try:
+                logf.write(tool_launch.log_header(plan).encode())
+                logf.flush()
+            except Exception:
+                pass
             try:
                 proc = await asyncio.create_subprocess_exec(
                     *plan["argv"], cwd=plan["cwd"], env=plan["env"],
@@ -267,7 +274,7 @@ SIMPLE_PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 </style></head><body>
 <header><h1>Kapur Lab Diagnostic Tools</h1>
 <p class="sub">One session, one allocation. Pick a tool to launch it on this node.</p></header>
-<p class="who">{who}</p>
+<p class="who">{who} <span style="opacity:.75">Running on {host}.</span></p>
 <div id="grid" class="grid"></div>
 <script>
 async function load(){{
@@ -309,7 +316,7 @@ async def landing(request):
     if LOCAL:
         return HTMLResponse(_rich_page())
     who = f"Signed in as {html.escape(OWNER)}." if OWNER else ""
-    return HTMLResponse(SIMPLE_PAGE.format(who=who))
+    return HTMLResponse(SIMPLE_PAGE.format(who=who, host=html.escape(socket.gethostname())))
 
 
 async def api_tools(request):
@@ -324,6 +331,42 @@ async def api_launch(request):
     if url:
         return JSONResponse({"url": url})
     return JSONResponse({"error": err or "launch failed"}, status_code=500)
+
+
+# ----- session info + lifecycle (host label; shutdown/restart are local only) -----
+async def api_info(request):
+    # Tells the UI which machine the dashboard is actually running on, and whether
+    # the in-browser Shut down / Restart controls are wired up. can_control is only
+    # true in local mode: under OOD the node is shared, so users must not be able to
+    # kill it — those routes aren't even registered there.
+    return JSONResponse({
+        "host": socket.gethostname(),
+        "local": LOCAL,
+        "can_control": LOCAL,
+    })
+
+
+async def _delayed_exit(code):
+    # Give the HTTP response time to flush to the browser, stop the child tool
+    # servers, then exit the whole process with `code`. The `bdtools dashboard`
+    # supervisor loop reads that code: 42 => relaunch (Restart), anything else =>
+    # stop for good (Shut down). os._exit sets the exit status directly (uvicorn
+    # would otherwise mask it) and skips the lifespan handler, so we stop the
+    # child tools explicitly here first.
+    await asyncio.sleep(0.4)
+    try:
+        if SUITE is not None:
+            await SUITE.shutdown()
+    finally:
+        os._exit(code)
+
+
+async def api_shutdown(request):
+    return JSONResponse({"stopping": True}, background=BackgroundTask(_delayed_exit, 0))
+
+
+async def api_restart(request):
+    return JSONResponse({"restarting": True}, background=BackgroundTask(_delayed_exit, 42))
 
 
 # ----- updates + readiness (local mode only) -----
@@ -433,6 +476,7 @@ def build_app():
     routes = [
         Route("/", landing),
         Route("/api/tools", api_tools),
+        Route("/api/info", api_info),
         Route("/api/launch", api_launch, methods=["POST"]),
     ]
     if LOCAL:
@@ -443,6 +487,10 @@ def build_app():
             Route("/api/apply-updates", api_apply_updates, methods=["POST"]),
             Route("/api/update-status", api_update_status),
             Route("/api/recheck", api_recheck, methods=["POST"]),
+            # Lifecycle: stop everything (Shut down) or relaunch (Restart). Local
+            # only — never expose these on the shared OOD node.
+            Route("/api/shutdown", api_shutdown, methods=["POST"]),
+            Route("/api/restart", api_restart, methods=["POST"]),
         ]
     routes += [
         Route("/t/{tool}", proxy_noslash),

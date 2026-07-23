@@ -204,6 +204,31 @@ class Suite:
 SUITE = None
 
 
+def _stop_tools():
+    """Terminate every tool server this dashboard launched (best effort)."""
+    if SUITE is None:
+        return
+    with SUITE.lock:
+        procs = [v["proc"] for v in SUITE.running.values()]
+    for p in procs:
+        try:
+            if p.poll() is None:
+                p.terminate()
+        except Exception:
+            pass
+
+
+def _schedule_exit(code):
+    """Stop the tools, then exit the process with `code` after the HTTP response
+    has flushed. The `bdtools dashboard` supervisor loop reads the code: 42 =>
+    relaunch (Restart), anything else => stop for good (Shut down)."""
+    def run():
+        time.sleep(0.4)
+        _stop_tools()
+        os._exit(code)
+    threading.Thread(target=run, daemon=True).start()
+
+
 PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Kapur Lab Diagnostic Tools</title>
@@ -263,9 +288,42 @@ PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
  .ulog{margin-top:10px;background:#2c2a26;color:#eee;border-radius:8px;padding:8px 10px;
    font:12px/1.45 ui-monospace,Menlo,Consolas,monospace;max-height:220px;overflow:auto;white-space:pre-wrap}
  .udone{margin-top:8px;font-weight:600}
+ .hbar{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap}
+ .ctl{text-align:right}
+ .host{color:var(--muted);font-size:12.5px;margin-bottom:6px}
+ .host b{color:var(--ink)}
+ .ctlbtns{display:flex;gap:8px;justify-content:flex-end}
+ .ctlbtns button{padding:6px 12px;font-size:13px}
+ button.restart{background:var(--accent2)}
+ button.shutdown{background:#8a3a2e}
+ .overlay{position:fixed;inset:0;background:rgba(44,42,38,.72);display:flex;
+   align-items:center;justify-content:center;z-index:999}
+ .obox{background:var(--card);border-radius:14px;padding:28px 32px;max-width:460px;
+   text-align:center;box-shadow:0 8px 40px rgba(0,0,0,.25)}
+ .obox h2{margin:14px 0 8px;font-size:19px}
+ .obox p{margin:0;color:var(--muted);font-size:14px;line-height:1.5}
+ .obox code{background:#f3e7cf;padding:1px 6px;border-radius:4px;
+   font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px;user-select:all}
+ .ospin{width:34px;height:34px;border:3px solid var(--line);border-top-color:var(--accent);
+   border-radius:50%;margin:0 auto;animation:spin 1s linear infinite}
+ .ospin.done{animation:none;border:0;font-size:34px;line-height:34px;width:auto;height:auto}
+ @keyframes spin{to{transform:rotate(360deg)}}
 </style></head><body>
-<header><h1>Kapur Lab Diagnostic Tools</h1>
-<p class="sub">Pick a tool to launch it on this machine. Each opens in a new tab.</p></header>
+<header><div class="hbar">
+  <div><h1>Kapur Lab Diagnostic Tools</h1>
+  <p class="sub">Pick a tool to launch it on this machine. Each opens in a new tab.</p></div>
+  <div class="ctl" id="ctl" style="display:none">
+    <div class="host" id="host"></div>
+    <div class="ctlbtns">
+      <button class="restart" onclick="restartDash()">↻ Restart dashboard</button>
+      <button class="shutdown" onclick="shutdownDash()">⏻ Shut down</button>
+    </div>
+  </div>
+</div></header>
+<div id="overlay" class="overlay" style="display:none"><div class="obox">
+  <div class="ospin" id="ospin"></div>
+  <h2 id="otitle"></h2><p id="omsg"></p>
+</div></div>
 <div id="updates" class="updates"></div>
 <div id="grid" class="grid"></div>
 <p class="recheck" id="recheck" style="display:none"><button onclick="recheck(this)">↻ Re-check readiness</button></p>
@@ -419,7 +477,64 @@ async function pollUpdate(){
   };
   tick();
 }
+// ---- Which machine is this? + Shut down / Restart controls (local mode only).
+async function loadInfo(){
+  try{
+    const r = await fetch('./api/info'); const d = await r.json();
+    document.getElementById('host').innerHTML =
+      'This dashboard is running on <b>'+esc(d.host)+'</b>.';
+    if(d.can_control) document.getElementById('ctl').style.display='';
+  }catch(e){ /* leave controls hidden */ }
+}
+function overlay(title,msg,doneGlyph){
+  document.getElementById('otitle').textContent = title;
+  document.getElementById('omsg').innerHTML = msg;
+  const sp = document.getElementById('ospin');
+  if(doneGlyph){ sp.className='ospin done'; sp.textContent=doneGlyph; }
+  else { sp.className='ospin'; sp.textContent=''; }
+  document.getElementById('overlay').style.display='flex';
+}
+async function shutdownDash(){
+  if(!confirm(
+    "Shut the dashboard completely down?\n\n"+
+    "This stops every running tool AND the dashboard itself — the "+
+    "“./bdtools dashboard” command in your terminal will exit. Use this when "+
+    "you want to be sure nothing is left running (e.g. before an update).\n\n"+
+    "A web page cannot start it back up, so to reopen it you'll go to a terminal and run:\n"+
+    "    ./bdtools dashboard")) return;
+  try{ await fetch('./api/shutdown',{method:'POST'}); }catch(e){}
+  overlay('Dashboard shut down',
+    'Everything has stopped. You can close this tab.<br><br>'+
+    'To start it again, run <code>./bdtools dashboard</code> in a terminal.','⏻');
+}
+async function restartDash(){
+  if(!confirm(
+    "Restart the dashboard?\n\n"+
+    "This stops every running tool and relaunches the dashboard so any updated "+
+    "code takes effect. It comes back on this same web address within a few "+
+    "seconds and this page will reconnect on its own — no need to touch the terminal.")) return;
+  overlay('Restarting the dashboard…',
+    'Stopping tools and reloading updated code. This page will reconnect automatically.');
+  try{ await fetch('./api/restart',{method:'POST'}); }catch(e){}
+  // The server exits, the terminal supervisor relaunches it on the same port;
+  // poll until it answers again, then reload to the fresh dashboard.
+  let tries=0;
+  const ping=async()=>{
+    tries++;
+    try{
+      const r=await fetch('./api/info',{cache:'no-store'});
+      if(r.ok){ overlay('Back up','Reloading…','✓'); setTimeout(()=>location.reload(),700); return; }
+    }catch(e){}
+    if(tries>90){
+      overlay('Still restarting…',
+        'This is taking longer than usual. If the page does not come back, restart '+
+        'from a terminal with <code>./bdtools dashboard --restart</code>.'); }
+    setTimeout(ping,1000);
+  };
+  setTimeout(ping,1500);
+}
 load(); setInterval(load, 5000);
+loadInfo();
 pollUpdates();   // background update check — the cards above are usable immediately
 </script></body></html>"""
 
@@ -440,6 +555,9 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path in ("/", "/index.html"):
             self._send(200, PAGE, "text/html; charset=utf-8")
+        elif path == "/api/info":
+            self._send(200, json.dumps(
+                {"host": socket.gethostname(), "local": True, "can_control": True}))
         elif path == "/api/tools":
             self._send(200, json.dumps(SUITE.state()))
         elif path == "/api/updates":
@@ -455,6 +573,14 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         parsed = urlparse(self.path)
+        if parsed.path == "/api/shutdown":
+            self._send(200, json.dumps({"stopping": True}))
+            _schedule_exit(0)
+            return
+        if parsed.path == "/api/restart":
+            self._send(200, json.dumps({"restarting": True}))
+            _schedule_exit(42)
+            return
         if parsed.path == "/api/recheck":
             # Re-run readiness (after the user installs a database / fixes a dep).
             SUITE.refresh()

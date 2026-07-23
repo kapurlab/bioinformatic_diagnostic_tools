@@ -17,11 +17,14 @@ Dependency-free (stdlib only) so it runs under any tool env's python.
 
 CLI (used by tests / a bash shim):
   tool_launch.py cmd   <tool> <port> [--host H]   -> prints argv (one per line)
+  tool_launch.py repro <tool> <port> [--host H]   -> prints a copy/paste shell command
   tool_launch.py show  <tool> <port> [--host H]   -> prints resolved plan as JSON
 """
 import json
 import os
+import shlex
 import sys
+import time
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
@@ -184,18 +187,26 @@ def resolve(tool, port, host="127.0.0.1"):
         raise RuntimeError("%s: no python found (looked for %s)" % (tool, looked))
 
     # ---- build the environment overrides
+    # env_overrides records ONLY the variables this function sets on top of the
+    # ambient environment, so reproduce_command() can emit a runnable command that
+    # doesn't leak the caller's whole environment (tokens etc). PATH is tracked as
+    # the prepended prefix alone (":$PATH" is re-appended at render time).
     env = dict(os.environ)
+    env_overrides = {}
     path_parts = []
     if env_dir:
         path_parts.append(os.path.join(env_dir, "bin"))
     path_parts += [os.path.join(d, p) for p in spec["path_prepend"]]
     if path_parts:
         env["PATH"] = os.pathsep.join(path_parts + [env.get("PATH", "")])
+        env_overrides["PATH_PREPEND"] = os.pathsep.join(path_parts)
     if spec["pythonpath"]:
         pp = [os.path.join(d, p) for p in spec["pythonpath"]]
         env["PYTHONPATH"] = os.pathsep.join(pp + ([env["PYTHONPATH"]] if env.get("PYTHONPATH") else []))
+        env_overrides["PYTHONPATH"] = os.pathsep.join(pp)
     if spec["set_conda_prefix"] and env_dir:
         env["CONDA_PREFIX"] = env_dir
+        env_overrides["CONDA_PREFIX"] = env_dir
     # vsnp_gui resolves its shared paths — references, VCF-db root, the vsnp3 env,
     # and the SIBLING Kraken install — from VSNP_GUI_SITE_ROOT, read ONCE at process
     # start (backend config.py). The Kraken path (_KRAKEN_GUI_ROOT) is derived from
@@ -216,6 +227,11 @@ def resolve(tool, port, host="127.0.0.1"):
             # Single-user local install: one Projects root. "" is authoritative-empty
             # in the backend (disables the multi-user shared root); mirrors install-local.sh.
             env.setdefault("VSNP_GUI_SHARED_PROJECTS_ROOT", "")
+        # Record the effective values (whatever won: caller's export or our default)
+        # so the reproduce command carries them — the backend reads them once at start.
+        for _k in ("VSNP_GUI_SITE_ROOT", "VSNP_GUI_SHARED_PROJECTS_ROOT"):
+            if _k in env:
+                env_overrides[_k] = env[_k]
 
     argv = [python, "-m", "uvicorn", spec["app"],
             "--host", host, "--port", str(port), "--log-level", "info"]
@@ -224,10 +240,50 @@ def resolve(tool, port, host="127.0.0.1"):
         "argv": argv,
         "cwd": os.path.join(d, spec["workdir"]),
         "env": env,
+        "env_overrides": env_overrides,
         "python": python,
         "env_dir": env_dir or "(base)",
         "dir": d,
     }
+
+
+def reproduce_command(plan):
+    """A single, copy-pasteable shell command that reproduces this launch from a
+    fresh terminal: cd into the tool's backend, set ONLY the env vars we override,
+    then run the same uvicorn line. The ambient environment (and any secrets in it)
+    is intentionally excluded — only tool_launch's own overrides are emitted."""
+    ov = plan.get("env_overrides", {})
+    assigns = []
+    prepend = ov.get("PATH_PREPEND")
+    if prepend:
+        # ":$PATH" stays outside the quotes so the shell still expands it.
+        assigns.append("PATH=%s:$PATH" % shlex.quote(prepend))
+    for k in ("PYTHONPATH", "CONDA_PREFIX",
+              "VSNP_GUI_SITE_ROOT", "VSNP_GUI_SHARED_PROJECTS_ROOT"):
+        if k in ov:
+            assigns.append("%s=%s" % (k, shlex.quote(ov[k])))
+    argv = " ".join(shlex.quote(a) for a in plan["argv"])
+    prefix = (" ".join(assigns) + " ") if assigns else ""
+    return "cd %s && %s%s" % (shlex.quote(plan["cwd"]), prefix, argv)
+
+
+def log_header(plan, when=None):
+    """A commented banner + the reproduce command, prepended to a tool's log file
+    at launch so every run records the exact terminal command that produced it."""
+    when = when or time.strftime("%Y-%m-%d %H:%M:%S %z")
+    bar = "# " + "=" * 68
+    return (
+        "\n%s\n"
+        "# bdtools tool launch — %s\n"
+        "# started: %s\n"
+        "# python env: %s\n"
+        "# Reproduce this exact run from a terminal (copy/paste the line below):\n"
+        "#\n"
+        "%s\n"
+        "#\n"
+        "%s\n"
+    ) % (bar, plan.get("tool", "?"), when, plan.get("env_dir", "?"),
+         reproduce_command(plan), bar)
 
 
 def _cli():
@@ -240,6 +296,8 @@ def _cli():
     plan = resolve(tool, int(port), host=host)
     if action == "cmd":
         print("\n".join(plan["argv"]))
+    elif action == "repro":
+        print(reproduce_command(plan))
     elif action == "show":
         out = dict(plan)
         out.pop("env")  # too big / secret-bearing

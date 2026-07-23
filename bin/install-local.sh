@@ -610,6 +610,25 @@ if changed:
     print(f"  repaired stale vsnp_gui config paths -> {site}")
 PY
   fi
+  # Record the exact, reproducible launch command to the tool's dashboard log, so
+  # every run (including this direct `bdtools local` one) is copy-paste rerunnable
+  # from a terminal. Mirrors the header the dashboards write (tool_launch.log_header).
+  local bdhome logdir extra_env=""
+  bdhome="${BDTOOLS_HOME:-$HOME/.local/share/bdtools}"; logdir="${bdhome}/dashboard-logs"
+  mkdir -p "${logdir}" 2>/dev/null || true
+  [[ -n "${VSNP_GUI_SITE_ROOT:-}" ]] && \
+    extra_env="VSNP_GUI_SITE_ROOT=$(printf '%q' "${VSNP_GUI_SITE_ROOT}") VSNP_GUI_SHARED_PROJECTS_ROOT=$(printf '%q' "${VSNP_GUI_SHARED_PROJECTS_ROOT:-}") "
+  {
+    printf '\n# %s\n' '===================================================================='
+    printf '# bdtools tool launch — %s\n' "${TOOL}"
+    printf '# started: %s\n' "$(date '+%Y-%m-%d %H:%M:%S %z')"
+    printf '# python env: %s\n' "${envbin%/bin}"
+    printf '# Reproduce this exact run from a terminal (copy/paste the line below):\n#\n'
+    printf 'cd %q && PATH=%q:$PATH PYTHONPATH=%q %s%q -m uvicorn app.main:app --host 127.0.0.1 --port %q --log-level info\n' \
+      "${DIR}/backend" "${envbin}" "${DIR}/bin" "${extra_env}" "${py}" "${PORT}"
+    printf '# %s\n' '===================================================================='
+  } >> "${logdir}/${TOOL}.log" 2>/dev/null || true
+
   [[ ${NO_BROWSER} -eq 1 ]] || ( sleep 2; open_url "${url}" ) &
   cd "${DIR}/backend"
   PATH="${envbin}:${PATH}" PYTHONPATH="${DIR}/bin:${PYTHONPATH:-}" \

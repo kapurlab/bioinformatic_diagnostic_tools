@@ -48,6 +48,10 @@ installation's Python environment, databases, and user configuration. Build
 each worktree's `frontend/dist` first so its backend serves the feature bundle
 rather than an older committed bundle.
 
+For repeated testing, put that directory in the ignored checkout-local file
+`.bdtools-tools-dir`. Thereafter the ordinary `bin/bdtools dashboard` command
+uses the configured feature source; an explicit `--tools-dir` overrides it.
+
 ## Coordinated branches
 
 Every affected repository uses the same branch name:

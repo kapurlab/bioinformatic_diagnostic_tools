@@ -309,6 +309,14 @@ cmd_dashboard() {
     esac
   done
 
+  # An ignored, checkout-local pointer makes repeated feature testing reliable:
+  # once configured, the ordinary `bdtools dashboard` command uses the same
+  # source tree every time. An explicit --tools-dir still takes precedence.
+  local tools_dir_file="${REPO_DIR}/.bdtools-tools-dir"
+  if [[ -z "${tools_dir}" && -f "${tools_dir_file}" ]]; then
+    IFS= read -r tools_dir < "${tools_dir_file}" || true
+  fi
+
   if [[ -n "${tools_dir}" ]]; then
     [[ -d "${tools_dir}" ]] || die "--tools-dir does not exist: ${tools_dir}"
     BDTOOLS_TOOLSDIR="$(cd "${tools_dir}" && pwd -P)"

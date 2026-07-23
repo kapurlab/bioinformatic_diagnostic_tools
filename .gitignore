@@ -6,6 +6,9 @@ sites/*.conf
 # local tool checkouts, if a user points BDTOOLS_HOME inside the repo
 checkouts/
 
+# optional one-line source root for local feature-worktree dashboard testing
+.bdtools-tools-dir
+
 # editor / OS noise
 *.swp
 .DS_Store

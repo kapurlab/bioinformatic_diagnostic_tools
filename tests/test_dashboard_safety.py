@@ -244,6 +244,7 @@ class StateFileTests(unittest.TestCase):
         self.assertIn("controlFetch('./api/restart'", dashboard)
         self.assertIn("--tools-dir", launcher)
         self.assertIn("export BDTOOLS_TOOLSDIR", launcher)
+        self.assertIn(".bdtools-tools-dir", launcher)
         self.assertNotIn('pkill -f "uvicorn app.main:app"', (
             ROOT / "bin/bdtools"
         ).read_text(encoding="utf-8"))

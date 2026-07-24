@@ -16,32 +16,6 @@ bioinformatic_diagnostic_tools/
 └── docs/              per-environment runbooks + sysadmin guide
 ```
 
-## Install with a Claude agent (if available)
-
-The easiest path: let a [Claude Code](https://claude.com/claude-code) agent
-detect your system and install the right way. Clone the repo and point the agent
-at [`AGENTS.md`](AGENTS.md):
-
-```bash
-git clone https://github.com/kapurlab/bioinformatic_diagnostic_tools.git
-cd bioinformatic_diagnostic_tools
-claude "Follow AGENTS.md to install the Kapur Lab diagnostic tools suite on this system."
-```
-
-> **You'll be asked to approve steps.** The agent pauses for permission before
-> running install commands — click **Allow** (or *Allow for this session*) to
-> approve each one. (Don't add `-p` — that's headless/print mode, which can't
-> answer these prompts and will stall.)
-
-The agent figures out whether you're on a personal computer, an Open OnDemand
-cluster (as a user or an admin), and installs accordingly — production build
-only, no developer cards. The build flow is **install → validate → dashboard**:
-after building it validates against known samples and then hands you the access
-point (the local dashboard, or your OOD dashboard).
-
-> No agent? See the same steps by hand at the [Quick start](#-quick-start--personal-computer-linux--macos--wsl2)
-> below. For more detail see [INSTALL.md](INSTALL.md).
-
 ## 🚀 Quick start — personal computer (Linux / macOS / WSL2)
 
 This is the **local** path: no Open OnDemand, the tools run on your own machine.

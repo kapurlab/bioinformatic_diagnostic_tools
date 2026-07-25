@@ -385,7 +385,18 @@ cmd_dashboard() {
     fi
     local bar="================================================================"
     printf '\n%s\n  Kapur Lab Diagnostic Tools — dashboard starting (single-port proxy).\n\n  Open this in your web browser:\n      %s\n\n' "${bar}" "${url}"
-    [[ ${want_token} -eq 1 ]] && printf '  This link carries a one-time session key — treat it like a password.\n  Other accounts on this server cannot open the dashboard without it.\n\n'
+    # Say WHY the URL looks the way it does, in BOTH directions. The same command
+    # prints a plain URL on a Mac and a "?t=..." one on a Linux server, and without
+    # an explanation that difference reads as a broken install rather than as the
+    # platform check it is (see _dashboard_wants_token above).
+    if [[ ${want_token} -eq 1 ]]; then
+      printf '  The "?t=" on the end is a one-time session key — treat it like a password.\n'
+      printf '  This machine looks like a shared server, where other Unix accounts also\n  reach 127.0.0.1, so the key is what stops them opening your dashboard.\n'
+      printf '  A personal Mac or WSL box gets a plain URL instead. Override either way\n  with BDTOOLS_DASHBOARD_AUTH=0 (off) or =1 (on).\n\n'
+    else
+      printf '  No session key is needed on a personal machine — loopback is yours alone.\n'
+      printf '  On a shared server the URL ends in "?t=<key>" instead. Force one here with\n  BDTOOLS_DASHBOARD_AUTH=1.\n\n'
+    fi
     printf '  Working over SSH? Forward just this one port from your machine:\n      ssh -L %s:127.0.0.1:%s <this-host>\n\n  Keep this window open while you work (Ctrl-C stops everything).\n%s\n\n' "${port}" "${port}" "${bar}"
     if [[ ${no_browser} -eq 0 ]]; then
       ( sleep 1.5

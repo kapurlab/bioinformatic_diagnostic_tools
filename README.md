@@ -122,6 +122,12 @@ You only ever need to remember one thing: **open the dashboard, then click your
 tool.** Single tool instead? `bin/bdtools local <tool> --port 8080`, then open
 http://127.0.0.1:8080/.
 
+**Did your URL end in `?t=…`?** That's expected on a shared machine — it's a
+one-time session key that keeps other accounts on the same host out of your
+dashboard. A personal Mac or WSL box gets a plain URL instead. Neither is a sign
+of a failed update; see
+[Why does my dashboard URL have `?t=…`?](docs/INSTALL_LOCAL.md#why-does-my-dashboard-url-have-t)
+
 **Safe restarts, shutdowns, and updates.** Analyses run independently so they can
 survive a browser disconnect. The dashboard therefore checks every launched
 tool before stopping or updating anything. If a job is running or a tool cannot

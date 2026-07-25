@@ -62,8 +62,19 @@ bin/bdtools dashboard               # opens http://127.0.0.1:8080/
 
 The dashboard is your local landing page (the equivalent of the OOD dashboard):
 it lists the GUIs installed on this machine, and clicking one starts that tool's
-server and opens it in a new browser tab. Each tool runs on its own `localhost`
-port, exactly as `bdtools local` runs it — the dashboard is just the launcher.
+server and opens it in a new browser tab.
+
+Each tool's server binds a private loopback port, but you never open that port
+directly: the dashboard reverse-proxies each one at `http://127.0.0.1:8080/t/<tool>/`,
+so **only port 8080 ever has to be reachable** — which is what makes SSH use a
+single `-L 8080:127.0.0.1:8080`. It also means every tool shares an origin with
+the dashboard, so one appearance choice (Light / Dark / System) applies across all
+of them.
+
+> If `starlette`, `httpx` and `uvicorn` aren't importable, the dashboard falls
+> back to a legacy mode that puts each tool on its own port. That still works, but
+> you'd have to forward one port per tool and each tool then remembers its own
+> theme separately. Installing any tool pulls those three in.
 
 **Lifecycle / re-opening after a restart.** The dashboard runs while its window
 is open; restarting your computer stops it (normal). To bring it back, **macOS
@@ -78,6 +89,39 @@ To launch a single tool directly instead:
 ```bash
 bin/bdtools local mlst_gui --port 8080      # then open http://127.0.0.1:8080/
 ```
+
+### Why does my dashboard URL have `?t=…`?
+
+Because the machine looks like a **shared** one. Nothing is broken, and it is not
+a sign of a failed update — the same `bdtools dashboard` command deliberately
+prints a different URL depending on where it runs:
+
+| Machine | URL printed | Why |
+|---|---|---|
+| macOS | `http://127.0.0.1:8080/` | personal desktop — `127.0.0.1` is yours alone |
+| WSL2 / WSL | `http://127.0.0.1:8080/` | same reasoning |
+| anything else (a lab server, HPC login node) | `http://127.0.0.1:8080/?t=<key>` | other Unix accounts on that host also reach `127.0.0.1`, so without a key any of them could open your dashboard and your data |
+
+The `?t=<key>` is a **one-time session key**, minted fresh on every start. Opening
+the link exchanges it for an httponly cookie and strips it from the address bar,
+so it appears only once. Treat it like a password: don't paste it into chat or a
+ticket. Anyone without the cookie gets a 403.
+
+Override the platform guess in either direction:
+
+```bash
+BDTOOLS_DASHBOARD_AUTH=0 bin/bdtools dashboard    # no key, even on a server
+BDTOOLS_DASHBOARD_AUTH=1 bin/bdtools dashboard    # require a key, even on a Mac
+```
+
+Two things worth knowing:
+
+- This is **not** `BDTOOLS_CONTROL_TOKEN`. That one is a CSRF header guarding the
+  dashboard's own `/api/*` actions (Launch, Restart, Shut down). It is always
+  minted, never appears in a URL, and needs nothing from you.
+- The **legacy fallback dashboard has no session key at all**. If you are on a
+  shared server and the banner doesn't say "single-port proxy", install any tool
+  so `starlette`/`httpx`/`uvicorn` are present and the protected proxy is used.
 
 After installing, validate against known samples (see [tests/README.md](../tests/README.md)):
 

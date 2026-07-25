@@ -6,6 +6,7 @@ import json
 import os
 import re
 import stat
+import subprocess
 import tempfile
 import unittest
 from types import SimpleNamespace
@@ -439,6 +440,40 @@ class StateFileTests(unittest.TestCase):
             checked.append(name)
         if not checked:
             self.skipTest("no tool backends found in the installed checkouts")
+
+    def test_installed_tool_backends_import(self):
+        """Every installed backend must import — uvicorn does nothing else first.
+
+        A route decorated above `app = FastAPI(...)` raises NameError at import, so
+        the tool exits the instant it launches and the dashboard can only report
+        "the tool exited early". Nothing else in the suite catches that: the module
+        compiles fine, and the failure only appears at run time. Imports each
+        backend in its OWN env python, since deps differ per tool."""
+        checkouts = Path(
+            os.environ.get("BDTOOLS_HOME") or Path.home() / ".local/share/bdtools"
+        ) / "checkouts"
+        if not checkouts.is_dir():
+            self.skipTest("no installed checkouts on this machine")
+        failures, checked = [], []
+        for name in sorted(self._FIRST_THEMED_TAG):
+            backend = checkouts / name / "backend"
+            if not (backend / "app/main.py").is_file():
+                continue
+            try:
+                plan = TL.resolve(name, 0)
+            except Exception:
+                continue  # not installed / no env — other tests cover that
+            proc = subprocess.run(
+                [plan["python"], "-c", "import app.main"],
+                cwd=str(backend), env={**plan["env"], "PYTHONPATH": plan["env"].get("PYTHONPATH", "")},
+                capture_output=True, text=True, timeout=180)
+            checked.append(name)
+            if proc.returncode != 0:
+                last = (proc.stderr or "").strip().splitlines()[-1:] or ["(no output)"]
+                failures.append(f"{name}: {last[0]}")
+        if not checked:
+            self.skipTest("no importable tool backends found")
+        self.assertEqual(failures, [], "tool backends failed to import:\n  " + "\n  ".join(failures))
 
     def test_state_file_is_private_and_pid_scoped(self):
         with tempfile.TemporaryDirectory() as tmp:

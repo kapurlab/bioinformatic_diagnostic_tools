@@ -128,6 +128,10 @@ class Suite:
         self.starting = {}  # tool -> one shared startup Task
         self.quiescing = False
         self.updating = set()
+        # tool -> [str]: launch-time problems the tool will only reveal much later
+        # (e.g. a missing vendored kSNP4 => a pipeline exiting 127 mid-analysis).
+        # Surfaced by /api/launch so the user reads it before starting a run.
+        self.launch_warnings = {}
         self.tools = self._discover()
         self.readiness = {}  # name -> doctor record; filled lazily in local mode
 
@@ -164,6 +168,7 @@ class Suite:
             return None, str(exc)
         port = _free_port()
         plan = tool_launch.resolve(name, port)
+        self.launch_warnings[name] = list(plan.get("warnings") or [])
         logdir = os.path.join(os.environ.get(
             "BDTOOLS_HOME", os.path.expanduser("~/.local/share/bdtools")
         ), "dashboard-logs")
@@ -503,7 +508,7 @@ async function act(name,btn){{
  btn.disabled=true;const was=btn.textContent;btn.textContent='Starting…';
  try{{const r=await fetch('./api/launch?tool='+encodeURIComponent(name),{{method:'POST'}});
   const j=await r.json();
-  if(j.url){{window.open(j.url,'_blank');}}else{{err.textContent=j.error||'failed to launch';}}
+  if(j.url){{if(j.warnings&&j.warnings.length){{err.textContent='⚠ '+j.warnings.join(' ');}}window.open(j.url,'_blank');}}else{{err.textContent=j.error||'failed to launch';}}
  }}catch(e){{err.textContent=String(e);}}
  btn.disabled=false;btn.textContent=was;load();
 }}
@@ -537,7 +542,11 @@ async def api_launch(request):
         return JSONResponse({"error": "unknown tool"}, status_code=400)
     url, err = await SUITE.launch(tool)
     if url:
-        return JSONResponse({"url": url})
+        # The tool started, but it may be missing a vendored dependency it only
+        # needs once an analysis runs. Report that alongside the URL rather than
+        # letting the user discover it as a "command not found" in a run log.
+        warnings = SUITE.launch_warnings.get(tool) or []
+        return JSONResponse({"url": url, "warnings": warnings})
     return JSONResponse({"error": err or "launch failed"}, status_code=500)
 
 

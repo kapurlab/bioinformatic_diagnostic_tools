@@ -75,15 +75,44 @@ def check_modules(env_py, modules):
         return list(modules)  # can't even run the interpreter -> all "missing"
 
 
-def has_binary(name, env_bin):
-    if env_bin:
-        cand = Path(env_bin) / name
+def has_binary(name, env_bin, extra_dirs=()):
+    """Is `name` runnable? Searches <env>/bin, any vendored asset dirs, then PATH.
+
+    extra_dirs carries the resolved `asset_dirs` from the tool's spec — vendored
+    payloads like ksnp_gui's kSNP4 that conda never installs. Without them the
+    check searched only places those binaries are guaranteed NOT to be, and
+    reported the tool healthy while it could not run at all."""
+    dirs = ([env_bin] if env_bin else []) + [d for d in extra_dirs if d]
+    for d in dirs:
+        cand = Path(d) / name
         if cand.exists() and os.access(cand, os.X_OK):
             return True
-        path = f"{env_bin}{os.pathsep}{os.environ.get('PATH', '')}"
-    else:
-        path = os.environ.get("PATH", "")
-    return shutil.which(name, path=path) is not None
+    search = dirs + [os.environ.get("PATH", "")]
+    return shutil.which(name, path=os.pathsep.join(p for p in search if p)) is not None
+
+
+def resolve_asset_dirs(tool, tool_dir, asset_dirs):
+    """Resolve a spec's `asset_dirs` the same way the launcher builds PATH.
+
+    Delegates to tool_launch._resolve_asset_dir so there is exactly one resolution
+    rule (tool tree -> installed checkout -> machine-wide vendor cache) and doctor
+    can never report a state the launcher wouldn't produce. Returns
+    (found_dirs, missing_rel_paths)."""
+    if not asset_dirs or not tool_dir:
+        return [], list(asset_dirs or [])
+    try:
+        import tool_launch  # sibling module, stdlib-only
+    except Exception:
+        # Never let a doctor run die over this — fall back to a plain lookup.
+        found = [os.path.join(tool_dir, r) for r in asset_dirs
+                 if os.path.isdir(os.path.join(tool_dir, r))]
+        missing = [r for r in asset_dirs if not os.path.isdir(os.path.join(tool_dir, r))]
+        return found, missing
+    found, missing = [], []
+    for rel in asset_dirs:
+        path, _tried = tool_launch._resolve_asset_dir(tool, rel, tool_dir)
+        (found.append(path) if path else missing.append(rel))
+    return found, missing
 
 
 def _expand(s):
@@ -118,7 +147,7 @@ def check_db(tool, db):
     return ok, val
 
 
-def run_checks(tool, env_py, scope):
+def run_checks(tool, env_py, scope, tool_dir=None):
     """Return (status, lines, issues, notes). status: 'ok'|'issues'|'skip'.
     lines: pretty (symbol, text, fix-or-None) tuples. issues: [{label, fix}]
     (fixable problems). notes: [str] (platform limitations — not fixable here)."""
@@ -147,10 +176,24 @@ def run_checks(tool, env_py, scope):
     elif spec.get("modules"):
         lines.append((OK, f"python modules ({len(spec['modules'])}) import", None))
 
+    # Vendored payloads (kSNP4's SourceForge package) live outside the conda env
+    # and are gitignored, so a fresh clone or feature worktree has none. Resolve
+    # them first — the binary search below depends on the result, and a missing
+    # asset dir is itself a reportable failure with its own fix line.
+    asset_dirs = spec.get("asset_dirs", [])
+    found_assets, missing_assets = resolve_asset_dirs(tool, tool_dir, asset_dirs)
+    if missing_assets:
+        label = f"vendored files missing: {', '.join(missing_assets)}"
+        lines.append((BAD, label, default_fix))
+        issues.append({"label": label, "fix": default_fix})
+    elif asset_dirs:
+        lines.append((OK, f"vendored files present ({', '.join(asset_dirs)})", None))
+
     # Binaries unavailable on this OS (e.g. bracken on macOS) are a known
     # limitation, not a rebuild-fixable error — report as a note, don't fail.
     unavailable = set(spec.get("platform_unavailable", {}).get(sysname, []))
-    missing_bin = [b for b in spec.get("binaries", []) if not has_binary(b, env_bin)]
+    missing_bin = [b for b in spec.get("binaries", [])
+                   if not has_binary(b, env_bin, found_assets)]
     real_missing = [b for b in missing_bin if b not in unavailable]
     note_missing = [b for b in missing_bin if b in unavailable]
     if real_missing:
@@ -167,7 +210,8 @@ def run_checks(tool, env_py, scope):
         notes.append(msg)
 
     optional_missing = [
-        b for b in spec.get("optional_binaries", []) if not has_binary(b, env_bin)
+        b for b in spec.get("optional_binaries", [])
+        if not has_binary(b, env_bin, found_assets)
     ]
     if optional_missing:
         msg = (f"optional integrations unavailable: {', '.join(optional_missing)} "
@@ -196,7 +240,8 @@ def main():
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args()
 
-    status, lines, issues, notes = run_checks(args.tool, args.python, args.scope)
+    status, lines, issues, notes = run_checks(
+        args.tool, args.python, args.scope, tool_dir=args.dir)
 
     if args.json:
         print(json.dumps({"tool": args.tool, "status": status,

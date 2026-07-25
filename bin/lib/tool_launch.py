@@ -57,6 +57,13 @@ def _spec(tool):
     return s
 
 
+# Human-readable note per vendored asset dir, used in the "not found" warning so
+# the message says what actually breaks rather than just naming a missing path.
+ASSET_NOTES = {
+    "vendor/kSNP4-bin": "kSNP4, Kchooser4 and MakeKSNP4infile will NOT be on PATH",
+}
+
+
 def _bdtools_home():
     """Mirror common.sh: $BDTOOLS_HOME, else the XDG-friendly per-user default.
 
@@ -77,6 +84,66 @@ def tool_dir(name):
     if td and os.path.isdir(os.path.join(td, name)):
         return os.path.join(td, name)
     return os.path.join(_bdtools_home(), "checkouts", name)
+
+
+def _vendor_root():
+    """Machine-wide cache for large vendored third-party payloads (kSNP4 etc).
+
+    Mirrors how setup-databases.sh records its chosen database root: an explicit
+    env var wins, else the path written at install time, else a per-user default
+    under BDTOOLS_HOME. Kept separate from `db-root` — vendored binaries and
+    reference databases have different owners and lifecycles."""
+    root = os.environ.get("BDTOOLS_VENDOR_ROOT", "").strip()
+    if root:
+        return root
+    home = _bdtools_home()
+    try:
+        with open(os.path.join(home, "vendor-root")) as fh:
+            recorded = fh.readline().strip()
+        if recorded:
+            return recorded
+    except OSError:
+        pass
+    return os.path.join(home, "vendor")
+
+
+def _resolve_asset_dir(tool, rel, d, sb_dir=""):
+    """Locate a tool's vendored asset dir, tolerating a source-tree override.
+
+    Large third-party payloads are gitignored (ksnp_gui/vendor/.gitignore ignores
+    everything), so a fresh clone — or a feature worktree created by
+    `bdtools dashboard --tools-dir` — has an EMPTY vendor/. Prepending that
+    nonexistent path to PATH is how a complete kSNP4 install becomes
+    "command not found: kSNP4" at runtime.
+
+    Same reasoning as source_override_env in resolve(): a 545 MB vendored binary
+    bundle is not code, so borrow it from the normal installation instead of
+    failing. Candidate order: the resolved tree, the installed checkout, the
+    machine-wide vendor cache.
+
+    Returns (path, tried). `path` is "" when no candidate exists. isdir() follows
+    symlinks, so a DANGLING vendor/kSNP4-bin symlink is correctly rejected — that
+    is the exact shape the kSNP4 install uses.
+    """
+    tried = []
+
+    def _try(p):
+        tried.append(p)
+        return p if os.path.isdir(p) else ""
+
+    hit = _try(os.path.join(d, rel))
+    if hit:
+        return hit, tried
+    if os.environ.get("BDTOOLS_TOOLSDIR", "").strip() and not sb_dir:
+        installed_dir = os.path.join(_bdtools_home(), "checkouts", tool)
+        if os.path.abspath(d) != os.path.abspath(installed_dir):
+            hit = _try(os.path.join(installed_dir, rel))
+            if hit:
+                return hit, tried
+    hit = _try(os.path.join(_vendor_root(), tool, os.path.basename(rel)))
+    if hit:
+        return hit, tried
+    return "", tried
 
 
 def _manifest_env_name(tool):
@@ -205,10 +272,28 @@ def resolve(tool, port, host="127.0.0.1"):
     # the prepended prefix alone (":$PATH" is re-appended at render time).
     env = dict(os.environ)
     env_overrides = {}
+    warnings = []
     path_parts = []
     if env_dir:
         path_parts.append(os.path.join(env_dir, "bin"))
-    path_parts += [os.path.join(d, p) for p in spec["path_prepend"]]
+    # Vendored asset dirs are resolved, not assumed: a missing one must produce a
+    # loud warning at LAUNCH rather than a bare "command not found" mid-analysis.
+    missing_assets = []
+    for rel in spec["path_prepend"]:
+        asset, tried = _resolve_asset_dir(tool, rel, d, sb_dir=sb_dir)
+        if asset:
+            path_parts.append(asset)
+            continue
+        missing_assets.append(rel)
+        note = ASSET_NOTES.get(rel, "tools shipped in %s will NOT be on PATH" % rel)
+        warnings.append(
+            "%s: %s not found — %s. Looked in: %s. Fix: run %s/deploy/install.sh "
+            "(or `bdtools install %s`)." % (tool, rel, note, ", ".join(tried), d, tool))
+    if missing_assets:
+        # Lets the tool's own backend refuse to start an analysis it cannot run,
+        # without re-deriving any of this resolution logic.
+        env["BDTOOLS_MISSING_ASSETS"] = os.pathsep.join(missing_assets)
+        env_overrides["BDTOOLS_MISSING_ASSETS"] = env["BDTOOLS_MISSING_ASSETS"]
     if path_parts:
         env["PATH"] = os.pathsep.join(path_parts + [env.get("PATH", "")])
         env_overrides["PATH_PREPEND"] = os.pathsep.join(path_parts)
@@ -256,6 +341,7 @@ def resolve(tool, port, host="127.0.0.1"):
         "python": python,
         "env_dir": env_dir or "(base)",
         "dir": d,
+        "warnings": warnings,
     }
 
 
@@ -284,18 +370,22 @@ def log_header(plan, when=None):
     at launch so every run records the exact terminal command that produced it."""
     when = when or time.strftime("%Y-%m-%d %H:%M:%S %z")
     bar = "# " + "=" * 68
+    # Missing vendored assets are recorded in the run log too: the symptom shows up
+    # much later (a pipeline exiting 127), and the log is where anyone will look.
+    warn_block = "".join("# WARNING: %s\n" % w for w in plan.get("warnings") or [])
     return (
         "\n%s\n"
         "# bdtools tool launch — %s\n"
         "# started: %s\n"
         "# python env: %s\n"
+        "%s"
         "# Reproduce this exact run from a terminal (copy/paste the line below):\n"
         "#\n"
         "%s\n"
         "#\n"
         "%s\n"
     ) % (bar, plan.get("tool", "?"), when, plan.get("env_dir", "?"),
-         reproduce_command(plan), bar)
+         warn_block, reproduce_command(plan), bar)
 
 
 def _cli():
@@ -306,6 +396,9 @@ def _cli():
     if "--host" in sys.argv:
         host = sys.argv[sys.argv.index("--host") + 1]
     plan = resolve(tool, int(port), host=host)
+    # stderr, so `cmd`/`repro` output stays machine-consumable by the bash shim.
+    for w in plan.get("warnings") or []:
+        sys.stderr.write("WARNING: %s\n" % w)
     if action == "cmd":
         print("\n".join(plan["argv"]))
     elif action == "repro":

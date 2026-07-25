@@ -292,7 +292,8 @@ cmd_dashboard() {
   #              (use this after a `git pull` so new code takes effect)
   #   --stop     stop the running dashboard + any tools, and exit
   #   --port N   dashboard port (default 8080)   --no-browser  don't auto-open
-  #   --tools-dir DIR  run tool source from DIR/<tool> (feature-worktree testing)
+  #   --tools-dir DIR  run tool source from DIR/<tool> (feature-worktree testing);
+  #                    remembered in .bdtools-tools-dir. `--tools-dir none` forgets it.
   local mode=serve rest=() port=8080 no_browser=0 tools_dir=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -313,6 +314,15 @@ cmd_dashboard() {
   # once configured, the ordinary `bdtools dashboard` command uses the same
   # source tree every time. An explicit --tools-dir still takes precedence.
   local tools_dir_file="${REPO_DIR}/.bdtools-tools-dir"
+  # `--tools-dir none` forgets the pointer, so going back to the released tools
+  # doesn't mean knowing to delete an undocumented dotfile.
+  case "${tools_dir}" in
+    none|off|clear)
+      rm -f "${tools_dir_file}"
+      ok "cleared the tool-source override — tools now come from ${BDTOOLS_HOME}/checkouts/<tool>"
+      tools_dir=""
+      ;;
+  esac
   if [[ -z "${tools_dir}" && -f "${tools_dir_file}" ]]; then
     IFS= read -r tools_dir < "${tools_dir_file}" || true
   fi
@@ -322,6 +332,13 @@ cmd_dashboard() {
     BDTOOLS_TOOLSDIR="$(cd "${tools_dir}" && pwd -P)"
     export BDTOOLS_TOOLSDIR
     info "Testing tool source from ${BDTOOLS_TOOLSDIR}"
+    # This overrides CODE only. Conda envs and large vendored payloads (kSNP4's
+    # 545 MB package) are gitignored, so a worktree has none — they're borrowed
+    # from ${BDTOOLS_HOME}/checkouts/<tool>. If a payload is missing from BOTH,
+    # tool_launch warns at launch and the tool's card flags it; the analysis would
+    # otherwise fail much later with a bare "command not found".
+    info "  code only — conda envs and vendored payloads come from the normal install"
+    info "  clear this with: bin/bdtools dashboard --tools-dir none"
   fi
 
   export BDTOOLS_DASHBOARD_STATE_FILE="${BDTOOLS_HOME}/dashboard-state.json"

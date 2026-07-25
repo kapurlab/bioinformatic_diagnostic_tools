@@ -13,6 +13,11 @@ as tools change. `optional_binaries` are reported as non-failing integration
 notes. `os` gates a tool to a platform (kSNP4 ships Linux-only ELF binaries, so
 it can't run on macOS even under Rosetta).
 
+`asset_dirs` lists vendored third-party payload dirs (relative to the tool dir)
+that hold binaries NOT installed by conda — so a `<env>/bin` + PATH search would
+miss them. They are resolved via tool_launch._resolve_asset_dir, i.e. exactly the
+way the launcher builds PATH, so doctor and the launcher can never disagree.
+
 Database `kind`:
   dir          a directory that must exist and be non-empty
   dir_marker   a directory that must contain `marker` (e.g. kraken2's hash.k2d)
@@ -63,7 +68,19 @@ REQUIREMENTS = {
     "amr_plus_gui": {"modules": _WEB, "binaries": ["amrfinder", "mlst"]},
     "genoflu_gui": {"modules": _WEB, "binaries": ["seqkit"]},
     "irma_gui":   {"modules": _WEB, "binaries": ["IRMA", "seqkit"]},
-    "ksnp_gui":   {"modules": _WEB, "binaries": ["seqkit"], "os": "linux"},
+    # kSNP4 is NOT a conda package — deploy/install.sh downloads the kSNP4.1 Linux
+    # package from SourceForge into vendor/kSNP4-bin and prepends that to PATH. So
+    # its binaries are invisible to an <env>/bin search, which is why doctor used to
+    # report ksnp_gui green while every run exited 127. Declaring `asset_dirs` lets
+    # the check look where the binaries actually live. The generic "rebuilds the
+    # env" fix is wrong here — the env never contained kSNP.
+    "ksnp_gui": {
+        "modules": _WEB,
+        "binaries": ["seqkit", "kSNP4", "Kchooser4", "MakeKSNP4infile"],
+        "asset_dirs": ["vendor/kSNP4-bin"],
+        "os": "linux",
+        "fix": "bin/bdtools install ksnp_gui   # downloads the kSNP4.1 Linux package into vendor/",
+    },
     "ncbi_submit_gui": {"modules": _WEB, "binaries": []},
     "mhc_gui": {
         "modules": _WEB + ["aiofiles", "openpyxl"],

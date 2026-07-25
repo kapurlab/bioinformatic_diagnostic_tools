@@ -23,6 +23,8 @@ def load_module(name, path):
 
 SC = load_module("bdtools_suite_common", ROOT / "bin/lib/suite_common.py")
 TL = load_module("bdtools_tool_launch", ROOT / "bin/lib/tool_launch.py")
+REQ = load_module("bdtools_requirements", ROOT / "bin/lib/requirements.py")
+CHECK = load_module("bdtools_check", ROOT / "bin/lib/check.py")
 try:
     APP = load_module("bdtools_dashboard_app", ROOT / "bin/ood_dashboard/app.py")
     HAS_PROXY_DEPS = True
@@ -224,6 +226,125 @@ class StateFileTests(unittest.TestCase):
         self.assertEqual(plan["dir"], str(source_tool))
         self.assertEqual(plan["env_dir"], str(installed_env))
         self.assertEqual(plan["python"], str(installed_env / "bin/python"))
+
+    def _ksnp_worktree(self, root, *, with_vendor_in_source, with_vendor_installed):
+        """A source-override tree + installed checkout, as `--tools-dir` produces.
+
+        Vendored payloads are gitignored, so a feature worktree normally has an
+        EMPTY vendor/ while the installed checkout holds the real 545 MB package."""
+        source_root = root / "feature-tools"
+        source_tool = source_root / "ksnp_gui"
+        (source_tool / "backend").mkdir(parents=True)
+        bdtools_home = root / "bdtools-home"
+        installed = bdtools_home / "checkouts/ksnp_gui"
+        (installed / "env/bin").mkdir(parents=True)
+        (installed / "env/bin/python").touch()
+        if with_vendor_in_source:
+            (source_tool / "vendor/kSNP4-bin").mkdir(parents=True)
+        if with_vendor_installed:
+            (installed / "vendor/kSNP4-bin").mkdir(parents=True)
+        return source_root, source_tool, bdtools_home, installed
+
+    def test_missing_vendor_dir_falls_back_to_installed_checkout(self):
+        """A feature worktree must borrow kSNP4 rather than emit a dead PATH entry.
+
+        Regression: an empty worktree vendor/ was prepended to PATH unchecked, so a
+        complete kSNP4 install surfaced as `command not found: kSNP4` (rc 127)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_root, source_tool, bdtools_home, installed = self._ksnp_worktree(
+                root, with_vendor_in_source=False, with_vendor_installed=True)
+            with mock.patch.dict(os.environ, {
+                "BDTOOLS_TOOLSDIR": str(source_root),
+                "BDTOOLS_HOME": str(bdtools_home),
+            }, clear=False):
+                with mock.patch.object(TL, "_conda_bases", return_value=[]):
+                    plan = TL.resolve("ksnp_gui", 8125)
+        prepend = plan["env_overrides"]["PATH_PREPEND"]
+        self.assertIn(str(installed / "vendor/kSNP4-bin"), prepend)
+        self.assertNotIn(str(source_tool / "vendor/kSNP4-bin"), prepend)
+        self.assertEqual(plan["warnings"], [])
+        self.assertNotIn("BDTOOLS_MISSING_ASSETS", plan["env_overrides"])
+
+    def test_absent_vendor_dir_warns_and_never_enters_path(self):
+        """With no candidate anywhere, warn loudly and keep PATH clean."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_root, source_tool, bdtools_home, _installed = self._ksnp_worktree(
+                root, with_vendor_in_source=False, with_vendor_installed=False)
+            with mock.patch.dict(os.environ, {
+                "BDTOOLS_TOOLSDIR": str(source_root),
+                "BDTOOLS_HOME": str(bdtools_home),
+                "BDTOOLS_VENDOR_ROOT": str(root / "no-such-vendor-root"),
+            }, clear=False):
+                with mock.patch.object(TL, "_conda_bases", return_value=[]):
+                    plan = TL.resolve("ksnp_gui", 8126)
+        self.assertNotIn("kSNP4-bin", plan["env_overrides"]["PATH_PREPEND"])
+        self.assertEqual(
+            plan["env_overrides"]["BDTOOLS_MISSING_ASSETS"], "vendor/kSNP4-bin")
+        self.assertEqual(len(plan["warnings"]), 1)
+        self.assertIn("vendor/kSNP4-bin not found", plan["warnings"][0])
+        # The launch log is where anyone will actually look for this.
+        self.assertIn("WARNING:", TL.log_header(plan))
+
+    def test_source_tree_vendor_wins_when_present(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_root, source_tool, bdtools_home, installed = self._ksnp_worktree(
+                root, with_vendor_in_source=True, with_vendor_installed=True)
+            with mock.patch.dict(os.environ, {
+                "BDTOOLS_TOOLSDIR": str(source_root),
+                "BDTOOLS_HOME": str(bdtools_home),
+            }, clear=False):
+                with mock.patch.object(TL, "_conda_bases", return_value=[]):
+                    plan = TL.resolve("ksnp_gui", 8127)
+        prepend = plan["env_overrides"]["PATH_PREPEND"]
+        self.assertIn(str(source_tool / "vendor/kSNP4-bin"), prepend)
+        self.assertNotIn(str(installed / "vendor/kSNP4-bin"), prepend)
+
+    def test_dangling_vendor_symlink_is_rejected(self):
+        """vendor/kSNP4-bin IS a symlink in a real install; a broken one is not usable."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_root, source_tool, bdtools_home, installed = self._ksnp_worktree(
+                root, with_vendor_in_source=False, with_vendor_installed=True)
+            (source_tool / "vendor").mkdir(parents=True)
+            (source_tool / "vendor/kSNP4-bin").symlink_to(root / "gone")
+            with mock.patch.dict(os.environ, {
+                "BDTOOLS_TOOLSDIR": str(source_root),
+                "BDTOOLS_HOME": str(bdtools_home),
+            }, clear=False):
+                with mock.patch.object(TL, "_conda_bases", return_value=[]):
+                    plan = TL.resolve("ksnp_gui", 8128)
+        self.assertIn(str(installed / "vendor/kSNP4-bin"),
+                      plan["env_overrides"]["PATH_PREPEND"])
+
+    def test_doctor_reports_missing_ksnp_binaries(self):
+        """Doctor used to report ksnp_gui green while the pipeline could not run:
+        kSNP4 is not a conda package, so an <env>/bin + PATH search never saw it."""
+        spec = REQ.for_tool("ksnp_gui")
+        self.assertIn("kSNP4", spec["binaries"])
+        self.assertIn("Kchooser4", spec["binaries"])
+        self.assertIn("MakeKSNP4infile", spec["binaries"])
+        self.assertEqual(spec["asset_dirs"], ["vendor/kSNP4-bin"])
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            env_py = root / "env/bin/python"
+            env_py.parent.mkdir(parents=True)
+            env_py.touch()
+            tool_dir = root / "ksnp_gui"
+            tool_dir.mkdir()
+            with mock.patch.dict(os.environ, {
+                "BDTOOLS_HOME": str(root / "bdtools-home"),
+                "BDTOOLS_VENDOR_ROOT": str(root / "no-such-vendor-root"),
+            }, clear=False):
+                with mock.patch.object(CHECK, "check_modules", return_value=[]):
+                    status, _lines, issues, _notes = CHECK.run_checks(
+                        "ksnp_gui", str(env_py), "env", tool_dir=str(tool_dir))
+        self.assertEqual(status, "issues")
+        labels = " | ".join(i["label"] for i in issues)
+        self.assertIn("vendored files missing: vendor/kSNP4-bin", labels)
+        self.assertIn("kSNP4", labels)
 
     def test_state_file_is_private_and_pid_scoped(self):
         with tempfile.TemporaryDirectory() as tmp:

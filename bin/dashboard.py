@@ -566,6 +566,10 @@ function devBlock(t){
   if(!t.caveat) return '';
   return `<div class="dev"><b>⚠ Development status:</b> ${esc(t.caveat)}</div>`;
 }
+// tool -> launch-time warning. Kept OUTSIDE load() so it survives the 5s
+// re-render: a missing vendored dependency only bites once an analysis runs, so a
+// message that flashes and vanishes is worse than none.
+const launchWarn = {};
 async function load(){
   const r = await fetch('./api/tools'); const tools = await r.json();
   const g = document.getElementById('grid'); g.innerHTML='';
@@ -589,7 +593,7 @@ async function load(){
         ${pill}
         <button ${(t.installed&&!t.updating)?'':'disabled'} data-tool="${t.name}" class="${t.running?'open':''}">
           ${t.updating?'Updating…':t.starting?'Starting…':t.running?'Open':'Launch'}</button>
-      </div><div class="err" id="err-${t.name}"></div>`;
+      </div><div class="err" id="err-${t.name}">${launchWarn[t.name]||''}</div>`;
     const b=c.querySelector('button');
     b.onclick=()=>act(t.name,b);
     g.appendChild(c);
@@ -609,7 +613,14 @@ async function act(name,btn){
   try{
     const r=await controlFetch('./api/launch?tool='+encodeURIComponent(name),{method:'POST'});
     const j=await r.json();
-    if(j.url){ window.open(j.url,'_blank'); }
+    if(j.url){
+      // The tool started, but it may lack a vendored dependency it only needs
+      // once an analysis runs. Say so now rather than leaving a 127 in a run log.
+      if(j.warnings && j.warnings.length){ launchWarn[name] = '⚠ ' + j.warnings.join(' '); }
+      else { delete launchWarn[name]; }
+      err.textContent = launchWarn[name] || '';
+      window.open(j.url,'_blank');
+    }
     else { err.textContent = j.error || 'failed to launch'; }
   }catch(e){ err.textContent=String(e); }
   btn.disabled=false; btn.textContent=was; load();

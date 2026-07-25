@@ -411,6 +411,13 @@ cmd_dashboard() {
     # SSH you'd forward each one). Install any tool to pull in starlette/httpx/uvicorn.
     warn "reverse-proxy deps (starlette/httpx/uvicorn) not found — using the legacy dashboard."
     warn "tools will open on their own ports. Install a tool to enable single-port mode."
+    # Name the two consequences rather than leaving them to be discovered:
+    # different ports means a different browser origin per tool, so the shared
+    # appearance choice can't reach them; and this server has no session key.
+    info "  Each tool is a separate origin, so your Light/Dark choice is remembered"
+    info "  per tool instead of once for the whole suite."
+    info "  Over SSH you must forward one port per tool, not just this one."
+    _dashboard_wants_token && warn "  This mode has NO session key — other accounts on this host could reach it."
     rundir="${KT_BIN_DIR}"
     runcmd=("${PYBIN}" "${KT_BIN_DIR}/dashboard.py" ${rest[@]+"${rest[@]}"})
   fi

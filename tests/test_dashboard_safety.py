@@ -4,6 +4,7 @@ import asyncio
 import importlib.util
 import json
 import os
+import re
 import stat
 import tempfile
 import unittest
@@ -25,6 +26,7 @@ SC = load_module("bdtools_suite_common", ROOT / "bin/lib/suite_common.py")
 TL = load_module("bdtools_tool_launch", ROOT / "bin/lib/tool_launch.py")
 REQ = load_module("bdtools_requirements", ROOT / "bin/lib/requirements.py")
 CHECK = load_module("bdtools_check", ROOT / "bin/lib/check.py")
+MANIFEST = load_module("bdtools_manifest", ROOT / "bin/lib/manifest.py")
 try:
     APP = load_module("bdtools_dashboard_app", ROOT / "bin/ood_dashboard/app.py")
     HAS_PROXY_DEPS = True
@@ -345,6 +347,98 @@ class StateFileTests(unittest.TestCase):
         labels = " | ".join(i["label"] for i in issues)
         self.assertIn("vendored files missing: vendor/kSNP4-bin", labels)
         self.assertIn("kSNP4", labels)
+
+    # ---- the appearance contract, checked against SHIPPED artifacts ----
+    #
+    # The suite claimed for a while that "all nine GUI headers offer Light, Dark and
+    # System modes" while every pinned tag shipped an unthemed bundle: the tool-side
+    # work sat on an unmerged branch, and the only test asserted strings in the two
+    # umbrella page templates — nothing tool-side. These check what a user actually
+    # receives.
+
+    _FIRST_THEMED_TAG = {
+        "vsnp_gui": (0, 4, 34), "amr_plus_gui": (0, 2, 7), "irma_gui": (0, 2, 7),
+        "genoflu_gui": (0, 2, 7), "mlst_gui": (0, 2, 6), "kraken_id_parse_gui": (0, 1, 10),
+        "ksnp_gui": (0, 2, 6), "ncbi_submit_gui": (0, 1, 8), "mhc_gui": (0, 1, 6),
+    }
+
+    @staticmethod
+    def _tag_tuple(v):
+        m = re.match(r"v?(\d+)\.(\d+)\.(\d+)", str(v or ""))
+        return tuple(int(g) for g in m.groups()) if m else None
+
+    def test_manifest_pins_are_themed(self):
+        """A pin rollback below the first themed tag would silently un-theme a tool."""
+        _suite, tools = MANIFEST.parse(str(ROOT / "tools.yml"))
+        seen = 0
+        for t in tools:
+            floor = self._FIRST_THEMED_TAG.get(t.get("name"))
+            if floor is None:
+                continue
+            pinned = self._tag_tuple(t.get("version"))
+            self.assertIsNotNone(
+                pinned, f"{t['name']} is pinned to {t.get('version')!r}, not a release tag")
+            self.assertGreaterEqual(
+                pinned, floor,
+                f"{t['name']} is pinned below its first themed release "
+                f"— that ships a light-only GUI")
+            seen += 1
+        self.assertEqual(seen, len(self._FIRST_THEMED_TAG), "a tool went missing from tools.yml")
+
+    def test_installed_tool_dists_carry_theme_bootstrap(self):
+        """What's on disk must actually contain the theme, not just the source tree.
+
+        Backends serve the PREBUILT frontend/dist, so a themed src with a stale dist
+        is invisible. Skipped when no checkouts exist so the suite still runs bare."""
+        checkouts = Path(
+            os.environ.get("BDTOOLS_HOME") or Path.home() / ".local/share/bdtools"
+        ) / "checkouts"
+        if not checkouts.is_dir():
+            self.skipTest("no installed checkouts on this machine")
+        checked = []
+        for name in sorted(self._FIRST_THEMED_TAG):
+            index = checkouts / name / "frontend/dist/index.html"
+            if not index.is_file():
+                continue
+            html = index.read_text(encoding="utf-8", errors="replace")
+            self.assertIn("bdtools-theme", html,
+                          f"{name}: dist/index.html has no pre-paint theme bootstrap "
+                          f"(the GUI will flash light, or stay light)")
+            self.assertIn("dataset.theme", html,
+                          f"{name}: dist/index.html never sets data-theme on the root")
+            bundles = list((checkouts / name / "frontend/dist/assets").glob("index-*.js"))
+            self.assertTrue(bundles, f"{name}: dist has no entry bundle")
+            self.assertTrue(
+                any("bdtools-theme" in b.read_text(encoding="utf-8", errors="replace")
+                    for b in bundles),
+                f"{name}: no entry bundle references the bdtools-theme key, so its "
+                f"header control cannot persist a choice")
+            checked.append(name)
+        if not checked:
+            self.skipTest("no built frontends found in the installed checkouts")
+
+    def test_tool_backends_send_no_store_for_the_entry_document(self):
+        """Hashed assets may be cached forever; index.html must not be.
+
+        Otherwise an updated bundle never loads — Safari in particular will keep an
+        open GUI tab on the previous entry document indefinitely."""
+        tools_root = Path(
+            os.environ.get("BDTOOLS_HOME") or Path.home() / ".local/share/bdtools"
+        ) / "checkouts"
+        if not tools_root.is_dir():
+            self.skipTest("no installed checkouts on this machine")
+        checked = []
+        for name in sorted(self._FIRST_THEMED_TAG):
+            main_py = tools_root / name / "backend/app/main.py"
+            if not main_py.is_file():
+                continue
+            src = main_py.read_text(encoding="utf-8", errors="replace")
+            self.assertIn("no-store", src,
+                          f"{name}: backend never sends no-store, so an updated "
+                          f"frontend bundle may never be picked up")
+            checked.append(name)
+        if not checked:
+            self.skipTest("no tool backends found in the installed checkouts")
 
     def test_state_file_is_private_and_pid_scoped(self):
         with tempfile.TemporaryDirectory() as tmp:

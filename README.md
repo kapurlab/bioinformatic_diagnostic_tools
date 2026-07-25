@@ -137,9 +137,16 @@ the job—or stop it from that tool's own interface—then try again. Terminal
 process-name kills.
 
 **Light, dark, or system appearance.** Use the compact appearance control in the
-dashboard or any tool header. The choice is saved in the browser and shared
-across tools when they run through the consolidated dashboard. System mode
+dashboard or any tool header. The choice is saved in the browser and applied
+before the page paints, so there's no flash of the wrong theme. System mode
 tracks the operating-system preference automatically.
+
+The choice is **shared across tools** when they run through the consolidated
+dashboard, because that serves every tool from the dashboard's own address
+(`/t/<tool>/`). In the legacy fallback — each tool on its own port, used only when
+`starlette`/`httpx`/`uvicorn` are missing — each tool remembers its own setting
+instead. If the dashboard looks dark but a tool opens light, that tool is on a
+release older than the appearance control: run `bin/bdtools update <tool>`.
 
 ## 💾 Reference databases
 

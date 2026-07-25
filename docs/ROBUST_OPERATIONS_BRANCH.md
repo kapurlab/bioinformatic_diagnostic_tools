@@ -33,6 +33,23 @@ for user testing before coordinated releases.
 - The dashboard and all nine GUI headers offer polished Light, Dark, and System
   modes. The browser preference is persisted and shared across proxied tools,
   follows OS changes in System mode, and is applied before first paint.
+  - **This is tag-gated.** The tool-side control shipped in vsnp_gui `v0.4.34`,
+    amr_plus_gui / irma_gui / genoflu_gui `v0.2.7`, mlst_gui / ksnp_gui `v0.2.6`,
+    kraken_id_parse_gui `v0.1.10`, ncbi_submit_gui `v0.1.8`, mhc_gui `v0.1.6`.
+    An older pin ships a light-only GUI no matter what the dashboard does. The
+    umbrella dashboard was themed a release earlier, which is why a themed
+    dashboard could open unthemed tools.
+  - **Cross-tool sharing needs the single-port proxy dashboard**, which puts every
+    tool on the dashboard's own origin (`/t/<tool>/`) so one `localStorage` key
+    covers them all. In the legacy fallback (used only when starlette/httpx/uvicorn
+    are unimportable) each tool gets its own port, hence its own origin, and
+    remembers its choice separately.
+  - Guarded by `tests/test_dashboard_safety.py`: `test_manifest_pins_are_themed`,
+    `test_installed_tool_dists_carry_theme_bootstrap` and
+    `test_tool_backends_send_no_store_for_the_entry_document` assert against the
+    *shipped* bundle, not the source tree — the earlier test only checked strings
+    in the two umbrella page templates, which is how this claim came to be made
+    while every released tag was still light-only.
 
 ## Testing tool feature worktrees
 

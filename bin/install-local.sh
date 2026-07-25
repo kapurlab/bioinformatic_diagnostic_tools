@@ -510,6 +510,15 @@ build() {
        && grep -q -- '--skip-frontend' "${DIR}/deploy/install.sh" 2>/dev/null; then
       args+=(--skip-frontend)
     fi
+    # kSNP4 ships Linux-only ELF binaries (Rosetta translates macOS x86_64, not
+    # Linux ELF), so off Linux the 545 MB SourceForge download can never be run.
+    # Skip it rather than spending the bandwidth and disk on it — the post-build
+    # notice below, doctor, and the GUI's own banner all explain why.
+    if [[ "$(uname -s)" != "Linux" ]] \
+       && grep -q -- '--skip-ksnp' "${DIR}/deploy/install.sh" 2>/dev/null; then
+      warn "${TOOL}: skipping the kSNP4 download — its binaries are Linux-only and cannot run on $(uname -s)."
+      args+=(--skip-ksnp)
+    fi
     with_progress "${TOOL}: building env + frontend (deploy/install.sh)" \
       "${DIR}/deploy/install.sh" ${args[@]+"${args[@]}"} || die "${TOOL} deploy/install.sh failed"
   elif [[ -f "${DIR}/conda_setup/environment.yml" ]]; then
@@ -672,9 +681,13 @@ fi
 # Heads-up for tools with Linux-only vendored binaries (e.g. ksnp_gui's kSNP4):
 # they install fine but the analysis can't run off Linux (Rosetta translates
 # macOS x86_64, not Linux ELF).
-if [[ ${DO_BUILD} -eq 1 && "$(uname -s)" != "Linux" && -d "${DIR}/vendor/kSNP4-bin" ]]; then
+# Keyed on the tool, not on whether vendor/ happens to exist: the download is now
+# skipped off Linux (see build()), so the old `-d vendor/kSNP4-bin` test would
+# leave the very users who need this notice without it.
+if [[ ${DO_BUILD} -eq 1 && "${TOOL}" == "ksnp_gui" && "$(uname -s)" != "Linux" ]]; then
   warn "${TOOL}: its kSNP4 analysis binaries are Linux-only and will NOT run on $(uname -s)."
-  info "  The GUI installs, but run the kSNP pipeline on a Linux machine or an OOD deployment."
+  info "  The GUI installs and can browse past runs, but Run is disabled and explains why."
+  info "  Run kSNP analyses on a Linux machine or an OOD deployment."
 fi
 
 [[ ${DO_LAUNCH} -eq 1 ]] && launch

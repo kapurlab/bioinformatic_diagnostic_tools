@@ -101,6 +101,37 @@ COOKIE = "bdtools_session"
 CONTROL_TOKEN = os.environ.get("BDTOOLS_CONTROL_TOKEN", "").strip() or secrets.token_urlsafe(32)
 ACTIVE_JOB_STATES = {"queued", "running", "stopping", "cancelling"}
 
+# Host names a LOCAL dashboard will answer to. This is the DNS-rebinding guard:
+# the browser's same-origin policy keys on the NAME, not the address, so a page
+# on evil.com whose DNS is re-pointed at 127.0.0.1 becomes "same-origin" with
+# this server — the CORS preflight that protects the control plane never fires,
+# and the attacker can read /api/info (which hands out the control token) and
+# then POST /api/apply-updates. Checking Host closes that: a rebound request
+# still carries `Host: evil.com`. Under OOD this is NOT applied — the Host there
+# is the portal's name and mod_ood_proxy is the trust boundary.
+_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1", "0.0.0.0"}
+
+
+def _allowed_hosts():
+    extra = os.environ.get("BDTOOLS_ALLOWED_HOSTS", "")
+    return _LOOPBACK_HOSTS | {h.strip().lower() for h in extra.split(",") if h.strip()}
+
+
+def _host_allowed(header):
+    """True when a LOCAL request's Host names this machine's loopback.
+
+    An absent Host is allowed: HTTP/1.0 clients and some internal callers omit
+    it, and a rebinding attack always sends one.
+    """
+    if not header:
+        return True
+    host = header.strip().lower()
+    if host.startswith("["):                      # [::1]:8080
+        host = host.partition("]")[0].lstrip("[")
+    else:
+        host = host.rsplit(":", 1)[0] if host.count(":") == 1 else host
+    return host in _allowed_hosts()
+
 
 def _free_port():
     s = socket.socket()
@@ -384,6 +415,13 @@ class AuthMiddleware(BaseHTTPMiddleware):
     """Token cookie bootstrap + unspoofable X-Forwarded-User match, enforced once."""
 
     async def dispatch(self, request, call_next):
+        # 0) DNS-rebinding guard (local mode only) — see _host_allowed().
+        if LOCAL and not _host_allowed(request.headers.get("host", "")):
+            return PlainTextResponse(
+                "forbidden (unexpected Host header). This dashboard answers only on "
+                "127.0.0.1/localhost. Set BDTOOLS_ALLOWED_HOSTS to add a name.",
+                status_code=403,
+            )
         local_control_ok = (
             LOCAL
             and request.url.path.startswith("/api/")
@@ -396,13 +434,15 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if TOKEN and not local_control_ok:
             qt = request.query_params.get("t")
             if qt is not None:
-                if qt != TOKEN:
+                # compare_digest, not ==: the session token is a secret and a
+                # short-circuiting compare leaks its prefix through timing.
+                if not secrets.compare_digest(qt, TOKEN):
                     return PlainTextResponse("forbidden", status_code=403)
                 clean = request.url.remove_query_params("t")
                 resp = RedirectResponse(str(clean), status_code=303)
                 resp.set_cookie(COOKIE, TOKEN, httponly=True, samesite="lax", path="/")
                 return resp
-            if request.cookies.get(COOKIE) != TOKEN:
+            if not secrets.compare_digest(request.cookies.get(COOKIE) or "", TOKEN):
                 msg = ("This dashboard is private. Open the http://…/?t=… link printed "
                        "in the terminal where you started it."
                        if LOCAL else

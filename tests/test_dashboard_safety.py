@@ -666,6 +666,87 @@ class StateFileTests(unittest.TestCase):
         self.assertFalse(status["ok"])
         self.assertTrue(any("refusing to pull" in line for line in status["log"]))
 
+    def test_both_dashboards_share_one_self_update_guard(self):
+        """The legacy dashboard must not pull over a dirty checkout either.
+
+        It carried its own copy of the update runner, and that copy never grew
+        the dirty-tree refusal — two update paths, one safety rule, and only one
+        of them honoured it. Both now call suite_common.suite_update_command.
+        """
+        legacy = (ROOT / "bin/dashboard.py").read_text(encoding="utf-8")
+        self.assertIn("suite_update_command", legacy)
+        self.assertNotIn('"pull", "--ff-only"', legacy,
+                         "bin/dashboard.py must not build its own git-pull command")
+
+        lines = []
+        with mock.patch.object(
+            SC.subprocess, "run",
+            return_value=SimpleNamespace(stdout=" M bin/dashboard.py\n"),
+        ):
+            self.assertIsNone(SC.suite_update_command(lines.append))
+        self.assertTrue(any("refusing to pull" in line for line in lines))
+
+
+class HostGuardTests(unittest.TestCase):
+    """DNS-rebinding guard: a local dashboard answers only to loopback names.
+
+    A page on evil.com whose DNS is re-pointed at 127.0.0.1 is same-origin as far
+    as the browser is concerned — no CORS preflight, so the custom-header CSRF
+    defence never fires. It could then read the control token from /api/info and
+    POST /api/apply-updates. The Host header is what still gives it away.
+    """
+
+    LEGACY = load_module("bdtools_dashboard_legacy", ROOT / "bin/dashboard.py")
+
+    def _both(self):
+        mods = [self.LEGACY]
+        if HAS_PROXY_DEPS:
+            mods.append(APP)
+        return mods
+
+    def test_loopback_names_are_accepted(self):
+        for mod in self._both():
+            for host in ("127.0.0.1", "127.0.0.1:8080", "localhost",
+                         "localhost:8080", "[::1]:8080", ""):
+                self.assertTrue(mod._host_allowed(host),
+                                f"{mod.__name__} rejected {host!r}")
+
+    def test_rebound_public_name_is_rejected(self):
+        for mod in self._both():
+            for host in ("evil.example.com", "evil.example.com:8080",
+                         "attacker.test"):
+                self.assertFalse(mod._host_allowed(host),
+                                 f"{mod.__name__} accepted {host!r}")
+
+    def test_operator_can_add_a_name(self):
+        for mod in self._both():
+            with mock.patch.dict(
+                os.environ, {"BDTOOLS_ALLOWED_HOSTS": "lab-box.internal"}, clear=False
+            ):
+                self.assertTrue(mod._host_allowed("lab-box.internal:8080"))
+                self.assertFalse(mod._host_allowed("other.internal:8080"))
+
+    def test_legacy_dashboard_checks_host_on_every_verb(self):
+        src = (ROOT / "bin/dashboard.py").read_text(encoding="utf-8")
+        for verb in ("do_GET", "do_POST"):
+            body = src.split(f"def {verb}(self):", 1)[1][:200]
+            self.assertIn("_host_ok", body, f"{verb} does not check Host")
+
+    @unittest.skipUnless(HAS_PROXY_DEPS, "starlette/httpx not installed")
+    def test_ood_mode_does_not_apply_the_host_guard(self):
+        """Under OOD the Host is the portal's name and mod_ood_proxy is the
+        trust boundary — enforcing loopback names there would break every
+        session."""
+        src = (ROOT / "bin/ood_dashboard/app.py").read_text(encoding="utf-8")
+        self.assertIn("if LOCAL and not _host_allowed(", src)
+
+    @unittest.skipUnless(HAS_PROXY_DEPS, "starlette/httpx not installed")
+    def test_session_token_comparisons_are_constant_time(self):
+        src = (ROOT / "bin/ood_dashboard/app.py").read_text(encoding="utf-8")
+        self.assertNotIn("qt != TOKEN", src)
+        self.assertNotIn("!= TOKEN", src,
+                         "session-token comparisons must use secrets.compare_digest")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -288,9 +288,10 @@ generic_build() {
   fi
   if [[ -d "${DIR}/frontend" ]]; then
     # Rebuild the frontend whenever npm is available so a tool update actually
-    # ships its new UI (dist/ is gitignored — only built here, not committed —
-    # so skipping when a stale dist exists would silently keep the old UI).
-    # Only fall back to the existing dist when Node is genuinely absent.
+    # ships its new UI. dist/ IS committed (a prebuilt fallback for Node-less
+    # hosts), so a stale committed dist is exactly what a skipped build would
+    # leave serving — rebuild rather than trust it. Only fall back to the
+    # committed dist when Node is genuinely absent or too old.
     if command -v npm >/dev/null 2>&1; then
       log "building frontend"
       # Non-fatal: a build failure (e.g. a Node older than the tool's vite needs
@@ -460,9 +461,10 @@ build_vsnp_local() {
   # 5. frontend
   if [[ -d "${DIR}/frontend" ]]; then
     # Rebuild the frontend whenever npm is available so a tool update actually
-    # ships its new UI (dist/ is gitignored — only built here, not committed —
-    # so skipping when a stale dist exists would silently keep the old UI).
-    # Only fall back to the existing dist when Node is genuinely absent.
+    # ships its new UI. dist/ IS committed (a prebuilt fallback for Node-less
+    # hosts), so a stale committed dist is exactly what a skipped build would
+    # leave serving — rebuild rather than trust it. Only fall back to the
+    # committed dist when Node is genuinely absent or too old.
     if command -v npm >/dev/null 2>&1; then
       log "building frontend"
       # Non-fatal: a build failure (e.g. a Node older than the tool's vite needs

@@ -18,3 +18,8 @@ __pycache__/
 # internal dev handoff / session notes — never publish
 HANDOFF*.md
 *_HANDOFF.md
+
+# local agent working notes (.claude/NEW_TOOL_LAYOUT.md etc). The shareable
+# contract lives in docs/BUILDING_A_TOOL.md; these carry in-progress state and
+# per-machine detail that would go stale in a release.
+.claude/

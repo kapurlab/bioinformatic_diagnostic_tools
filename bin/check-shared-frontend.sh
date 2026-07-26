@@ -71,6 +71,52 @@ for f in "${SHARED[@]}"; do
   done
 done
 
+# ---------------------------------------------------------------------------
+# Look-and-feel files: ADVISORY only (never changes the exit code).
+#
+# App.css and ThemeToggle.jsx are what make a new tool read as part of the same
+# product. They are copied between tools like the Results pane, but unlike it
+# they carry per-tool additions, so a hash mismatch is not automatically a bug —
+# it just needs a human to look. The strict block above never covered them, so
+# a new tool could ship looking subtly unlike the rest and nothing would say so.
+#
+# Compared against the MAJORITY copy rather than against SOURCE_TOOL: for these
+# two files amr_plus_gui is itself the outlier (reformatted), and reporting six
+# tools as "drifted" every run is the kind of permanent noise that makes the
+# seventh — the one that actually matters — invisible. Formatting is normalised
+# away (whitespace + trailing commas) for the same reason: a reflow is not a
+# change in the look.
+look_hash() {
+  tr -d '[:space:]' < "$1" | sed -e 's/,\([]})]\)/\1/g' | md5sum | awk '{print $1}'
+}
+LOOK=(App.css ThemeToggle.jsx)
+# vsnp_gui has its own native stylesheet (styles.css); mhc_gui deliberately owns
+# a different App.css (its .qc-badge/.qc-pass classes predate the shared pane and
+# mean something else).
+LOOK_SKIP=(vsnp_gui mhc_gui)
+for f in "${LOOK[@]}"; do
+  hashes=(); tools=()
+  for d in "${ROOT}"/*/; do
+    tool="$(basename "${d}")"
+    _skip=0
+    for sk in "${LOOK_SKIP[@]}"; do [[ "${tool}" == "${sk}" ]] && _skip=1; done
+    [[ ${_skip} -eq 1 ]] && continue
+    [[ -f "${d}frontend/src/${f}" ]] || continue
+    tools+=("${tool}"); hashes+=("$(look_hash "${d}frontend/src/${f}")")
+  done
+  [[ ${#tools[@]} -ge 3 ]] || continue      # too few copies for a majority
+  majority="$(printf '%s\n' "${hashes[@]}" | sort | uniq -c | sort -rn | head -1 | awk '{print $2}')"
+  odd=()
+  for i in "${!tools[@]}"; do
+    [[ "${hashes[$i]}" == "${majority}" ]] || odd+=("${tools[$i]}")
+  done
+  if [[ ${#odd[@]} -gt 0 ]]; then
+    info "note: ${f} differs from the rest of the suite in: ${odd[*]}"
+    info "      advisory — confirm this is an intended per-tool addition, not an"
+    info "      accidental divergence in the shared look."
+  fi
+done
+
 # App.css must never be restyled by this work: it is copied verbatim between
 # tools, and mhc_gui already owns .qc-badge/.qc-pass with different meanings.
 for d in "${ROOT}"/*/; do

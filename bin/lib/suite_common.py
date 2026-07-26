@@ -228,6 +228,35 @@ def check_bdtools_update():
     }
 
 
+def suite_update_command(log):
+    """The `bdtools` self-update command, or None when it must be refused.
+
+    Never merge an update into a locally edited suite checkout and never discard
+    tools.yml on the user's behalf. A clean tree makes the exact scope of
+    `pull --ff-only` reviewable and reproducible.
+
+    Shared by BOTH dashboards. It lived only in UpdateManager, so the legacy
+    stdlib dashboard would happily `git pull --ff-only` over a dirty checkout —
+    the two update paths must not disagree about a safety rule. `log` is the
+    caller's line-logger.
+    """
+    try:
+        dirty = subprocess.run(
+            ["git", "-C", REPO_DIR, "status", "--porcelain"],
+            capture_output=True, text=True, check=True, timeout=30,
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError) as exc:
+        dirty = f"(could not inspect checkout: {exc})"
+    if dirty:
+        log("ERROR: bdtools checkout has local changes; refusing to pull.")
+        log("Commit/stash them, or update from a separate clean checkout.")
+        for line in dirty.splitlines()[:20]:
+            log(f"  {line}")
+        return None
+    log("$ git pull --ff-only  (updating bdtools)")
+    return ["git", "-C", REPO_DIR, "pull", "--ff-only"]
+
+
 class UpdateManager:
     """Background update checking + a single background apply job.
 
@@ -299,24 +328,7 @@ class UpdateManager:
     def _run(self, target):
         cmd = None
         if target == "bdtools":
-            # Never merge an update into a locally edited suite checkout and
-            # never discard tools.yml on the user's behalf. A clean tree makes
-            # the exact scope of `pull --ff-only` reviewable and reproducible.
-            try:
-                dirty = subprocess.run(
-                    ["git", "-C", REPO_DIR, "status", "--porcelain"],
-                    capture_output=True, text=True, check=True, timeout=30,
-                ).stdout.strip()
-            except (OSError, subprocess.SubprocessError) as exc:
-                dirty = f"(could not inspect checkout: {exc})"
-            if dirty:
-                self._log("ERROR: bdtools checkout has local changes; refusing to pull.")
-                self._log("Commit/stash them, or update from a separate clean checkout.")
-                for line in dirty.splitlines()[:20]:
-                    self._log(f"  {line}")
-            else:
-                cmd = ["git", "-C", REPO_DIR, "pull", "--ff-only"]
-                self._log("$ git pull --ff-only  (updating bdtools)")
+            cmd = suite_update_command(self._log)
         else:
             cmd = [BDTOOLS, "update", target]
             self._log(f"$ bdtools update {target}")

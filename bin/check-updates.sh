@@ -32,9 +32,15 @@ while [[ $# -gt 0 ]]; do
 done
 TARGET="${ARGS[0]:-all}"
 
-latest_tag() {  # repo-url -> highest version-sorted tag, or empty (never aborts)
+latest_tag() {  # repo-url -> highest version-sorted RELEASE tag, or empty (never aborts)
+  # Only vN.N… tags count. `sort -V | tail -1` is a plain string sort at heart:
+  # any stray non-release tag that sorts after "v" (say "wip" or "working") would
+  # become "latest" — and --apply force-checks-out that ref and rebuilds the env
+  # on every machine that installs updates. Release tags are the only refs this
+  # suite promises to ship, so filter to them rather than trusting tag hygiene.
   { git ls-remote --tags --refs "$1" 2>/dev/null \
-      | awk -F/ '{print $NF}' | sort -V | tail -1; } || true
+      | awk -F/ '{print $NF}' | grep -E '^v[0-9]+(\.[0-9]+)*([._-].+)?$' \
+      | sort -V | tail -1; } || true
 }
 
 targets() { if [[ "${TARGET}" == "all" ]]; then manifest_names; else echo "${TARGET}"; fi; }

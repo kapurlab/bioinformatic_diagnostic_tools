@@ -34,13 +34,48 @@ CONTROL_TOKEN = os.environ.get("BDTOOLS_CONTROL_TOKEN", "").strip() or secrets.t
 STATE_FILE = os.environ.get("BDTOOLS_DASHBOARD_STATE_FILE", "").strip()
 ACTIVE_JOB_STATES = {"queued", "running", "stopping", "cancelling"}
 
+# Host names this dashboard will answer to — the DNS-rebinding guard. The
+# browser's same-origin policy keys on the NAME, so a page on evil.com whose DNS
+# is re-pointed at 127.0.0.1 counts as same-origin here: no CORS preflight fires,
+# GET /api/info hands over the control token, and POST /api/apply-updates then
+# runs `bdtools update`. A rebound request still carries `Host: evil.com`, so
+# checking it closes the hole. BOUND_HOST is added at startup so an operator who
+# deliberately binds elsewhere is not locked out; BDTOOLS_ALLOWED_HOSTS adds more.
+_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1", "0.0.0.0"}
+BOUND_HOST = ""
+
+
+def _allowed_hosts():
+    extra = os.environ.get("BDTOOLS_ALLOWED_HOSTS", "")
+    allowed = set(_LOOPBACK_HOSTS)
+    allowed |= {h.strip().lower() for h in extra.split(",") if h.strip()}
+    if BOUND_HOST:
+        allowed.add(BOUND_HOST.strip().lower())
+    return allowed
+
+
+def _host_allowed(header):
+    """True when the request's Host names an address we expect to serve.
+
+    An absent Host is allowed: HTTP/1.0 clients omit it, and a rebinding attack
+    always sends one.
+    """
+    if not header:
+        return True
+    host = header.strip().lower()
+    if host.startswith("["):                      # [::1]:8080
+        host = host.partition("]")[0].lstrip("[")
+    else:
+        host = host.rsplit(":", 1)[0] if host.count(":") == 1 else host
+    return host in _allowed_hosts()
+
 # Display tables + subprocess/update helpers are shared with the proxy dashboard
 # (bin/ood_dashboard/app.py) so the two can never drift apart.
 sys.path.insert(0, str(BIN_DIR / "lib"))
 from suite_common import (  # noqa: E402
     BLURB, CAVEAT, pretty, free_port, port_open, list_tools,
     tool_python, readiness_map, check_tool_updates, check_bdtools_update,
-    write_dashboard_state, remove_dashboard_state,
+    write_dashboard_state, remove_dashboard_state, suite_update_command,
 )
 
 
@@ -326,22 +361,24 @@ class Suite:
 
     def _run_update(self, target):
         if target == "bdtools":
-            cmd = ["git", "-C", str(REPO_DIR), "pull", "--ff-only"]
-            self._log("$ git pull --ff-only  (updating bdtools)")
+            # Shared with the proxy dashboard's UpdateManager so the two update
+            # paths can never disagree about refusing a dirty checkout.
+            cmd = suite_update_command(self._log)
         else:
             cmd = [BDTOOLS, "update", target]
             self._log(f"$ bdtools update {target}")
             self._log("Rebuilding environments — this can take several minutes per tool…")
         ok = False
-        try:
-            proc = subprocess.Popen(cmd, cwd=str(REPO_DIR), stdout=subprocess.PIPE,
-                                    stderr=subprocess.STDOUT, text=True, bufsize=1)
-            for line in proc.stdout:
-                self._log(line.rstrip())
-            ok = proc.wait() == 0
-        except (OSError, subprocess.SubprocessError) as exc:
-            self._log(f"ERROR: {exc}")
-            ok = False
+        if cmd is not None:
+            try:
+                proc = subprocess.Popen(cmd, cwd=str(REPO_DIR), stdout=subprocess.PIPE,
+                                        stderr=subprocess.STDOUT, text=True, bufsize=1)
+                for line in proc.stdout:
+                    self._log(line.rstrip())
+                ok = proc.wait() == 0
+            except (OSError, subprocess.SubprocessError) as exc:
+                self._log(f"ERROR: {exc}")
+                ok = False
         self._log("")
         self._log("✅ Done." if ok else "⚠ Update finished with errors — see the log above.")
         with self.lock:
@@ -815,7 +852,20 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _host_ok(self):
+        """Reject a rebound Host before any handler runs (see _host_allowed)."""
+        if _host_allowed(self.headers.get("Host", "")):
+            return True
+        self._send(403, json.dumps({
+            "error": "forbidden (unexpected Host header). This dashboard answers "
+                     "only on 127.0.0.1/localhost. Set BDTOOLS_ALLOWED_HOSTS to "
+                     "add a name.",
+        }))
+        return False
+
     def do_GET(self):
+        if not self._host_ok():
+            return
         path = urlparse(self.path).path
         if path in ("/", "/index.html"):
             self._send(200, PAGE, "text/html; charset=utf-8")
@@ -839,6 +889,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, json.dumps({"error": "not found"}))
 
     def do_POST(self):
+        if not self._host_ok():
+            return
         parsed = urlparse(self.path)
         supplied = self.headers.get("X-Bdtools-Control", "")
         if not secrets.compare_digest(supplied, CONTROL_TOKEN):
@@ -929,12 +981,15 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    global SUITE
+    global SUITE, BOUND_HOST
     ap = argparse.ArgumentParser(description="Kapur Lab local tool dashboard.")
     ap.add_argument("--port", type=int, default=None, help="dashboard port (default: 8080 or a free port)")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--no-browser", action="store_true")
     args = ap.parse_args()
+    # An operator who deliberately binds somewhere else must not be locked out
+    # by the Host guard.
+    BOUND_HOST = args.host
 
     # If the dashboard is already running on the default port, don't start a
     # second copy — just reopen the browser to it (handles double-clicking twice).

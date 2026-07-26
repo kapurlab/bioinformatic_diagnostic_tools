@@ -247,14 +247,25 @@ _dashboard_proxy_python() {
   bases+=("${HOME}/miniforge3" "${HOME}/miniconda3" "${HOME}/mambaforge" \
           "${HOME}/anaconda3" /opt/miniforge3 /opt/miniconda3)
 
-  # Tool checkouts first (own <dir>/env), then every conda base's envs + base python.
-  for cand in \
-      "${BDTOOLS_TOOLSDIR:-/srv/kapurlab/tools}"/*/env/bin/python \
-      "${HOME}/.local/share/bdtools/checkouts"/*/env/bin/python; do
-    [[ -x "${cand}" ]] || continue
-    if "${cand}" -c 'import starlette, httpx, uvicorn' >/dev/null 2>&1; then
-      echo "${cand}"; return 0
-    fi
+  # Tool checkouts first (own <dir>/env), then every conda base's envs + base
+  # python. The checkout roots are RESOLVED, never literal: an explicit
+  # BDTOOLS_TOOLSDIR, this checkout's own parent (a site tree like
+  # <root>/tools/bioinformatic_diagnostic_tools has its siblings there), and the
+  # managed per-user root. A baked-in "/srv/kapurlab/tools" here was the last
+  # site path left in the CLI and it is correct on exactly one machine —
+  # elsewhere it silently contributed nothing.
+  local roots=()
+  [[ -n "${BDTOOLS_TOOLSDIR:-}" ]] && roots+=("${BDTOOLS_TOOLSDIR}")
+  roots+=("$(dirname "${REPO_DIR}")" "${BDTOOLS_HOME}/checkouts")
+  local root
+  for root in "${roots[@]}"; do
+    [[ -d "${root}" ]] || continue
+    for cand in "${root}"/*/env/bin/python; do
+      [[ -x "${cand}" ]] || continue
+      if "${cand}" -c 'import starlette, httpx, uvicorn' >/dev/null 2>&1; then
+        echo "${cand}"; return 0
+      fi
+    done
   done
   for b in "${bases[@]}"; do
     for cand in "${b}"/envs/*/bin/python "${b}"/bin/python; do

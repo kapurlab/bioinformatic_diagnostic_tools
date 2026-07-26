@@ -21,7 +21,7 @@
 # All tools carry a baseline tag (vsnp_gui v0.2.0; the rest v0.1.0, cut
 # 2026-06-16). Bump a pin with `bdtools update <tool>` once newer tags exist.
 
-suite_version: "2026.07.25"
+suite_version: "2026.07.26"
 
 tools:
   - name: vsnp_gui
@@ -42,28 +42,28 @@ tools:
 
   - name: irma_gui
     repo: https://github.com/kapurlab/irma_gui.git
-    version: v0.2.7
+    version: v0.3.0
     ood_apps: [irma_gui]
     dev_apps: [irma_gui_dev]
     env: irma_gui
 
   - name: genoflu_gui
     repo: https://github.com/kapurlab/genoflu_gui.git
-    version: v0.2.7
+    version: v0.3.0
     ood_apps: [genoflu_gui]
     dev_apps: [genoflu_gui_dev]
     env: genoflu_gui
 
   - name: mlst_gui
     repo: https://github.com/kapurlab/mlst_gui.git
-    version: v0.2.6
+    version: v0.3.0
     ood_apps: [mlst_gui]
     dev_apps: [mlst_gui_dev]
     env: mlst
 
   - name: kraken_id_parse_gui
     repo: https://github.com/kapurlab/kraken_id_parse_gui.git
-    version: v0.1.11
+    version: v0.2.0
     ood_apps: [kraken_id_parse_gui]
     dev_apps: [kraken_id_parse_gui_dev]
     env: kraken_id_parse
@@ -71,14 +71,14 @@ tools:
 
   - name: ksnp_gui
     repo: https://github.com/kapurlab/ksnp_gui.git
-    version: v0.2.7
+    version: v0.3.0
     ood_apps: [ksnp_gui]
     dev_apps: [ksnp_gui_dev]
     env: ksnp
 
   - name: ncbi_submit_gui
     repo: https://github.com/kapurlab/ncbi_submit_gui.git
-    version: v0.1.8
+    version: v0.2.0
     ood_apps: [ncbi_submit_gui]
     dev_apps: [ncbi_submit_gui_dev]
     env: ncbi_submit
@@ -90,7 +90,7 @@ tools:
   # reference bundle ships in-repo.
   - name: mhc_gui
     repo: https://github.com/kapurlab/bovine_mhc_typer.git
-    version: v0.1.7
+    version: v0.2.0
     ood_apps: [mhc_gui]
     dev_apps: [mhc_gui_dev]
     env: mhc_gui

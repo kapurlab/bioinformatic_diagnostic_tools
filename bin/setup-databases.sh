@@ -94,6 +94,16 @@ fi
 if [[ ${DRY_RUN} -eq 0 ]]; then
   mkdir -p "${BDTOOLS_HOME}"
   printf '%s\n' "${ROOT}" > "${BDTOOLS_HOME}/db-root"
+  # Also record it as site config. Tool backends contain NO database path of
+  # their own — they read BDTOOLS_DB_ROOT, which the launcher resolves from here
+  # (bin/lib/site_paths.py). Without this the same code would have to embed a
+  # site layout, which is only ever right on one machine.
+  "${PYBIN:-python3}" - "${KT_BIN_DIR}/lib" "${ROOT}" <<'PY' 2>/dev/null || true
+import sys
+sys.path.insert(0, sys.argv[1])
+import site_paths
+site_paths.write_site_file({"DB_ROOT": sys.argv[2]})
+PY
 fi
 
 KRAKEN_DEST="${ROOT}/kraken2/k2_standard_08gb"

@@ -74,6 +74,27 @@ for v in SITE_NAME SITE_DISPLAY SITE_ROOT CLUSTER_NAME TOOLS_ROOT SYS_APPS_DIR; 
 done
 [[ ${#_missing[@]} -eq 0 ]] || die "required site.conf vars unset: ${_missing[*]}"
 
+# Record the site's paths where the RUNTIME can find them. site.conf has always
+# been "the ONE place site-specific values live", but it was only ever read at
+# install time to rewrite OOD app files — so tool backends had to fall back to
+# baked-in literals, which are correct on exactly one machine. Writing it here
+# means a tool asks the deployment where things are instead of assuming.
+if [[ ${DRY_RUN} -eq 0 ]]; then
+  "${PYBIN:-python3}" - "${KT_BIN_DIR}/lib" \
+      "${SHARED_PROJECTS_ROOT:-${SITE_ROOT}/projects}" \
+      "${DB_ROOT:-${SITE_ROOT}/databases}" \
+      "${TOOLS_ROOT}" <<'PY' 2>/dev/null || warn "could not record site paths (tools will fall back to per-user defaults)"
+import sys
+sys.path.insert(0, sys.argv[1])
+import site_paths
+print("recorded site paths ->", site_paths.write_site_file({
+    "SHARED_PROJECTS_ROOT": sys.argv[2],
+    "DB_ROOT": sys.argv[3],
+    "TOOLS_ROOT": sys.argv[4],
+}))
+PY
+fi
+
 APP_DST_BASE="${SYS_APPS_DIR}"
 if [[ ${DASHBOARD} -eq 1 ]]; then
   # The umbrella checkout IS the "source"; its card lives under ood/apps/.

@@ -29,6 +29,7 @@ import time
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
 import manifest  # noqa: E402  (sibling module, stdlib-only)
+import site_paths  # noqa: E402  (sibling module, stdlib-only)
 
 _REPO_DIR = os.path.dirname(os.path.dirname(_HERE))
 _MANIFEST = os.environ.get("BDTOOLS_MANIFEST", os.path.join(_REPO_DIR, "tools.yml"))
@@ -96,7 +97,7 @@ def _vendor_root():
     root = os.environ.get("BDTOOLS_VENDOR_ROOT", "").strip()
     if root:
         return root
-    home = _bdtools_home()
+    home = str(site_paths.bdtools_home())
     try:
         with open(os.path.join(home, "vendor-root")) as fh:
             recorded = fh.readline().strip()
@@ -304,6 +305,21 @@ def resolve(tool, port, host="127.0.0.1"):
     if spec["set_conda_prefix"] and env_dir:
         env["CONDA_PREFIX"] = env_dir
         env_overrides["CONDA_PREFIX"] = env_dir
+    # Hand every tool the deployment's resolved paths, so no tool has to contain
+    # one. A literal like "/srv/kapurlab/tools/<tool>" or
+    # "/srv/kapurlab/databases/..." is correct only on the machine it was written
+    # for, and it fails SILENTLY elsewhere — the directory simply isn't there, so
+    # the feature quietly does nothing (amr's MLST cross-check did exactly this on
+    # every non-lab-server machine). site_paths resolves each value from an env
+    # var, then a recorded site file, then a defensible derivation — never a
+    # baked-in path. BDTOOLS_TOOLS_ROOT is the dir CONTAINING the checkouts, so a
+    # sibling tool is <root>/<tool>; we pass the tree we actually resolved above,
+    # which also keeps a feature worktree self-consistent.
+    for _k, _v in site_paths.as_env(_REPO_DIR).items():
+        env[_k] = _v
+        env_overrides[_k] = _v
+    env["BDTOOLS_TOOLS_ROOT"] = tools_root
+    env_overrides["BDTOOLS_TOOLS_ROOT"] = tools_root
     # vsnp_gui resolves its shared paths — references, VCF-db root, the vsnp3 env,
     # and the SIBLING Kraken install — from VSNP_GUI_SITE_ROOT, read ONCE at process
     # start (backend config.py). The Kraken path (_KRAKEN_GUI_ROOT) is derived from
@@ -356,7 +372,12 @@ def reproduce_command(plan):
     if prepend:
         # ":$PATH" stays outside the quotes so the shell still expands it.
         assigns.append("PATH=%s:$PATH" % shlex.quote(prepend))
+    # The BDTOOLS_* site paths must ride along, or a terminal re-run resolves its
+    # databases and shared projects differently from the dashboard run it claims
+    # to reproduce.
     for k in ("PYTHONPATH", "CONDA_PREFIX",
+              "BDTOOLS_HOME", "BDTOOLS_TOOLS_ROOT", "BDTOOLS_DB_ROOT",
+              "BDTOOLS_SHARED_PROJECTS_ROOT",
               "VSNP_GUI_SITE_ROOT", "VSNP_GUI_SHARED_PROJECTS_ROOT"):
         if k in ov:
             assigns.append("%s=%s" % (k, shlex.quote(ov[k])))

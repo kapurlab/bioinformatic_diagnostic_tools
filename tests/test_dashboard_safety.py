@@ -28,6 +28,7 @@ TL = load_module("bdtools_tool_launch", ROOT / "bin/lib/tool_launch.py")
 REQ = load_module("bdtools_requirements", ROOT / "bin/lib/requirements.py")
 CHECK = load_module("bdtools_check", ROOT / "bin/lib/check.py")
 MANIFEST = load_module("bdtools_manifest", ROOT / "bin/lib/manifest.py")
+SITE = load_module("bdtools_site_paths", ROOT / "bin/lib/site_paths.py")
 try:
     APP = load_module("bdtools_dashboard_app", ROOT / "bin/ood_dashboard/app.py")
     HAS_PROXY_DEPS = True
@@ -474,6 +475,142 @@ class StateFileTests(unittest.TestCase):
         if not checked:
             self.skipTest("no importable tool backends found")
         self.assertEqual(failures, [], "tool backends failed to import:\n  " + "\n  ".join(failures))
+
+    # ---- hard-coded site paths: a ratchet, not a clean-room rule ----
+    #
+    # The suite must run identically on macOS, WSL, plain Linux and OOD, so a
+    # literal "/srv/kapurlab/..." or "/home/<someone>/..." in code is a latent
+    # portability bug. Two have already bitten: amr_plus_gui resolved its sibling
+    # MLST runner as /srv/kapurlab/tools/mlst_gui, so the organism cross-check
+    # silently never ran off the lab server; and mhc_gui probed /home/vxk1 paths at
+    # import time and crashed for every other account.
+    #
+    # There is existing debt, so these are ceilings that may only go DOWN. The
+    # legitimate remaining uses are last-resort fallbacks *after* an env var, the
+    # tool's own location, and user config have been tried.
+    _SITE_PATH_BUDGET = {
+        # amr_plus_gui is the reference implementation and is at ZERO: it reads
+        # BDTOOLS_SHARED_PROJECTS_ROOT / BDTOOLS_DB_ROOT / BDTOOLS_TOOLS_ROOT,
+        # which the launcher resolves from the machine's recorded site config
+        # (bin/lib/site_paths.py). Every other tool should land here too.
+        "amr_plus_gui": 0,
+        "vsnp_gui": 24, "mlst_gui": 2, "kraken_id_parse_gui": 4,
+        "ksnp_gui": 2, "genoflu_gui": 3, "irma_gui": 3, "ncbi_submit_gui": 2,
+        "mhc_gui": 11,
+    }
+    # Paths under a *named person's* home are never a defensible fallback — that
+    # account may not exist, and its home is usually unreadable to everyone else.
+    _OTHER_HOME_BUDGET = {"mhc_gui": 6}
+
+    @staticmethod
+    def _count_site_paths(tool_dir):
+        import itertools
+        site = re.compile(r'"(?:/srv|/home)/[A-Za-z0-9_./-]+"')
+        other_home = re.compile(r'"/home/[A-Za-z0-9_./-]+"')
+        n_site = n_home = 0
+        files = itertools.chain((tool_dir / "backend/app").glob("*.py"),
+                               (tool_dir / "bin").glob("*.py"))
+        for f in files:
+            try:
+                src = f.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            n_site += len(site.findall(src))
+            n_home += len(other_home.findall(src))
+        return n_site, n_home
+
+    def test_hardcoded_site_paths_do_not_grow(self):
+        checkouts = Path(
+            os.environ.get("BDTOOLS_HOME") or Path.home() / ".local/share/bdtools"
+        ) / "checkouts"
+        if not checkouts.is_dir():
+            self.skipTest("no installed checkouts on this machine")
+        over, checked = [], []
+        for name, budget in sorted(self._SITE_PATH_BUDGET.items()):
+            tool_dir = checkouts / name
+            if not (tool_dir / "backend/app").is_dir():
+                continue
+            checked.append(name)
+            n_site, n_home = self._count_site_paths(tool_dir)
+            if n_site > budget:
+                over.append(f"{name}: {n_site} literal site paths > budget {budget} "
+                            f"— resolve it (env var / own location / user config) "
+                            f"instead of hard-coding, or lower the budget knowingly")
+            home_budget = self._OTHER_HOME_BUDGET.get(name, 0)
+            if n_home > home_budget:
+                over.append(f"{name}: {n_home} paths under a named person's home > "
+                            f"budget {home_budget} — that account may not exist and "
+                            f"its home is usually unreadable to everyone else")
+        if not checked:
+            self.skipTest("no tool checkouts to scan")
+        self.assertEqual(over, [], "hard-coded path budgets exceeded:\n  " + "\n  ".join(over))
+
+    def test_site_paths_module_contains_no_site_paths(self):
+        """The resolver itself must not smuggle in the layout it exists to avoid."""
+        src = (ROOT / "bin/lib/site_paths.py").read_text(encoding="utf-8")
+        code = "\n".join(
+            l for l in src.splitlines()
+            if not l.lstrip().startswith("#") and "/srv/kapurlab" not in l or "=" in l.split("#")[0]
+        )
+        offenders = [l.strip() for l in src.splitlines()
+                     if re.search(r'["\'](?:/srv|/home)/[A-Za-z0-9_.-]+', l)]
+        self.assertEqual(offenders, [],
+                         "site_paths.py must resolve paths, never contain them")
+
+    def test_site_paths_degrade_honestly_when_unconfigured(self):
+        """An unconfigured machine (a fresh Mac/WSL) must get None, not a guess."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            clean = {k: v for k, v in os.environ.items()
+                     if not k.startswith(("BDTOOLS_", "XDG_"))}
+            clean["BDTOOLS_HOME"] = str(root / "bdtools")
+            with mock.patch.dict(os.environ, clean, clear=True):
+                self.assertIsNone(
+                    SITE.shared_projects_root(str(root)),
+                    "an unconfigured machine must report NO shared root, not a guessed one")
+                # never Path("") — that is Path("."), the working directory
+                self.assertNotEqual(str(SITE.shared_projects_root(str(root)) or "x"), ".")
+                self.assertEqual(SITE.db_root(str(root)), Path.home() / "databases")
+                env = SITE.as_env(str(root))
+                self.assertNotIn(SITE.ENV_SHARED_PROJECTS_ROOT, env,
+                                 "an unresolved value must be left unset, not set to a guess")
+
+    def test_site_paths_honour_configuration(self):
+        """A site supplies values through config; code supplies none."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "bdtools"
+            SITE.write_site_file(
+                {"SHARED_PROJECTS_ROOT": "/mnt/lab/projects", "DB_ROOT": "/mnt/lab/db"},
+                path=home / "site.conf")
+            with mock.patch.dict(os.environ, {"BDTOOLS_HOME": str(home)}, clear=False):
+                for var in (SITE.ENV_SHARED_PROJECTS_ROOT, SITE.ENV_DB_ROOT):
+                    os.environ.pop(var, None)
+                self.assertEqual(str(SITE.shared_projects_root()), "/mnt/lab/projects")
+                self.assertEqual(str(SITE.db_root()), "/mnt/lab/db")
+            # an explicitly empty env value DISABLES the shared root
+            with mock.patch.dict(os.environ, {
+                "BDTOOLS_HOME": str(home), SITE.ENV_SHARED_PROJECTS_ROOT: ""
+            }, clear=False):
+                self.assertIsNone(SITE.shared_projects_root())
+
+    def test_launcher_tells_tools_where_the_suite_lives(self):
+        """Tools must be able to find a sibling without assuming a site layout."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            tools_root = root / "checkouts"
+            (tools_root / "amr_plus_gui/backend").mkdir(parents=True)
+            env_bin = tools_root / "amr_plus_gui/env/bin"
+            env_bin.mkdir(parents=True)
+            (env_bin / "python").touch()
+            with mock.patch.dict(os.environ, {"BDTOOLS_HOME": str(root)}, clear=False):
+                with mock.patch.object(TL, "_conda_bases", return_value=[]):
+                    plan = TL.resolve("amr_plus_gui", 8129)
+        self.assertEqual(plan["env"]["BDTOOLS_TOOLS_ROOT"], str(tools_root))
+        self.assertEqual(plan["env"]["BDTOOLS_HOME"], str(root))
+        # and it must survive into the reproduce command, or a terminal re-run
+        # resolves siblings differently from the dashboard run it claims to copy
+        self.assertIn("BDTOOLS_TOOLS_ROOT=", TL.reproduce_command(plan))
 
     def test_state_file_is_private_and_pid_scoped(self):
         with tempfile.TemporaryDirectory() as tmp:

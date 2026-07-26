@@ -50,3 +50,11 @@ SERVERNAME=
 # Not used by `install --server` (which assumes OOD core exists). Consumed by
 # ood-core/bootstrap_ood_core.sh on a fresh lab server. See docs/INSTALL_BARE_METAL.md.
 OOD_VERSION=3.1
+
+# ---- Runtime paths handed to the tools (optional; derived from SITE_ROOT) ----
+# The installer records these to <BDTOOLS_HOME>/site.conf, and the launcher
+# exports them as BDTOOLS_SHARED_PROJECTS_ROOT / BDTOOLS_DB_ROOT. Tool code
+# contains NO absolute site path — it asks the deployment. Set these only if your
+# layout differs from ${SITE_ROOT}/projects and ${SITE_ROOT}/databases.
+#SHARED_PROJECTS_ROOT=${SITE_ROOT}/projects
+#DB_ROOT=${SITE_ROOT}/databases

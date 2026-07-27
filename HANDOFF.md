@@ -5,7 +5,7 @@ Supersedes the 2026-07-23 provenance/dashboard handoff.
 
 ## TL;DR
 
-- **All 9 tools released, tagged, pushed and pinned.** Suite `2026.07.26`.
+- **All 9 tools released, tagged, pushed and pinned.** Suite `2026.07.27`.
   Everything below is live on this server and installable anywhere via the pins.
 - **Every non-vSNP GUI now has the vSNP-style Results pane** and a Projects
   check-all. This was the main ask and it is done.
@@ -15,17 +15,17 @@ Supersedes the 2026-07-23 provenance/dashboard handoff.
 - **Three items from the original list are NOT done** — training modules, the
   NCBI page, and the remaining hard-coded paths. See §5. (Citations were §5.2 and
   are now done — §7b.)
-- **2026-07-27, on branches and NOT yet tagged/pushed:** kSNP4 now installs and
-  runs on macOS (it was wrongly treated as Linux-only suite-wide), and all 9 GUIs
-  carry a citation footer. See §7 — read §7a before touching `vendor/` on a Mac.
+- **2026-07-27, released:** kSNP4 now installs and runs on macOS (it was wrongly
+  treated as Linux-only suite-wide), and all 9 GUIs carry a citation footer.
+  See §7 — read §7a before touching `vendor/` on a Mac.
 
 | tool | tag | tool | tag |
 |---|---|---|---|
-| vsnp_gui | v0.4.34 | ksnp_gui | v0.3.0 |
-| amr_plus_gui | **v0.3.0** | genoflu_gui | v0.3.0 |
-| mlst_gui | v0.3.0 | irma_gui | v0.3.0 |
-| kraken_id_parse_gui | v0.2.0 | ncbi_submit_gui | v0.2.0 |
-| mhc_gui | v0.2.0 | | |
+| vsnp_gui | v0.4.35 | ksnp_gui | **v0.4.0** |
+| amr_plus_gui | v0.3.1 | genoflu_gui | v0.3.1 |
+| mlst_gui | v0.3.1 | irma_gui | v0.3.1 |
+| kraken_id_parse_gui | v0.2.1 | ncbi_submit_gui | v0.2.1 |
+| mhc_gui | v0.2.1 | | |
 
 ---
 
@@ -256,7 +256,8 @@ Stated plainly so nothing is assumed finished:
 
 ## 7. Session 2026-07-27 — kSNP4 on macOS, and the citation footers
 
-Two items, both on branches, **none tagged or pushed** — pins unchanged.
+Two items, both **released**: all 9 tools tagged and pushed, `tools.yml` pins and
+`suite_version` bumped to `2026.07.27`.
 
 ### 7a. kSNP4 is not Linux-only, and "on PATH" is not "runnable"
 
@@ -343,20 +344,34 @@ Every reference was checked against Europe PMC or the upstream repo. **Do not ad
 one from memory** — a wrong volume in a footer propagates into other people's
 bibliographies, which is exactly how the 545/548 error survived (§5.2).
 
-### 7c. To release this
+### 7c. Released — and how it reaches other machines
 
-Nothing is pushed. Branches: `fix/ksnp-macos-and-citations` (umbrella),
-`fix/macos-ksnp4` (ksnp_gui), `feat/citation-footer` (the other 8).
-The checkouts are the *installed* ones under `~/.local/share/bdtools/checkouts/`
-and were on detached tags, so each branch starts from its release tag.
+All 9 tools were fast-forwarded onto `main` and tagged; `tools.yml` pins and
+`suite_version` are bumped to `2026.07.27`; the umbrella is tagged
+`suite-2026.07.3`.
 
-```bash
-bin/check-shared-frontend.sh   # must be clean before tagging
-bin/bdtools lint               # dependency drift
-bin/bdtools doctor
-```
-Then per repo: merge to `main`, `npm run build`, tag, push, and bump the pin in
-`tools.yml` + `suite_version`.
+**Two halves, and both are needed here.** `bdtools update <tool>` picks the
+highest `v*` tag off each tool's remote — so the tool changes travel by tag. But
+the doctor format/arch check and the `bdtools local` PATH fix live in the
+*umbrella*, so a machine that updates only its tools gets the new ksnp_gui and the
+old doctor. Update **bdtools first, then the tools** — the dashboard's Updates
+panel lists bdtools as its own row for exactly this reason.
+
+Two things that block an update, both by design:
+- the umbrella self-update is `git pull --ff-only` and **refuses a dirty
+  checkout**. The pins are bumped in this commit precisely so `bdtools update`
+  finds `latest == pinned` and never rewrites `tools.yml` under the user, which is
+  what would dirty it.
+- `bdtools update <tool>` **refuses a tool checkout with local source changes**
+  (it tolerates only `frontend/dist/*` and `frontend/package-lock.json`).
+
+After updating, **`bdtools dashboard --restart`** — the running dashboard and tool
+servers keep serving old code until restarted.
+
+**The OOD server does not use `bdtools update`** (it refuses external checkouts on
+purpose). wgs3 goes through `bdtools install --server <tool> --site-conf ...`,
+which checks out the `tools.yml` pin — so the pin bump in this commit is what
+carries the release there. Use `--dry-run` first.
 
 ## 8. Verify after pulling elsewhere
 

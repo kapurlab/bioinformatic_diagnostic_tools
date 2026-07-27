@@ -88,22 +88,16 @@ apply_one() {
   # A force checkout is acceptable for files the installer itself regenerates,
   # but never for arbitrary source edits. Refuse before fetch/checkout so a
   # personal experiment remains exactly where the user left it.
+  # Shared rule (common.sh:tool_blocking_edits) so this and install-local.sh's
+  # ensure_checkout cannot disagree about what counts as a user edit. They did:
+  # ensure_checkout required a fully clean tree, so it silently built stale code on
+  # any machine whose frontend had ever been rebuilt.
   while IFS= read -r dirty_path; do
     [[ -n "${dirty_path}" ]] || continue
-    case "${dirty_path}" in
-      frontend/dist/*|frontend/package-lock.json) ;;
-      *)
-        die "${name} has local source changes: ${dirty_path}
+    die "${name} has local source changes: ${dirty_path}
        Refusing to overwrite them during update. Commit/stash the change, or
        use a separate developer checkout, then rerun."
-        ;;
-    esac
-  done < <(
-    {
-      git -C "${dir}" diff --name-only
-      git -C "${dir}" diff --cached --name-only
-    } | sort -u
-  )
+  done < <(tool_blocking_edits "${dir}")
 
   # Fast path: already on the target tag AND the env is built. A rebuild here
   # would re-solve and re-download for zero change — this is exactly what made

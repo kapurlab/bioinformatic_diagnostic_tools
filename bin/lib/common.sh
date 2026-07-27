@@ -74,6 +74,32 @@ manifest_has() { manifest_names | grep -qxF "$1"; }
 
 # Resolve a tool's checkout dir: explicit $BDTOOLS_TOOLSDIR wins (e.g. the
 # lab's existing /srv/kapurlab/tools tree), else the per-user home.
+# Dirty tracked paths in a tool checkout that are NOT regenerable build output —
+# i.e. the ones that must actually stop us force-checking-out a pinned tag.
+# Empty output means "safe to move".
+#
+# frontend/dist and frontend/package-lock.json are tracked but rewritten by every
+# install (vite output hashes and npm's lockfile depend on the local Node), so a
+# managed checkout is permanently dirty after its first build. install-local.sh's
+# ensure_checkout used to require a completely clean tree, which meant it could
+# never advance the pin again — it warned and then **built with the old code while
+# announcing the new pin**. That is how a shipped ksnp_gui fix (v0.4.2) silently
+# failed to reach a machine still running v0.4.0's installer.
+#
+# check-updates.sh had the correct tolerance list inline; this is that same rule in
+# one place so the two callers cannot drift apart again.
+tool_blocking_edits() {
+  local dir="$1" p
+  { git -C "${dir}" diff --name-only 2>/dev/null
+    git -C "${dir}" diff --cached --name-only 2>/dev/null; } | sort -u | while IFS= read -r p; do
+    [[ -n "${p}" ]] || continue
+    case "${p}" in
+      frontend/dist|frontend/dist/*|frontend/package-lock.json) ;;
+      *) printf '%s\n' "${p}";;
+    esac
+  done
+}
+
 tool_dir() {
   local name="$1"
   if [[ -n "${BDTOOLS_TOOLSDIR:-}" && -d "${BDTOOLS_TOOLSDIR}/${name}" ]]; then

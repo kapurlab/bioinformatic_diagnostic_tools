@@ -259,12 +259,28 @@ ensure_checkout() {
       fi
       local head; head="$(git -C "${DIR}" rev-parse -q --verify HEAD 2>/dev/null || true)"
       if [[ -n "${want}" && "${head}" != "${want}" ]]; then
-        if git -C "${DIR}" diff --quiet && git -C "${DIR}" diff --cached --quiet; then
+        # "Any dirty file" was the wrong bar: every install rewrites the tracked
+        # frontend/dist + package-lock, so a built checkout is permanently dirty
+        # and this could never advance the pin again — it warned, then BUILT WITH
+        # THE OLD CODE while reporting the new pin. Use the shared rule (see
+        # common.sh:tool_blocking_edits) and force past regenerable output, which
+        # the build immediately recreates anyway.
+        local blocking; blocking="$(tool_blocking_edits "${DIR}")"
+        if [[ -z "${blocking}" ]]; then
           log "moving ${TOOL} checkout ${at} -> pinned ${VERSION}"
-          run git -C "${DIR}" checkout -q "${VERSION}" 2>/dev/null || run git -C "${DIR}" checkout -q "${want}"
+          run git -C "${DIR}" checkout -f -q "${VERSION}" 2>/dev/null \
+            || run git -C "${DIR}" checkout -f -q "${want}"
           at="$(git -C "${DIR}" describe --tags --always 2>/dev/null || echo '?')"
         else
-          warn "${TOOL} checkout is ${at} but pin is ${VERSION}, and it has local edits — not moving. Commit/stash them, or run: bdtools update ${TOOL}"
+          # Name the consequence, not just the condition: the build below is about
+          # to run the OLD installer, which is precisely the confusing case where a
+          # shipped fix appears not to work.
+          warn "${TOOL} checkout is ${at} but the pin is ${VERSION}, and these tracked files have local edits:"
+          while IFS= read -r _b; do [[ -n "${_b}" ]] && warn "    ${_b}"; done <<< "${blocking}"
+          warn "  NOT moving — so this build will use ${at}'s code, NOT the pinned ${VERSION}."
+          warn "  Any fix shipped in ${VERSION} will appear not to work until you resolve this:"
+          warn "    cd ${DIR} && git stash    # or commit the edits"
+          warn "    then re-run: bin/bdtools install ${TOOL}"
         fi
       fi
     fi

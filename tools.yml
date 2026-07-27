@@ -56,7 +56,7 @@ tools:
 
   - name: mlst_gui
     repo: https://github.com/kapurlab/mlst_gui.git
-    version: v0.3.1
+    version: v0.3.2
     ood_apps: [mlst_gui]
     dev_apps: [mlst_gui_dev]
     env: mlst

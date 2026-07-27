@@ -23,7 +23,7 @@ Supersedes the 2026-07-23 provenance/dashboard handoff.
 |---|---|---|---|
 | vsnp_gui | v0.4.35 | ksnp_gui | **v0.4.0** |
 | amr_plus_gui | v0.3.1 | genoflu_gui | v0.3.1 |
-| mlst_gui | v0.3.1 | irma_gui | v0.3.1 |
+| mlst_gui | v0.3.2 | irma_gui | v0.3.1 |
 | kraken_id_parse_gui | v0.2.1 | ncbi_submit_gui | v0.2.1 |
 | mhc_gui | v0.2.1 | | |
 
@@ -343,6 +343,19 @@ tool, the second is developmental and should not yet advertise a method citation
 Every reference was checked against Europe PMC or the upstream repo. **Do not add
 one from memory** — a wrong volume in a footer propagates into other people's
 bibliographies, which is exactly how the 545/548 error survived (§5.2).
+
+### 7d. mlst_gui v0.3.2 — the XLSX export was dead
+
+`bdtools lint`'s one ✗ (openpyxl imported but not declared) was real, and fixing it
+uncovered a second defect in the same endpoint: `Response` was missing from the
+`fastapi.responses` import, so even with openpyxl installed the final
+`return Response(...)` would have raised NameError. The endpoint's own
+`HTTPException(501, "Excel export needs openpyxl...")` masked it — that message
+reads like a deliberate optional-feature notice, so a packaging bug looked like
+intended behaviour, and nobody ever reached the return statement to find the
+second one. Worth remembering: a friendly fallback message can hide the bug behind it.
+
+`bdtools lint` is now clean across all 9 tools.
 
 ### 7c. Released — and how it reaches other machines
 

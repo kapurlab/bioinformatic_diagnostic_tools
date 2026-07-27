@@ -11,6 +11,7 @@ proxy dashboard's conda-env python.
 """
 import json
 import os
+import re
 import socket
 import subprocess
 import threading
@@ -228,12 +229,55 @@ def check_bdtools_update():
     }
 
 
+def _pin_only_manifest_drift():
+    """True when tools.yml differs from HEAD ONLY in pin values.
+
+    `bdtools update <tool>` records the version it moved to by rewriting
+    `version:` in tools.yml (check-updates.sh apply_one -> manifest_set). tools.yml
+    is git-tracked, so updating any tool dirties the umbrella checkout — and the
+    umbrella's own self-update is `git pull --ff-only`, which refuses a dirty tree.
+    The result was a standing deadlock: update your tools and you can no longer
+    update bdtools until you manually `git restore tools.yml`. It recurred on every
+    release, on every platform.
+
+    Those pin lines are *derived* state — `bdtools update` wrote them and can write
+    them again, and the manifest coming from origin is the release of record. So
+    pin-only drift is safe to drop for the pull. Anything else (a comment, a repo
+    URL, a new tool, an edit to another file) still refuses, which is the point of
+    the original check.
+    """
+    try:
+        diff = subprocess.run(
+            ["git", "-C", REPO_DIR, "diff", "--unified=0", "--", "tools.yml"],
+            capture_output=True, text=True, check=True, timeout=30,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if not diff.strip():
+        return False
+    changed = [
+        ln for ln in diff.splitlines()
+        # Skip diff furniture; keep only real +/- content lines.
+        if ln[:1] in "+-" and not ln.startswith(("+++", "---"))
+    ]
+    if not changed:
+        return False
+    return all(
+        re.match(r"^[+-]\s*(version|suite_version):\s*\S+\s*$", ln)
+        for ln in changed
+    )
+
+
 def suite_update_command(log):
     """The `bdtools` self-update command, or None when it must be refused.
 
-    Never merge an update into a locally edited suite checkout and never discard
-    tools.yml on the user's behalf. A clean tree makes the exact scope of
-    `pull --ff-only` reviewable and reproducible.
+    Never merge an update into a locally edited suite checkout. A clean tree makes
+    the exact scope of `pull --ff-only` reviewable and reproducible.
+
+    The one exception is tools.yml pin drift that `bdtools update` wrote itself —
+    see _pin_only_manifest_drift. Refusing on that turned "update your tools" into
+    "you can no longer update bdtools", which is not a safety property, just a
+    deadlock.
 
     Shared by BOTH dashboards. It lived only in UpdateManager, so the legacy
     stdlib dashboard would happily `git pull --ff-only` over a dirty checkout —
@@ -247,6 +291,25 @@ def suite_update_command(log):
         ).stdout.strip()
     except (OSError, subprocess.SubprocessError) as exc:
         dirty = f"(could not inspect checkout: {exc})"
+
+    # Only tools.yml is dirty, and only in pin values -> restore it and carry on.
+    if dirty and all(ln[3:].strip() == "tools.yml" for ln in dirty.splitlines()):
+        if _pin_only_manifest_drift():
+            log("tools.yml differs from HEAD only in version pins — that is "
+                "`bdtools update`'s own bookkeeping, not an edit of yours.")
+            log("Restoring it so the pull can proceed; the manifest from origin "
+                "is authoritative, and re-running a tool update re-applies any "
+                "newer tags.")
+            try:
+                subprocess.run(
+                    ["git", "-C", REPO_DIR, "checkout", "--", "tools.yml"],
+                    capture_output=True, text=True, check=True, timeout=30,
+                )
+                dirty = ""
+            except (OSError, subprocess.SubprocessError) as exc:
+                log(f"ERROR: could not restore tools.yml: {exc}")
+                return None
+
     if dirty:
         log("ERROR: bdtools checkout has local changes; refusing to pull.")
         log("Commit/stash them, or update from a separate clean checkout.")

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# check-shared-frontend.sh — the Results pane is copied, not packaged. Prove it
-# is still identical everywhere.
+# check-shared-frontend.sh — the shared frontend files are copied, not packaged.
+# Prove they are still identical everywhere.
 #
-# ResultsPane.jsx / useResults.js / ResultsPane.css are vendored byte-identically
+# The Results pane (ResultsPane.jsx / useResults.js / ResultsPane.css) and the
+# citation footer (Citations.jsx / Citations.css) are vendored byte-identically
 # into every tool because each repo is cloned standalone from its own URL and
 # pinned to its own tag — there is no monorepo root at install time, so a shared
 # npm package would add a second, uncoordinated version axis on top of the tag
@@ -23,6 +24,13 @@ SOURCE_TOOL=amr_plus_gui
 # the shared App.css). It is correctly absent from the copy set.
 SKIP_TOOLS=(vsnp_gui)
 
+# Files shared with EVERY tool, vsnp_gui included. The citation footer is
+# deliberately in this set and not in SHARED above: it carries its own prefixed
+# stylesheet and uses only variables both App.css and vsnp_gui's styles.css
+# define, so unlike the Results pane it drops into vsnp_gui unchanged — and
+# "cite the tool that produced this result" has to hold for vSNP too.
+SHARED_ALL=(Citations.jsx Citations.css)
+
 ROOT=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -40,36 +48,49 @@ src_dir="${ROOT}/${SOURCE_TOOL}/frontend/src"
 
 rc=0
 checked=0
-for f in "${SHARED[@]}"; do
-  ref="${src_dir}/${f}"
-  if [[ ! -f "${ref}" ]]; then
-    warn "${SOURCE_TOOL} has no ${f} — nothing to compare against"
-    continue
-  fi
-  want="$(md5sum < "${ref}" | awk '{print $1}')"
-  for d in "${ROOT}"/*/; do
-    tool="$(basename "${d}")"
-    [[ "${tool}" == "${SOURCE_TOOL}" ]] && continue
-    _skip=0
-    for sk in "${SKIP_TOOLS[@]}"; do [[ "${tool}" == "${sk}" ]] && _skip=1; done
-    [[ ${_skip} -eq 1 ]] && continue
-    # Only tools that have a frontend at all are in scope.
-    [[ -d "${d}frontend/src" ]] || continue
-    have_file="${d}frontend/src/${f}"
-    if [[ ! -f "${have_file}" ]]; then
-      warn "${tool}: missing ${f} (has the Results pane been copied here?)"
-      rc=1
+
+# check_set <every|most> <file>...
+#   every — compared in all tools, vsnp_gui included
+#   most  — SKIP_TOOLS excluded (files vsnp_gui deliberately does not carry)
+check_set() {
+  local scope="$1"; shift
+  local f ref want d tool have_file got sk _skip
+  for f in "$@"; do
+    ref="${src_dir}/${f}"
+    if [[ ! -f "${ref}" ]]; then
+      warn "${SOURCE_TOOL} has no ${f} — nothing to compare against"
       continue
     fi
-    checked=$((checked + 1))
-    got="$(md5sum < "${have_file}" | awk '{print $1}')"
-    if [[ "${got}" != "${want}" ]]; then
-      warn "${tool}: ${f} has DRIFTED from ${SOURCE_TOOL}"
-      warn "       fix: cp ${ref} ${have_file}   (then rebuild + re-tag ${tool})"
-      rc=1
-    fi
+    want="$(md5sum < "${ref}" | awk '{print $1}')"
+    for d in "${ROOT}"/*/; do
+      tool="$(basename "${d}")"
+      [[ "${tool}" == "${SOURCE_TOOL}" ]] && continue
+      if [[ "${scope}" == "most" ]]; then
+        _skip=0
+        for sk in "${SKIP_TOOLS[@]}"; do [[ "${tool}" == "${sk}" ]] && _skip=1; done
+        [[ ${_skip} -eq 1 ]] && continue
+      fi
+      # Only tools that have a frontend at all are in scope.
+      [[ -d "${d}frontend/src" ]] || continue
+      have_file="${d}frontend/src/${f}"
+      if [[ ! -f "${have_file}" ]]; then
+        warn "${tool}: missing ${f} (has it been copied here from ${SOURCE_TOOL}?)"
+        rc=1
+        continue
+      fi
+      checked=$((checked + 1))
+      got="$(md5sum < "${have_file}" | awk '{print $1}')"
+      if [[ "${got}" != "${want}" ]]; then
+        warn "${tool}: ${f} has DRIFTED from ${SOURCE_TOOL}"
+        warn "       fix: cp ${ref} ${have_file}   (then rebuild + re-tag ${tool})"
+        rc=1
+      fi
+    done
   done
-done
+}
+
+check_set most  "${SHARED[@]}"
+check_set every "${SHARED_ALL[@]}"
 
 # ---------------------------------------------------------------------------
 # Look-and-feel files: ADVISORY only (never changes the exit code).
@@ -128,7 +149,7 @@ for d in "${ROOT}"/*/; do
 done
 
 if [[ ${rc} -eq 0 ]]; then
-  ok "shared Results-pane files identical across the suite (${checked} file copies checked)"
+  ok "shared frontend files identical across the suite (${checked} file copies checked)"
 else
   die "shared frontend files have drifted or are missing — see above"
 fi

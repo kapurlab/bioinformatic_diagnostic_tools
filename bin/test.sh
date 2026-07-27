@@ -71,8 +71,10 @@ run_one() {  # tool -> prints a status; sets RC_FAIL on FAIL
 
   log "${tool}  (tier ${tier:-?}) — ${summary}"
 
-  # OS constraint: some tools ship platform-specific binaries (e.g. ksnp_gui's
-  # kSNP4 is a Linux-only ELF and cannot run on macOS, even under Rosetta).
+  # OS constraint, for a tool that genuinely has no build for this platform.
+  # Declare it only when that is true: `requires_os: linux` on ksnp_gui (whose
+  # kSNP4 does ship a Mac package) silently SKIPped the one check that would have
+  # caught a wrong-OS payload on exactly the hosts carrying one.
   if [[ -n "${req_os}" ]]; then
     local host_os; host_os="$(uname -s | tr 'A-Z' 'a-z')"
     if [[ "${host_os}" != "${req_os}" ]]; then

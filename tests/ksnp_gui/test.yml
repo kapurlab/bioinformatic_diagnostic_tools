@@ -6,11 +6,14 @@
 # production). k is pinned for a deterministic SNP count. (Avoid atypically large
 # assemblies: kSNP4's k-mer coverage filter crashes on a bloated >5 Mb genome.)
 #
-# kSNP4 is shipped as Linux x86_64 ELF binaries; they cannot run on macOS (even
-# under Rosetta, which translates macOS x86_64, not Linux ELF). So this test runs
-# on Linux only and SKIPs elsewhere.
+# kSNP4 runs on Linux and macOS: SourceForge publishes a Linux package (x86_64
+# ELF) and a Mac package (x86_64 Mach-O, which Apple Silicon runs under Rosetta),
+# and deploy/install.sh fetches whichever the host needs. There is no requires_os
+# here on purpose — it used to say `linux`, which meant this validation SKIPped on
+# every Mac, so the machines most likely to be holding a wrong-OS payload were
+# also the ones never checked. `bdtools doctor` verifies the payload's executable
+# format; this test verifies the SNP calls.
 tier: 1
-requires_os: linux
 summary: 3 Listeria monocytogenes genomes -> kSNP4 SNP discovery + trees
 fetch: genomes
 accession: [GCF_000196035.1, GCF_000008285.1, GCF_000168695.2]

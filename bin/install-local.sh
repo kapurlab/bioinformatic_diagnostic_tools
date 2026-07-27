@@ -512,15 +512,20 @@ build() {
        && grep -q -- '--skip-frontend' "${DIR}/deploy/install.sh" 2>/dev/null; then
       args+=(--skip-frontend)
     fi
-    # kSNP4 ships Linux-only ELF binaries (Rosetta translates macOS x86_64, not
-    # Linux ELF), so off Linux the 545 MB SourceForge download can never be run.
-    # Skip it rather than spending the bandwidth and disk on it — the post-build
-    # notice below, doctor, and the GUI's own banner all explain why.
-    if [[ "$(uname -s)" != "Linux" ]] \
-       && grep -q -- '--skip-ksnp' "${DIR}/deploy/install.sh" 2>/dev/null; then
-      warn "${TOOL}: skipping the kSNP4 download — its binaries are Linux-only and cannot run on $(uname -s)."
-      args+=(--skip-ksnp)
-    fi
+    # kSNP4 is not a conda package: SourceForge publishes a Linux package (ELF,
+    # ~545 MB) and a Mac package (Mach-O, ~1.0 GB). This used to skip the download
+    # entirely off Linux, on the belief that kSNP4 was Linux-only — it is not, and
+    # macOS users were left with a GUI that could not analyse anything. The tool's
+    # own deploy/install.sh now picks the package for the host, so just let it run.
+    # Only genuinely unsupported platforms skip.
+    case "$(uname -s)" in
+      Linux|Darwin) ;;
+      *)
+        if grep -q -- '--skip-ksnp' "${DIR}/deploy/install.sh" 2>/dev/null; then
+          warn "${TOOL}: skipping the kSNP4 download — no kSNP4.1 package is published for $(uname -s)."
+          args+=(--skip-ksnp)
+        fi;;
+    esac
     with_progress "${TOOL}: building env + frontend (deploy/install.sh)" \
       "${DIR}/deploy/install.sh" ${args[@]+"${args[@]}"} || die "${TOOL} deploy/install.sh failed"
   elif [[ -f "${DIR}/conda_setup/environment.yml" ]]; then
@@ -621,6 +626,26 @@ if changed:
     print(f"  repaired stale vsnp_gui config paths -> {site}")
 PY
   fi
+  # PATH for the server process. Until this used `${envbin}` alone, and that is
+  # not enough for a tool with vendored binaries outside its conda env: the
+  # dashboard launches through tool_launch (which applies `path_prepend`) while
+  # `bdtools local` did not, so `bdtools local ksnp_gui` served a GUI that
+  # reported kSNP4 "not installed" and disabled Run on a perfectly good install.
+  #
+  # Ask tool_launch for the answer rather than re-deriving it here — it owns the
+  # resolution rule (tool tree -> installed checkout -> machine-wide vendor
+  # cache), and a second copy of that rule is how the two launchers disagreed in
+  # the first place. Fall back to envbin if anything goes wrong: a tool that
+  # needs no vendored payload must still launch on a machine where this fails.
+  # PYBIN is a plain system python3 from common.sh, and tool_launch is
+  # stdlib-only — it does not need the tool's own env to answer this.
+  local launch_path="${envbin}" _pp
+  _pp="$("${PYBIN}" "${KT_BIN_DIR}/lib/tool_launch.py" show "${TOOL}" "${PORT}" 2>/dev/null \
+    | "${PYBIN}" -c 'import json,sys
+try: print(json.load(sys.stdin)["env_overrides"].get("PATH_PREPEND",""))
+except Exception: print("")' 2>/dev/null)"
+  [[ -n "${_pp}" ]] && launch_path="${_pp}"
+
   # Record the exact, reproducible launch command to the tool's dashboard log, so
   # every run (including this direct `bdtools local` one) is copy-paste rerunnable
   # from a terminal. Mirrors the header the dashboards write (tool_launch.log_header).
@@ -636,13 +661,13 @@ PY
     printf '# python env: %s\n' "${envbin%/bin}"
     printf '# Reproduce this exact run from a terminal (copy/paste the line below):\n#\n'
     printf 'cd %q && PATH=%q:$PATH PYTHONPATH=%q %s%q -m uvicorn app.main:app --host 127.0.0.1 --port %q --log-level info\n' \
-      "${DIR}/backend" "${envbin}" "${DIR}/bin" "${extra_env}" "${py}" "${PORT}"
+      "${DIR}/backend" "${launch_path}" "${DIR}/bin" "${extra_env}" "${py}" "${PORT}"
     printf '# %s\n' '===================================================================='
   } >> "${logdir}/${TOOL}.log" 2>/dev/null || true
 
   [[ ${NO_BROWSER} -eq 1 ]] || ( sleep 2; open_url "${url}" ) &
   cd "${DIR}/backend"
-  PATH="${envbin}:${PATH}" PYTHONPATH="${DIR}/bin:${PYTHONPATH:-}" \
+  PATH="${launch_path}:${PATH}" PYTHONPATH="${DIR}/bin:${PYTHONPATH:-}" \
     exec "${py}" -m uvicorn app.main:app --host 127.0.0.1 --port "${PORT}" --log-level info
 }
 
@@ -680,16 +705,16 @@ if [[ ${DO_BUILD} -eq 1 && ${DRY_RUN} -eq 0 ]] && have_python; then
   fi
 fi
 
-# Heads-up for tools with Linux-only vendored binaries (e.g. ksnp_gui's kSNP4):
-# they install fine but the analysis can't run off Linux (Rosetta translates
-# macOS x86_64, not Linux ELF).
-# Keyed on the tool, not on whether vendor/ happens to exist: the download is now
-# skipped off Linux (see build()), so the old `-d vendor/kSNP4-bin` test would
-# leave the very users who need this notice without it.
-if [[ ${DO_BUILD} -eq 1 && "${TOOL}" == "ksnp_gui" && "$(uname -s)" != "Linux" ]]; then
-  warn "${TOOL}: its kSNP4 analysis binaries are Linux-only and will NOT run on $(uname -s)."
-  info "  The GUI installs and can browse past runs, but Run is disabled and explains why."
-  info "  Run kSNP analyses on a Linux machine or an OOD deployment."
+# kSNP4 runs on Linux and macOS (each from its own SourceForge package), but on
+# nothing else — say so rather than leaving the GUI's disabled Run unexplained.
+if [[ ${DO_BUILD} -eq 1 && "${TOOL}" == "ksnp_gui" ]]; then
+  case "$(uname -s)" in
+    Linux|Darwin) ;;
+    *)
+      warn "${TOOL}: no kSNP4.1 package is published for $(uname -s), so analyses will NOT run here."
+      info "  The GUI installs and can browse past runs, but Run is disabled and explains why."
+      info "  Run kSNP analyses on Linux, macOS, or an OOD deployment.";;
+  esac
 fi
 
 [[ ${DO_LAUNCH} -eq 1 ]] && launch

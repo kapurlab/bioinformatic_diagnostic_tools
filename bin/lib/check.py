@@ -91,6 +91,71 @@ def has_binary(name, env_bin, extra_dirs=()):
     return shutil.which(name, path=os.pathsep.join(p for p in search if p)) is not None
 
 
+def find_binary(name, env_bin, extra_dirs=()):
+    """Absolute path `name` would resolve to, searched exactly like has_binary."""
+    dirs = ([env_bin] if env_bin else []) + [d for d in extra_dirs if d]
+    for d in dirs:
+        cand = Path(d) / name
+        if cand.exists() and os.access(cand, os.X_OK):
+            return str(cand)
+    search = dirs + [os.environ.get("PATH", "")]
+    return shutil.which(name, path=os.pathsep.join(p for p in search if p))
+
+
+# Executable-format magic bytes. ELF for Linux; Mach-O 64/32-bit little-endian and
+# universal ("fat") for macOS.
+_ELF_MAGIC = b"\x7fELF"
+_MACHO_MAGIC = (b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe", b"\xca\xfe\xba\xbe")
+
+
+def _describe_magic(magic):
+    if magic == _ELF_MAGIC:
+        return "Linux (ELF)"
+    if magic in _MACHO_MAGIC:
+        return "macOS (Mach-O)"
+    return "an unrecognised format"
+
+
+def check_binary_format(name, env_bin, extra_dirs=()):
+    """Can this host actually exec `name`? Returns (verdict, detail).
+
+    verdict: True (right format) | False (wrong format) | None (nothing to judge).
+
+    A binary resolving on PATH does not mean it runs. ksnp_gui's kSNP4 payload is
+    downloaded by hand from SourceForge, and a macOS host that got the Linux
+    archive satisfied every existence check here, was then SKIPped by the old
+    `os: linux` gate, and finally failed inside a real analysis with
+    "OSError: [Errno 8] Exec format error" — with a run directory already on disk.
+    Checked from the magic bytes rather than by exec'ing: these binaries take
+    positional arguments and would block on stdin or write into the cwd.
+    """
+    path = find_binary(name, env_bin, extra_dirs)
+    if not path:
+        return None, ""          # absence is the existence check's job, not ours
+    try:
+        with open(path, "rb") as fh:
+            magic = fh.read(4)
+    except OSError:
+        return None, ""
+    if not magic:
+        return None, ""
+    # A script (#!/...) is portable by nature — nothing to verify.
+    if magic[:2] == b"#!":
+        return None, ""
+
+    system = platform.system()
+    if system == "Linux":
+        want, ok = "Linux (ELF)", magic == _ELF_MAGIC
+    elif system == "Darwin":
+        want, ok = "macOS (Mach-O)", magic in _MACHO_MAGIC
+    else:
+        return None, ""          # no opinion on platforms we don't have rules for
+    if ok:
+        return True, path
+    return False, (f"{name} was built for {_describe_magic(magic)} but this host "
+                   f"needs {want} ({path})")
+
+
 def resolve_asset_dirs(tool, tool_dir, asset_dirs):
     """Resolve a spec's `asset_dirs` the same way the launcher builds PATH.
 
@@ -208,6 +273,24 @@ def run_checks(tool, env_py, scope, tool_dir=None):
                f"(that step won't run; use a Linux/OOD deployment for full output)")
         lines.append((SKIP, msg, None))
         notes.append(msg)
+
+    # ...and for hand-downloaded payloads, that the binaries found above are the
+    # right KIND of executable for this host. Only probes that resolve are judged,
+    # so this stays quiet on a machine where the payload is simply absent.
+    fmt_bad = []
+    for probe in spec.get("binary_format_probes", []):
+        verdict, detail = check_binary_format(probe, env_bin, found_assets)
+        if verdict is False:
+            fmt_bad.append(detail)
+    if fmt_bad:
+        for detail in fmt_bad:
+            lines.append((BAD, detail, default_fix))
+        label = "wrong-OS binaries: " + ", ".join(
+            d.split(" ", 1)[0] for d in fmt_bad)
+        issues.append({"label": label, "fix": default_fix})
+    elif spec.get("binary_format_probes") and not real_missing:
+        lines.append((OK, f"vendored binaries match this host "
+                          f"({platform.system()}/{platform.machine()})", None))
 
     optional_missing = [
         b for b in spec.get("optional_binaries", [])

@@ -10,8 +10,16 @@ Keep these honest — only list things the code genuinely requires. A wrong entr
 produces a false alarm, which erodes trust in the check. Binary/module lists
 were derived by grepping each tool's imports and subprocess calls; extend them
 as tools change. `optional_binaries` are reported as non-failing integration
-notes. `os` gates a tool to a platform (kSNP4 ships Linux-only ELF binaries, so
-it can't run on macOS even under Rosetta).
+notes. `os` gates a tool to a platform — use it only when the tool genuinely has
+no build for the others, not merely when a build is awkward to obtain.
+
+`binary_format_probes` names compiled binaries whose *executable format* must
+match the host, checked from their magic bytes. This exists because "resolves on
+PATH" is not "can run": ksnp_gui's kSNP4 payload is a hand-downloaded SourceForge
+archive, and a host that fetched the Linux zip but runs macOS passed every check
+here and then died at the first exec with "[Errno 8] Exec format error". Only
+worth declaring for binaries conda did NOT install — conda already solves for the
+right subdir.
 
 `asset_dirs` lists vendored third-party payload dirs (relative to the tool dir)
 that hold binaries NOT installed by conda — so a `<env>/bin` + PATH search would
@@ -68,18 +76,25 @@ REQUIREMENTS = {
     "amr_plus_gui": {"modules": _WEB, "binaries": ["amrfinder", "mlst"]},
     "genoflu_gui": {"modules": _WEB, "binaries": ["seqkit"]},
     "irma_gui":   {"modules": _WEB, "binaries": ["IRMA", "seqkit"]},
-    # kSNP4 is NOT a conda package — deploy/install.sh downloads the kSNP4.1 Linux
-    # package from SourceForge into vendor/kSNP4-bin and prepends that to PATH. So
-    # its binaries are invisible to an <env>/bin search, which is why doctor used to
-    # report ksnp_gui green while every run exited 127. Declaring `asset_dirs` lets
-    # the check look where the binaries actually live. The generic "rebuilds the
-    # env" fix is wrong here — the env never contained kSNP.
+    # kSNP4 is NOT a conda package — deploy/install.sh downloads the kSNP4.1
+    # package for the host OS from SourceForge into vendor/kSNP4-bin and prepends
+    # that to PATH. So its binaries are invisible to an <env>/bin search, which is
+    # why doctor used to report ksnp_gui green while every run exited 127.
+    # Declaring `asset_dirs` lets the check look where the binaries actually live.
+    # The generic "rebuilds the env" fix is wrong here — the env never contained kSNP.
+    #
+    # No `os` gate: SourceForge publishes both a Linux and a Mac package. It was
+    # gated to linux on the belief that kSNP4 was Linux-only, which made doctor SKIP
+    # ksnp_gui on macOS entirely — so the one check that could have caught a
+    # wrong-OS payload never ran there. `binary_format_probes` is that check.
     "ksnp_gui": {
         "modules": _WEB,
         "binaries": ["seqkit", "kSNP4", "Kchooser4", "MakeKSNP4infile"],
         "asset_dirs": ["vendor/kSNP4-bin"],
-        "os": "linux",
-        "fix": "bin/bdtools install ksnp_gui   # downloads the kSNP4.1 Linux package into vendor/",
+        # kSNP4 itself is a bash script and says nothing about the payload's
+        # architecture — probe compiled members.
+        "binary_format_probes": ["MakeKSNP4infile", "Kchooser4"],
+        "fix": "bin/bdtools install ksnp_gui   # downloads the kSNP4.1 package for this OS into vendor/",
     },
     "ncbi_submit_gui": {"modules": _WEB, "binaries": []},
     "mhc_gui": {

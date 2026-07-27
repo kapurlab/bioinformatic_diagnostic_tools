@@ -514,6 +514,37 @@ Verified by reproducing the other Mac's exact state — a 556,000,000-byte trunc
 zip — which was detected, resumed from that offset, verified, unpacked, and passed
 doctor.
 
+### 7j. Why a shipped fix can silently not reach a machine — read this first
+
+The second Mac still failed *after* v0.4.2 shipped, and the reason was not the
+download at all. Its log said so, three lines above 200 lines of pip noise:
+
+    !! ksnp_gui checkout is v0.4.0 but pin is v0.4.2, and it has local edits — not moving.
+    ok checkout present: .../ksnp_gui (v0.4.0)
+
+`ensure_checkout` required a **completely clean** tree before moving a checkout onto
+the manifest pin. Every install rewrites the *tracked* `frontend/dist` and
+`frontend/package-lock.json` (vite output hashes and npm's lockfile follow the local
+Node), so a managed checkout is permanently dirty from its first build onward. After
+that, `install` could **never advance the pin again** — it warned once, then built
+with the old code while announcing the new pin. Three separate fixes appeared not to
+work on that machine for this one reason.
+
+`check-updates.sh` had the correct tolerance list inline and force-checked-out past
+those paths, so `bdtools update <tool>` worked where `bdtools install <tool>` did
+not. Two code paths disagreeing about what counts as a user edit.
+
+Fixed: `common.sh:tool_blocking_edits` is now the single rule, used by both, and
+`ensure_checkout` uses `checkout -f` (safe — the build regenerates that output
+immediately). When something genuinely does block, the warning now names the
+**consequence**, not just the condition: "this build will use v0.4.0's code, NOT the
+pinned v0.4.2 — any fix shipped in v0.4.2 will appear not to work".
+
+**Diagnostic habit this earns:** when a shipped fix "doesn't work" on one machine,
+check `bdtools status` / `git -C <checkout> describe --tags` *before* re-reading the
+fix. Three of today's rounds would have been one if the version actually running had
+been confirmed first. A pin is an intention; `describe --tags` is the fact.
+
 ### 7c. Released — and how it reaches other machines
 
 All 9 tools were fast-forwarded onto `main` and tagged; `tools.yml` pins and

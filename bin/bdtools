@@ -293,6 +293,83 @@ _dashboard_wants_token() {
   return 0                                                          # assume shared server
 }
 
+# Is PORT actually bindable on loopback? Tested by BINDING, not by connecting.
+# connect_ex only notices a socket that is LISTENING, so it misses a port that is
+# bound-but-not-listening — and that still makes uvicorn die with
+# "[Errno 48] address already in use" after we have told the user the dashboard is
+# ready.
+#
+# SO_REUSEADDR is set because uvicorn sets it (uvicorn.config.Config.bind_socket),
+# and this test is only useful insofar as it agrees with uvicorn's real bind.
+# Without it the test is STRICTER than the thing it predicts: a socket left in
+# TIME_WAIT — which is the normal state for a few seconds after stopping a
+# dashboard — fails a plain bind while uvicorn would succeed. That made
+# `--stop` immediately followed by a start report a busy port on a free one,
+# turning a fix for a confusing error into a confusing error of its own.
+# SO_REUSEADDR does NOT permit binding over a LIVE listener (that needs
+# SO_REUSEPORT), so a genuinely running server is still detected.
+_dashboard_port_free() {
+  "${PYBIN}" - "$1" <<'PY'
+import socket, sys
+s = socket.socket()
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+try:
+    s.bind(("127.0.0.1", int(sys.argv[1])))
+except OSError:
+    sys.exit(1)
+finally:
+    s.close()
+sys.exit(0)
+PY
+}
+
+# Wait up to $2 seconds for PORT to become bindable. Returns 0 as soon as it is.
+#
+# A dashboard shuts down asynchronously: /api/shutdown flushes its HTTP response,
+# stops the child tool servers, then exits, so for well under a second after
+# `--stop` returns "requested safely" the old process still holds the listening
+# socket. Without this grace period the obvious sequence
+#   bin/bdtools dashboard --stop && bin/bdtools dashboard
+# loses a race with the process it just stopped and reports a busy port — telling
+# the user to go stop the dashboard they have already stopped.
+_dashboard_wait_port_free() {
+  local port="$1" deadline=$(( SECONDS + ${2:-5} ))
+  while :; do
+    _dashboard_port_free "${port}" && return 0
+    (( SECONDS >= deadline )) && return 1
+    sleep 0.25
+  done
+}
+
+# Best-effort "who is holding this port", for the error message. Never fails the
+# caller: lsof may be absent or restricted, and a vaguer message still beats a
+# bare errno.
+_dashboard_port_owner() {
+  command -v lsof >/dev/null 2>&1 || return 0
+  lsof -nP -iTCP:"$1" -sTCP:LISTEN 2>/dev/null | awk 'NR==2 {print $1" (pid "$2")"}'
+}
+
+# Does the state file describe a LIVE dashboard? Echoes "<pid> <port>" if so.
+# A stale record (process gone) is treated as absent — dashboard_control.py
+# already unlinks those.
+_dashboard_recorded() {
+  [[ -f "${BDTOOLS_DASHBOARD_STATE_FILE:-}" ]] || return 1
+  "${PYBIN}" - "${BDTOOLS_DASHBOARD_STATE_FILE}" <<'PY'
+import json, os, sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as fh:
+        st = json.load(fh)
+    pid, port = int(st["pid"]), int(st["port"])
+except Exception:
+    sys.exit(1)
+try:
+    os.kill(pid, 0)
+except OSError:
+    sys.exit(1)
+print(pid, port)
+PY
+}
+
 cmd_dashboard() {
   # Landing page that lists installed GUIs and launches the one you pick. It
   # prefers the single-port reverse-proxy dashboard (bin/ood_dashboard/app.py):
@@ -371,14 +448,70 @@ cmd_dashboard() {
       return 1
     fi
     if [[ "${mode}" == stop ]]; then
-      info "No running dashboard was recorded."
-      return 0
+      # "No record" is NOT the same as "nothing is running". A dashboard started
+      # in a way that never wrote the state file (or whose record was removed)
+      # keeps serving, and reporting success here sent people away believing the
+      # port was free — the next `bdtools dashboard` then failed to bind, and the
+      # only remaining fix was to hunt the PID by hand. Check the port before
+      # claiming anything.
+      if _dashboard_port_free "${port}"; then
+        info "No running dashboard was recorded, and port ${port} is free — nothing to stop."
+        return 0
+      fi
+      local _owner; _owner="$(_dashboard_port_owner "${port}")"
+      warn "No dashboard state record exists, but something is still listening on port ${port}${_owner:+ — ${_owner}}."
+      info "  It cannot be stopped safely from here: without the record there is no"
+      info "  control token, and killing a PID blind can orphan a running analysis."
+      info "  Stop it with whichever applies:"
+      info "    • the Shut down button in its browser tab (checks for active analyses first)"
+      info "    • Ctrl-C in the terminal that started it"
+      local _pid; _pid="$(command -v lsof >/dev/null 2>&1 && lsof -nP -tiTCP:"${port}" -sTCP:LISTEN 2>/dev/null | head -1 || true)"
+      if [[ -n "${_pid}" ]]; then
+        info "    • kill ${_pid}   — last resort; no active-analysis check"
+      else
+        info "    • kill the process holding port ${port}   — last resort; no active-analysis check"
+      fi
+      return 1
     fi
     # No state record: only start a new dashboard if the requested port is free.
     # This protects an older unregistered dashboard from being killed blindly.
-    if "${PYBIN}" -c 'import socket,sys; s=socket.socket(); s.settimeout(.5); sys.exit(0 if s.connect_ex(("127.0.0.1", int(sys.argv[1]))) == 0 else 1)' "${port}"; then
-      die "port ${port} is already in use but no safe dashboard state record exists — use the existing dashboard's browser controls or stop its terminal with Ctrl-C"
+    if ! _dashboard_wait_port_free "${port}" 5; then
+      local _owner; _owner="$(_dashboard_port_owner "${port}")"
+      die "port ${port} is in use${_owner:+ by ${_owner}} but no safe dashboard state record exists.
+       Stop it from its browser tab (Shut down) or with Ctrl-C in its terminal,
+       then re-run. Or start this one elsewhere: bin/bdtools dashboard --port 8081"
     fi
+  fi
+
+  # ---------------------------------------------------------------------------
+  # Port pre-flight — runs on EVERY path, including a plain `bdtools dashboard`.
+  #
+  # This check used to live inside the `mode != serve` block above, so the most
+  # common invocation skipped it entirely: the banner printed "Open this in your
+  # web browser: http://127.0.0.1:8080/", and only then did uvicorn fail with
+  # "ERROR: [Errno 48] error while attempting to bind on address". That reads as
+  # "the dashboard started and then broke" when in fact it never started — and
+  # the friendly diagnostic three lines up was unreachable. Check first, print
+  # the banner second.
+  # ---------------------------------------------------------------------------
+  if ! _dashboard_wait_port_free "${port}" 5; then
+    local _rec _owner
+    _rec="$(_dashboard_recorded || true)"
+    _owner="$(_dashboard_port_owner "${port}")"
+    if [[ -n "${_rec}" && "${_rec##* }" == "${port}" ]]; then
+      # Our own dashboard is already up on this port. Wanting "the dashboard" is
+      # already satisfied — point at it instead of failing.
+      ok "The dashboard is already running on port ${port} (pid ${_rec%% *})."
+      info "  Open it:            http://127.0.0.1:${port}/"
+      info "  Pick up new code:   bin/bdtools dashboard --restart"
+      info "  Stop it:            bin/bdtools dashboard --stop"
+      return 0
+    fi
+    die "port ${port} is already in use${_owner:+ by ${_owner}}, so the dashboard cannot start.
+       If that is a bdtools dashboard, stop it from its browser tab (Shut down)
+       or with Ctrl-C in its terminal, then re-run. If it is something else,
+       start the dashboard on another port:
+         bin/bdtools dashboard --port 8081"
   fi
 
   # Decide which server to run (single-port proxy preferred; legacy fallback),
@@ -453,6 +586,17 @@ cmd_dashboard() {
     fi
     break
   done
+  # The banner above is printed before the server binds, so if the bind lost a
+  # race with another process the user has just been told to open a URL that will
+  # never answer. The pre-flight makes this rare, not impossible — say plainly
+  # that it did not start, rather than leaving uvicorn's bare errno as the last
+  # word under an invitation to open the page.
+  if [[ ${rc} -ne 0 && ${rc} -ne 130 && ${_stop} -eq 0 ]] && ! _dashboard_port_free "${port}"; then
+    local _owner; _owner="$(_dashboard_port_owner "${port}")"
+    warn "The dashboard did NOT start — port ${port} was taken${_owner:+ by ${_owner}} before it could bind."
+    info "  The URL printed above will not respond. Retry, or use another port:"
+    info "    bin/bdtools dashboard --port 8081"
+  fi
   exit ${rc}
 }
 

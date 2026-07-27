@@ -357,6 +357,60 @@ second one. Worth remembering: a friendly fallback message can hide the bug behi
 
 `bdtools lint` is now clean across all 9 tools.
 
+### 7e. Dashboard port handling — two bugs, found by tripping over them
+
+Both were exposed by a self-inflicted mess (a dashboard left backgrounded during
+release verification), which is the only reason they surfaced at all.
+
+**1. The port guard never ran on the common path.** `bdtools dashboard` prints its
+"Open this in your web browser" banner and *then* lets uvicorn bind. The friendly
+"port is already in use but no safe dashboard state record exists" diagnostic sat
+inside `if [[ "${mode}" != serve ]]`, so it only fired for `--restart`/`--stop`.
+A plain `bdtools dashboard` skipped it and fell through to a raw
+`ERROR: [Errno 48] error while attempting to bind` — printed *after* the banner
+told the user the dashboard was ready. It reads as "started, then broke" when it
+never started.
+
+Now: `_dashboard_port_free` runs on every path, before the banner. If the port
+holds *our own recorded* dashboard it says so and prints the URL (wanting "the
+dashboard" is already satisfied); otherwise it names the process holding the port
+and offers `--port`. A post-loop check also catches a lost bind race, so uvicorn's
+bare errno is never the last word under an invitation to open the page.
+
+**2. `--stop` claimed success while a server was still running.** With no state
+record it printed "No running dashboard was recorded" and exited **0** — even with
+a live dashboard on the port. That is how the port stayed occupied while the user
+believed it was free. Now it checks the port, and if something is still listening
+it names the PID, explains why it cannot stop it safely (no control token, and a
+blind kill can orphan a running analysis), lists the three ways to stop it, and
+exits **1**.
+
+⚠️ **The bind test must set `SO_REUSEADDR`.** The first version of this fix did not,
+which made it *stricter* than the bind it exists to predict: uvicorn sets
+`SO_REUSEADDR` (`uvicorn.config.Config.bind_socket`), so a port in `TIME_WAIT` — the
+normal state for a moment after a stop — failed the test while uvicorn would have
+bound fine. That turned a fix for a confusing error into a confusing error of its
+own. `SO_REUSEADDR` does not permit binding over a live listener, so a real server
+is still detected.
+
+⚠️ **And it needs a grace period.** Shutdown is asynchronous: `/api/shutdown`
+flushes its response, stops child tool servers, then exits, so for well under a
+second after `--stop` returns the old process still holds the socket. Without
+`_dashboard_wait_port_free` (5s), the obvious `--stop && dashboard` loses a race
+with the process it just stopped and reports a busy port — telling you to stop the
+dashboard you already stopped. Both of these were caught by testing, not review.
+
+**Known limitation, pre-existing, now visible rather than silent:** there is one
+`dashboard-state.json`, so it describes only the most recently started dashboard.
+Run two on different ports and the first becomes unrecorded — `--stop` then
+correctly refuses to touch it and tells you to kill it by PID. Fine for the
+one-dashboard case that is the norm; worth knowing before running two.
+
+Verified: cold start; stop-then-immediately-start; plain start against our own
+running dashboard; plain start against an unrecorded one; `--stop` with and without
+a record; `--restart`; `--port 8081` alongside a busy 8080; tool launch + proxy
+still 200 after a restart; 23 unit tests pass.
+
 ### 7c. Released — and how it reaches other machines
 
 All 9 tools were fast-forwarded onto `main` and tagged; `tools.yml` pins and

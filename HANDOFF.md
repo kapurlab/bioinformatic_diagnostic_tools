@@ -21,7 +21,7 @@ Supersedes the 2026-07-23 provenance/dashboard handoff.
 
 | tool | tag | tool | tag |
 |---|---|---|---|
-| vsnp_gui | v0.4.35 | ksnp_gui | **v0.4.2** |
+| vsnp_gui | v0.4.35 | ksnp_gui | **v0.4.3** |
 | amr_plus_gui | v0.3.1 | genoflu_gui | v0.3.1 |
 | mlst_gui | v0.3.2 | irma_gui | v0.3.1 |
 | kraken_id_parse_gui | v0.2.1 | ncbi_submit_gui | v0.2.1 |
@@ -544,6 +544,43 @@ pinned v0.4.2 — any fix shipped in v0.4.2 will appear not to work".
 check `bdtools status` / `git -C <checkout> describe --tags` *before* re-reading the
 fix. Three of today's rounds would have been one if the version actually running had
 been confirmed first. A pin is an intention; `describe --tags` is the fact.
+
+### 7k. Prefer the dashboard's Updates panel over the command line
+
+Worth knowing, because it is the opposite of what was assumed while debugging 7j:
+**the dashboard's update button was never affected by that bug.** It runs
+`bdtools update <tool>` (`suite_common.py:418`), i.e. `check-updates.sh apply_one`,
+which already tolerated regenerable build output and force-checked-out past it. The
+broken path was `bdtools install` — the command line. Verified by rebuilding the
+broken state (checkout at v0.4.0, dirty dist + lockfile) and running
+`bdtools update ksnp_gui`, which moved it to v0.4.2 and rebuilt cleanly.
+
+The dashboard path did have its own blocker until suite-2026.07.6: the bdtools
+self-update is `git pull --ff-only`, which tools.yml pin drift made refuse (7f).
+Both halves work now.
+
+So for anyone not comfortable at a shell, the supported route is entirely in the
+browser: **Updates panel -> update `bdtools` first, then the tools, then Restart.**
+bdtools first because umbrella-level fixes (doctor, launcher, the watchdog) live
+there, and a machine that updates only its tools gets new tools driving old
+infrastructure.
+
+### 7l. ksnp_gui v0.4.3 — Sample Metadata columns are draggable
+
+`table-layout: auto` sized columns to content, and MTBC filenames run to ~70
+characters, so the Tree label input was clipped to a few visible characters — and
+those labels become the tip names in every tree and matrix kSNP writes, so they have
+to be readable to be checked. Now fixed layout + a colgroup driven by state, with a
+drag handle: pointer events (mouse/trackpad/touch), arrow keys and Home,
+double-click to reset, clamped 15-85%, persisted in localStorage under a
+tool-namespaced key (the GUIs share an origin behind the dashboard proxy). Long names
+ellipsize with the full name on hover.
+
+⚠️ **Stale-closure trap, caught by testing:** the first keyboard handler read
+`metaColPct` from its closure, so three presses in one tick all computed from the
+same value — +2% instead of +6%, and a held key would have crawled. All writes now go
+through one function backed by a ref holding the live value. Any future
+relative-adjustment control in this file wants the same shape.
 
 ### 7c. Released — and how it reaches other machines
 

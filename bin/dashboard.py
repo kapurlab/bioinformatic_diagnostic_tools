@@ -422,7 +422,8 @@ def _schedule_exit(code):
 
 PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Kapur Lab Diagnostic Tools</title>
+<meta name="bdtools-dashboard" content="1">
+<title>Kapur Laboratory bioinformatic diagnostic tools (bdtools)</title>
 <script>
 const THEME_KEY='bdtools-theme';
 function preferredTheme(){
@@ -546,7 +547,7 @@ addEventListener('storage',e=>{if(e.key===THEME_KEY)applyTheme(preferredTheme(),
  @keyframes spin{to{transform:rotate(360deg)}}
 </style></head><body>
 <header><div class="hbar">
-  <div><h1>Kapur Lab Diagnostic Tools</h1>
+  <div><h1>Kapur Laboratory bioinformatic diagnostic tools (bdtools)</h1>
   <p class="sub">Pick a tool to launch it on this machine. Each opens in a new tab.</p></div>
   <div class="head-actions">
   <div class="theme-switch" role="group" aria-label="Appearance">
@@ -1013,7 +1014,7 @@ def main():
     bar = "=" * 64
     print(f"""
 {bar}
-  Kapur Lab Diagnostic Tools — your dashboard is running.
+  Kapur Laboratory bioinformatic diagnostic tools (bdtools) — your dashboard is running.
 
   Open this in your web browser:
       {url}
@@ -1043,7 +1044,10 @@ def _is_dashboard(host, port):
     try:
         import urllib.request
         body = urllib.request.urlopen(f"http://{host}:{port}/", timeout=2).read(400).decode("utf-8", "replace")
-        return "Kapur Lab Diagnostic Tools" in body
+        # Marker meta tag, not the display title — the title is branding and will
+        # change again; this check deciding "is this our dashboard" must not.
+        # Older dashboards predate the marker, so accept either.
+        return 'name="bdtools-dashboard"' in body or "Diagnostic Tools" in body
     except Exception:
         return False
 

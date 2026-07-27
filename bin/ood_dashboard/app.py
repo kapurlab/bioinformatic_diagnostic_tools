@@ -484,7 +484,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
 # (readiness badges + self-update), reused verbatim so there's one template.
 SIMPLE_PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Kapur Lab Diagnostic Tools</title>
+<meta name="bdtools-dashboard" content="1">
+<title>Kapur Laboratory bioinformatic diagnostic tools (bdtools)</title>
 <script>
 const THEME_KEY='bdtools-theme';
 function preferredTheme(){{try{{const v=localStorage.getItem(THEME_KEY);if(['light','dark','system'].includes(v))return v;}}catch(e){{}}return 'system';}}
@@ -519,7 +520,7 @@ addEventListener('storage',e=>{{if(e.key===THEME_KEY)applyTheme(preferredTheme()
  html[data-theme="dark"] .dev{{background:#3a2223;border-color:#633638;color:#f0a09b}}
  html[data-theme="dark"] .err{{color:#f0a09b}}
 </style></head><body>
-<header><div class="hbar"><div><h1>Kapur Lab Diagnostic Tools</h1>
+<header><div class="hbar"><div><h1>Kapur Laboratory bioinformatic diagnostic tools (bdtools)</h1>
 <p class="sub">One session, one allocation. Pick a tool to launch it on this node.</p></div>
 <div class="theme-switch" role="group" aria-label="Appearance">
  <button data-theme-choice="light" aria-label="Use light theme" title="Light" onclick="applyTheme('light')">☀</button>

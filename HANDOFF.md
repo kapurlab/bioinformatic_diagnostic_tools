@@ -21,11 +21,11 @@ Supersedes the 2026-07-23 provenance/dashboard handoff.
 
 | tool | tag | tool | tag |
 |---|---|---|---|
-| vsnp_gui | v0.4.35 | ksnp_gui | **v0.4.3** |
-| amr_plus_gui | v0.3.1 | genoflu_gui | v0.3.1 |
-| mlst_gui | v0.3.2 | irma_gui | v0.3.1 |
-| kraken_id_parse_gui | v0.2.1 | ncbi_submit_gui | v0.2.1 |
-| mhc_gui | v0.2.1 | | |
+| vsnp_gui | v0.4.35 | ksnp_gui | **v0.5.0** |
+| amr_plus_gui | v0.3.2 | genoflu_gui | v0.3.2 |
+| mlst_gui | v0.3.3 | irma_gui | v0.3.2 |
+| kraken_id_parse_gui | v0.2.2 | ncbi_submit_gui | v0.2.2 |
+| mhc_gui | v0.2.2 | | |
 
 ---
 
@@ -581,6 +581,49 @@ ellipsize with the full name on hover.
 same value — +2% instead of +6%, and a held key would have crawled. All writes now go
 through one function backed by a ref holding the live value. Any future
 relative-adjustment control in this file wants the same shape.
+
+### 7m. Results pane: run time, clickable rows — and two date bugs
+
+Shared pane change, so all 8 consumers were re-copied, rebuilt and re-tagged
+(`check-shared-frontend.sh` clean).
+
+`Run date` was `run_date.slice(0, 10)`, discarding the time — several runs of one set
+on one day were indistinguishable, which is exactly when you need to tell them apart.
+Now `2026-07-27_10-45-27`, deliberately the shape the pipelines already stamp into run
+labels and filenames (`ksnp_20260727_074433`,
+`<label>_2026-07-27_10-45-27_stats.xlsx`) so a row maps to a folder by eye. Seconds
+kept: two runs can land in the same minute.
+
+New opt-in `onRowSelect` / `selectedKey`. Tools that don't pass them are unchanged.
+Row clicks ignore clicks landing on a control (checkbox, Files, links) — otherwise
+ticking a checkbox moves the selection under the user — and rows are tabbable with
+Enter/Space.
+
+⚠️ **Two date bugs found while doing this, both worth knowing:**
+- A date-only value (`"2026-07-27"`) parses as **UTC midnight**, so west of Greenwich
+  it rendered as 18:00 the **previous day**. Date-only now shows the bare date.
+- `isoDay` used `toISOString()` — the **UTC** day — so the Today / Last-7d filters
+  binned by UTC while the table shows local time. An evening run displayed one date
+  and filtered under another. Display and filtering now share one helper and agree
+  for every parseable value.
+
+### 7n. ksnp_gui v0.5.0 — provenance surfaced, results click-through
+
+**Which kSNP4 ran this** is now answerable three ways without a shell: a Settings
+block (paths / version / payload architecture / host, from `/api/readiness`'s new
+`toolchain`), the first lines of every run log, and a `toolchain` block in
+`run_manifest.json`. Previously the version lived only in the manifest and the
+**path was recorded nowhere** — even though the version is derived from it, so two
+installs claiming one version were indistinguishable and a wrong-OS payload left no
+trace in a saved result. `version_from_path` moved into `ksnp_platform` beside
+`describe_payload` so Settings, the log and the manifest cannot disagree.
+
+**Layout:** the Results table and the run-detail pane were BOTH titled "Results",
+detail *above* table. Table now first, detail below it as "Selected run", and
+clicking a row opens that run there — the same destination as the Projects list's
+View button, so a run's summary and files appear in one place however you got there.
+The table keys rows by `run_dir` while the Projects list knows only the label, so the
+label is mapped to the row key for highlighting.
 
 ### 7c. Released — and how it reaches other machines
 

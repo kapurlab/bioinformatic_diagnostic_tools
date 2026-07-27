@@ -84,28 +84,59 @@ fi
 
 # _tree_cpu_ticks PID — total CPU ticks (utime+stime) of PID and all descendants.
 # Rises during a solve/extract even when nothing is written to disk.
+# Cumulative CPU time of a process and its descendants, in hundredths of a second.
+#
+# Asks ps rather than reading /proc/<pid>/stat: /proc is Linux-only, so the old
+# version returned 0 for every process on macOS — see _watched_bytes for what that
+# combination cost. `ps -o time=` is in POSIX and prints [[DD-]HH:]MM:SS[.ss] on
+# both GNU and BSD.
 _tree_cpu_ticks() {
-  local frontier="$1" next pid t total=0
+  local frontier="$1" next pid pids=""
   while [[ -n "${frontier}" ]]; do
     next=""
     for pid in ${frontier}; do
-      t="$(awk '{print $14+$15}' "/proc/${pid}/stat" 2>/dev/null || echo 0)"
-      total=$(( total + ${t:-0} ))
+      pids="${pids} ${pid}"
       next="${next} $(pgrep -P "${pid}" 2>/dev/null | tr '\n' ' ')"
     done
     frontier="${next}"
   done
-  echo "${total}"
+  [[ -n "${pids// /}" ]] || { echo 0; return; }
+  ps -o time= -p ${pids} 2>/dev/null | awk '
+    {
+      line = $0
+      gsub(/^[ \t]+|[ \t]+$/, "", line)
+      if (line == "") next
+      days = 0
+      # "DD-HH:MM:SS" — days are separated by "-", not ":", so fold them apart
+      # or a long-running step would be scaled by 60 instead of 24.
+      if (match(line, /^[0-9]+-/)) {
+        days = substr(line, 1, RLENGTH - 1) + 0
+        line = substr(line, RLENGTH + 1)
+      }
+      n = split(line, f, ":")
+      s = 0
+      for (i = 1; i <= n; i++) s = s * 60 + f[i]
+      total += (days * 86400 + s) * 100
+    }
+    END { printf "%d\n", total }'
 }
 
 # _watched_bytes — total bytes across the paths a build writes to (the pkg cache,
 # the target env prefix, the frontend). Rises during a download/extract/link even
 # when CPU is idle. Cheap enough at heartbeat cadence; missing paths are skipped.
+# Total size of the watched paths, in KiB.
+#
+# `du -sk` not `du -sb`: -b is a GNU extension and BSD/macOS du rejects it
+# ("du: invalid option -- b"), so this returned 0 for every path on every Mac.
+# Combined with _tree_cpu_ticks also returning 0 there (no /proc), the stall
+# detector saw NEITHER cpu nor disk progress ever — so every build step longer
+# than BDTOOLS_IDLE_TIMEOUT was killed and retried on macOS. That is what killed
+# the 1 GB kSNP4 Mac-package download at 300s, mid-transfer, twice.
 _watched_bytes() {
   local p b total=0
   for p in "$@"; do
     [[ -e "${p}" ]] || continue
-    b="$(du -sb "${p}" 2>/dev/null | cut -f1)"
+    b="$(du -sk "${p}" 2>/dev/null | awk 'NR==1{print $1}')"
     total=$(( total + ${b:-0} ))
   done
   echo "${total}"
@@ -161,7 +192,11 @@ _run_watched() {
   cbase="$(conda_base_dir 2>/dev/null || true)"
   [[ -n "${cbase}" ]] && watch+=("${cbase}/pkgs")
   [[ -n "${cbase}" && -n "${ENV_NAME:-}" ]] && watch+=("${cbase}/envs/${ENV_NAME}")
-  watch+=("${DIR}/env" "${DIR}/frontend/node_modules" "${DIR}/frontend/dist")
+  # vendor/ holds hand-downloaded third-party payloads (ksnp_gui's ~1 GB kSNP4.1
+  # package). Without it, a long download is invisible to the disk check and the
+  # step looks wedged even while curl is writing steadily — which is exactly how
+  # that download got stall-killed at 300s, twice, on a machine with a fine network.
+  watch+=("${DIR}/env" "${DIR}/frontend/node_modules" "${DIR}/frontend/dist" "${DIR}/vendor")
   local t0 last cpu0 disk0 cpu disk now e idle rc=0
   t0="$(date +%s)"; last="${t0}"
   log "${label} — started $(date '+%H:%M:%S')  (heartbeat ${secs}s; stall-kill after ${idle_max}s of no progress)"

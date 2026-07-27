@@ -21,7 +21,7 @@ Supersedes the 2026-07-23 provenance/dashboard handoff.
 
 | tool | tag | tool | tag |
 |---|---|---|---|
-| vsnp_gui | v0.4.35 | ksnp_gui | **v0.4.1** |
+| vsnp_gui | v0.4.35 | ksnp_gui | **v0.4.2** |
 | amr_plus_gui | v0.3.1 | genoflu_gui | v0.3.1 |
 | mlst_gui | v0.3.2 | irma_gui | v0.3.1 |
 | kraken_id_parse_gui | v0.2.1 | ncbi_submit_gui | v0.2.1 |
@@ -462,6 +462,57 @@ Hide button.
 Done with **no App.css change** — `.layout` is already a flex column, so a panel
 placed directly in it is full width. App.css is copied verbatim across the suite and
 marked do-not-restyle, so fixing this in CSS would have restyled all nine tools.
+
+### 7h. The stall watchdog was blind on macOS — read this before trusting a build
+
+A second Mac could not install ksnp_gui. The download was killed mid-transfer at
+56% of 983 MB, twice, on a perfectly good network:
+
+    … ksnp_gui: building env + frontend: NO cpu/disk progress for 301s
+    !! stalled 301s with no CPU or disk progress; killing to retry
+
+Both of `_run_watched`'s progress detectors were **permanently zero on macOS**:
+
+| detector | why it always returned 0 |
+|---|---|
+| `_watched_bytes` | used `du -sb`; `-b` is a GNU extension and BSD du rejects it outright (`du: invalid option -- b`) |
+| `_tree_cpu_ticks` | read `/proc/<pid>/stat`; there is no `/proc` on macOS |
+
+With neither signal ever changing, the idle timer never reset, so **every**
+`with_progress` step longer than `BDTOOLS_IDLE_TIMEOUT` (300s) was killed and retried
+on every Mac — long conda solves included, not just this download. It went unnoticed
+here because on this machine the zip was already fetched by hand and the env already
+existed, so no single step ever ran past five minutes.
+
+Fixed: `du -sk` (POSIX, both platforms) and `ps -o time=` for the process tree
+(handling `[[DD-]HH:]MM:SS[.ss]`, folding days on `-` not `:`). Verified on macOS that
+the byte counter tracks an 8 MiB write (8192 -> 16384 KiB) and the CPU counter
+advances on a busy process (303 -> 606 hundredths).
+
+`vendor/` is now watched too. A 1 GB download into it produced no movement in any
+watched path, so the step looked wedged while curl was writing steadily.
+
+**If you touch `_run_watched`, test it on macOS.** Both bugs were platform-specific
+and silent — the watchdog did not error, it just quietly killed healthy work.
+
+### 7i. ksnp_gui v0.4.2 — a partial download wedged the install permanently
+
+Downstream of 7h: the stall-kill left a truncated 556 MB zip, and the install gate
+was `[[ ! -s "${ZIP}" ]]` — "non-empty", not "complete". So the truncated file counted
+as already downloaded, unzip failed with "End-of-central-directory signature not
+found", and **every** subsequent `bdtools install ksnp_gui` failed the same way. Only
+deleting the file by hand could break out, which the error never hints at.
+
+Now: download to `<zip>.part`, resume with `curl -C -`, promote to the real name only
+after `unzip -t` verifies it; verify any pre-existing zip before trusting it; keep the
+.part on failure so a re-run resumes instead of restarting 1 GB. `unzip -t` and not a
+size check, because size cannot tell a finished archive from a truncated one and
+SourceForge sometimes serves an HTML error page with HTTP 200 (all three rejection
+cases tested).
+
+Verified by reproducing the other Mac's exact state — a 556,000,000-byte truncated
+zip — which was detected, resumed from that offset, verified, unpacked, and passed
+doctor.
 
 ### 7c. Released — and how it reaches other machines
 

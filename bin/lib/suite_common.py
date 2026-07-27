@@ -268,6 +268,28 @@ def _pin_only_manifest_drift():
     )
 
 
+def _dirty_paths(porcelain):
+    """Paths in a `git status --porcelain` block.
+
+    Parsed rather than sliced at a fixed offset: the caller strips the whole
+    block for display, which eats the leading space of the first line (" M f"
+    becomes "M f") and silently shifts every column. Slicing [3:] then yielded
+    "ools.yml" and the pin-drift check never matched.
+    """
+    paths = set()
+    for line in porcelain.splitlines():
+        line = line.rstrip()
+        if not line:
+            continue
+        rest = line[2:].strip() if len(line) > 2 else ""
+        if not rest:
+            continue
+        # "R  old -> new" reports both sides; either one makes the tree dirty.
+        for part in rest.split(" -> "):
+            paths.add(part.strip().strip('"'))
+    return paths
+
+
 def suite_update_command(log):
     """The `bdtools` self-update command, or None when it must be refused.
 
@@ -293,7 +315,7 @@ def suite_update_command(log):
         dirty = f"(could not inspect checkout: {exc})"
 
     # Only tools.yml is dirty, and only in pin values -> restore it and carry on.
-    if dirty and all(ln[3:].strip() == "tools.yml" for ln in dirty.splitlines()):
+    if dirty and _dirty_paths(dirty) == {"tools.yml"}:
         if _pin_only_manifest_drift():
             log("tools.yml differs from HEAD only in version pins — that is "
                 "`bdtools update`'s own bookkeeping, not an edit of yours.")

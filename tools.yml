@@ -21,7 +21,7 @@
 # All tools carry a baseline tag (vsnp_gui v0.2.0; the rest v0.1.0, cut
 # 2026-06-16). Bump a pin with `bdtools update <tool>` once newer tags exist.
 
-suite_version: "2026.07.27b"
+suite_version: "2026.07.27c"
 
 tools:
   - name: vsnp_gui
@@ -71,7 +71,7 @@ tools:
 
   - name: ksnp_gui
     repo: https://github.com/kapurlab/ksnp_gui.git
-    version: v0.4.0
+    version: v0.4.1
     ood_apps: [ksnp_gui]
     dev_apps: [ksnp_gui_dev]
     env: ksnp

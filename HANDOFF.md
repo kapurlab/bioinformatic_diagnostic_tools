@@ -21,7 +21,7 @@ Supersedes the 2026-07-23 provenance/dashboard handoff.
 
 | tool | tag | tool | tag |
 |---|---|---|---|
-| vsnp_gui | v0.4.35 | ksnp_gui | **v0.4.0** |
+| vsnp_gui | v0.4.35 | ksnp_gui | **v0.4.1** |
 | amr_plus_gui | v0.3.1 | genoflu_gui | v0.3.1 |
 | mlst_gui | v0.3.2 | irma_gui | v0.3.1 |
 | kraken_id_parse_gui | v0.2.1 | ncbi_submit_gui | v0.2.1 |
@@ -410,6 +410,58 @@ Verified: cold start; stop-then-immediately-start; plain start against our own
 running dashboard; plain start against an unrecorded one; `--stop` with and without
 a record; `--restart`; `--port 8081` alongside a busy 8080; tool launch + proxy
 still 200 after a restart; 23 unit tests pass.
+
+### 7f. tools.yml was blocking every bdtools update — a real deadlock
+
+Reported from the Mac: updating bdtools failed *every time*, naming tools.yml as a
+blocking local change, on a file never touched by hand. Not Mac-specific, not a
+false positive, and not formatting noise (verified: manifest.py leaves the file
+byte-identical when the value is unchanged, and rewrites exactly one line when it
+is not). It is a deadlock between two features:
+
+1. `bdtools update <tool>` records the version it moved to by rewriting `version:`
+   in tools.yml (`check-updates.sh apply_one` -> `manifest_set`).
+2. tools.yml is git-tracked, so that dirties the umbrella checkout.
+3. The umbrella self-update is `git pull --ff-only`, which refuses a dirty tree.
+
+So updating any tool made it impossible to update bdtools until you ran
+`git restore tools.yml` by hand. It fires on every release; it only *looked*
+constant this week because several tags were cut in a row. Bumping the shipped pins
+at release time (§7c) narrows the window but cannot close it — between a tag being
+pushed and a machine pulling, that machine's `bdtools update` always writes a pin
+the pull then trips over.
+
+Fixed in `suite_common.suite_update_command`: when tools.yml is the **only** dirty
+file and its diff touches **only** `version:` / `suite_version:` values, it is
+`bdtools update`'s own bookkeeping — derived state that origin's manifest
+supersedes — so it is restored and the pull proceeds, with both facts logged.
+Anything else still refuses: a comment, a repo URL, a new tool entry, or any other
+dirty file. Six cases verified, including the three that must keep refusing.
+
+⚠️ **Watch the porcelain parsing.** The first version used `ln[3:]` to read the
+path out of `git status --porcelain`, but the caller `.strip()`s the whole block for
+display, which eats the leading space of the first line (`" M f"` -> `"M f"`) and
+shifts every column — so it read `"ools.yml"` and never matched. `_dirty_paths`
+parses instead, and is unit-checked against that stripped-first-line shape.
+
+If this ever needs a deeper fix, the honest one is to stop storing per-machine pin
+state in a git-tracked file at all (a local override alongside `dashboard-state.json`),
+leaving tools.yml purely as the shipped manifest. Not done — larger change, and
+`install --server` reads the pin.
+
+### 7g. kSNP GUI layout — ksnp_gui v0.4.1
+
+Projects sat in a two-column grid whose right column stacked Inputs + Sample
+Metadata + Genomes-selected. `.row-grid` is `align-items: stretch` with
+`.row-grid > .panel { height: 100% }`, so Projects was stretched to the height of
+all three — a mostly empty left column beside two wide list panes crammed into a
+1.4fr column. Both panes now sit below the grid as full-width rows; Projects only
+has to match Inputs (552x680 vs 772x680 at 1440px). Genomes-selected gained its own
+Hide button.
+
+Done with **no App.css change** — `.layout` is already a flex column, so a panel
+placed directly in it is full width. App.css is copied verbatim across the suite and
+marked do-not-restyle, so fixing this in CSS would have restyled all nine tools.
 
 ### 7c. Released — and how it reaches other machines
 

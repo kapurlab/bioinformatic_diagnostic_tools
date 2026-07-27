@@ -28,7 +28,7 @@ Each tool reports **PASS / FAIL / SKIP**:
 | `amr_plus_gui` | ✅ tier 1 | *K. pneumoniae* HS11286 (`GCF_000240185.1`) | organism + acquired AMR genes (blaKPC/SHV/CTX-M/rmtB) |
 | `irma_gui` | ✅ tier 1 | influenza-A Illumina paired SRA (`SRR39145037`) | module `FLU`, subtype `H5N1`, 8 segments |
 | `genoflu_gui` | ✅ tier 1 | H5N1 2.3.4.4b cattle isolate (8 GenBank segments) | genotype `B3.13`, 8/8 segments |
-| `ksnp_gui` | ✅ tier 1 (Linux only) | 3 *Listeria monocytogenes* genomes (EGD-e/F2365/10403S) | snps_all ~44309, core ~34713 |
+| `ksnp_gui` | ✅ tier 1 | 3 *Listeria monocytogenes* genomes (EGD-e/F2365/10403S) | snps_all ~44309, core ~34713 |
 | `kraken_id_parse_gui` | ✅ tier 2 (Kraken2 DB) | *M. tuberculosis* reads (`SRR28623786`) | genus `Mycobacterium` ≥90% |
 | `vsnp_gui` | ✅ tier 2 (vsnp3 refs) | *M. bovis* reads (`SRR1791695`) | best-ref `Mycobacterium_AF2122`, spoligotype `SB0673` |
 | `ncbi_submit_gui` | — not tested by design | — | SRA/GenBank submission tool — no diagnostic output |
@@ -110,10 +110,18 @@ PASS confirms the Rosetta env reproduces the validated baseline. A FAIL on a Mac
 is a real signal — surface it, don't relax the golden. (Expect Rosetta runs to be
 slower than native; the calls, not the wall-clock, are what's validated.)
 
-Two expected macOS **SKIPs**, not failures:
-- **`ksnp_gui`** — kSNP4 ships Linux-only ELF binaries (Rosetta translates macOS
-  x86_64, not Linux ELF), so the spec carries `requires_os: linux` and SKIPs on
-  macOS. Run kSNP on Linux or an OOD deployment.
+`ksnp_gui` is validated on macOS as of 2026-07-27 and no longer carries a
+`requires_os` gate. kSNP4 is not a conda package — `deploy/install.sh` fetches the
+kSNP4.1 **Mac** package (Mach-O x86_64, run under Rosetta 2 on Apple Silicon)
+where it used to always fetch the Linux one. On macOS 26.5 / arm64 the 3-genome
+golden reproduces the Linux baseline exactly (snps_all 44309, core 34713). The
+`requires_os: linux` it used to carry was worse than a missing test: it SKIPped
+on precisely the hosts that could be holding a wrong-OS payload. kSNP4 prints
+"the output directory is missing some expected files" on this 3-genome set; the
+output dir is complete and a 16-genome run is clean, so it reads as a small-N
+artifact of kSNP4's own completeness check rather than a platform problem.
+
+One expected macOS **SKIP**, not a failure:
 - **SRA-based tests** (`irma_gui`, `kraken_id_parse_gui`, `vsnp_gui`) need
   **sra-tools** (`prefetch`/`fasterq-dump`). `fetch_sra` finds them on `PATH` or in
   any conda env; if none has them the test SKIPs with a hint

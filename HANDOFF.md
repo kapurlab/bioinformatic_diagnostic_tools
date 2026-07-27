@@ -1,6 +1,6 @@
 # Handoff — Results pane rollout, kSNP4 + AMR fixes, site-path removal
 
-Session: 2026-07-25 → 26. Owner: tks5563. (Development record, kept in-repo.)
+Session: 2026-07-25 → 27. Owner: tks5563. (Development record, kept in-repo.)
 Supersedes the 2026-07-23 provenance/dashboard handoff.
 
 ## TL;DR
@@ -12,8 +12,12 @@ Supersedes the 2026-07-23 provenance/dashboard handoff.
 - **Three real bugs found and fixed by testing against live projects**, each of
   the same shape: *a failed run reported as success*. See §3 — one of them needs
   an operational decision from you.
-- **Four items from the original list are NOT done** — training modules,
-  citations, the NCBI page, and the remaining hard-coded paths. See §5.
+- **Three items from the original list are NOT done** — training modules, the
+  NCBI page, and the remaining hard-coded paths. See §5. (Citations were §5.2 and
+  are now done — §7b.)
+- **2026-07-27, on branches and NOT yet tagged/pushed:** kSNP4 now installs and
+  runs on macOS (it was wrongly treated as Linux-only suite-wide), and all 9 GUIs
+  carry a citation footer. See §7 — read §7a before touching `vendor/` on a Mac.
 
 | tool | tag | tool | tag |
 |---|---|---|---|
@@ -201,13 +205,13 @@ Stated plainly so nothing is assumed finished:
      never calls it** — both surfaces are free-text boxes. And
      `setup-databases.sh` only ever fetches `k2_standard_08gb`, while
      `amr_plus_gui`'s docs call for **PlusPF**.
-2. **No citations in any GUI.** Zero tools have a `<footer>`. `.note` in the
-   shared `App.css` (12px, `var(--muted)`) is the right style and needs no new
-   CSS; `ISO_REFERENCES` in each pipeline is the existing precedent to hang a
-   `CITATIONS` list beside. ⚠️ The one existing citation contradicts itself —
-   `vsnp_gui/README.md` says *BMC Genomics* 2024;25:**545**, its docs say
-   25(1):**548** (same PMID 38822271). **Resolve before propagating to nine
-   footers.**
+2. ~~**No citations in any GUI.**~~ **DONE 2026-07-27** — see §7. All 9 GUIs end
+   with a "How to cite" footer (bdtools + the upstream tool's paper), shared
+   byte-identically as `Citations.jsx`/`Citations.css`. The 545-vs-548
+   contradiction was resolved first: Europe PMC for PMID 38822271 gives page
+   **545**, so 548 was the error, and `docs/DOCUMENTATION_INDEX.md` had also
+   credited the wrong first author (Hicks, not Stuber). Both fixed in `vsnp_gui`
+   before the reference propagated anywhere.
 3. **No `docs/NCBI_SUBMISSION.md`.** The tool is more complete than its label
    suggests — prep → validate → build `submission.xml` → FTP → poll is
    implemented with zero TODOs; dry-run defaults **true** and target defaults
@@ -250,7 +254,90 @@ Stated plainly so nothing is assumed finished:
   `add-noncommercial-license` branch. The LICENSE lives only there and on the open
   PRs; `main` has no LICENSE. Deliberately untouched — pending PSU OTM review.
 
-## 7. Verify after pulling elsewhere
+## 7. Session 2026-07-27 — kSNP4 on macOS, and the citation footers
+
+Two items, both on branches, **none tagged or pushed** — pins unchanged.
+
+### 7a. kSNP4 is not Linux-only, and "on PATH" is not "runnable"
+
+A macOS run of 16 MTBC genomes died 0.4 s in with
+`OSError: [Errno 8] Exec format error: 'MakeKSNP4infile'`.
+
+SourceForge publishes a **kSNP4.1 Mac package** (Mach-O x86_64, fine under
+Rosetta 2) next to the Linux one. The suite assumed Linux-only, so:
+`deploy/install.sh` hard-coded the Linux URL; `install-local.sh` passed
+`--skip-ksnp` off Linux; `requirements.py` had `os: linux`, which made **doctor
+SKIP ksnp_gui on macOS** — so the one check that could have caught a wrong-OS
+payload never ran on the hosts carrying one. `tests/ksnp_gui/test.yml` had
+`requires_os: linux` for the same reason.
+
+Underneath all of it, one mistake repeated in three places: every readiness check
+asked `shutil.which(tool) is not None`. That answers "is there a file with this
+name on PATH", not "can this host exec it". The Linux payload satisfies it.
+
+Fixed: install picks the package by `uname -s` and replaces a wrong-OS payload
+instead of calling it "already installed"; `ksnp_gui/bin/ksnp_platform.py` is the
+one answer to "can kSNP4 run here" (magic bytes: ELF vs Mach-O), shared by the
+GUI's readiness gate and the pipeline preflight; `check.py` gained
+`check_binary_format()` behind a `binary_format_probes` spec key.
+
+⚠️ **A repaired Mac has both archives unpacked in `vendor/`.** The post-unzip
+search for the kSNP4 dir is now format-aware — before, "first `kSNP4` that `find`
+turns up" could re-link the payload just replaced. The wrong-OS files are left on
+disk (545 MB) rather than deleted; `install.sh` says so.
+
+**Second bug, found while verifying the first:** `bdtools local` built the
+server's PATH from `<env>/bin` alone and never applied `path_prepend`, while the
+dashboard launches through `tool_launch` and does. So `bdtools local ksnp_gui`
+served a GUI reporting kSNP4 "not installed" on a **correct** install. `launch()`
+now asks `tool_launch` for `PATH_PREPEND` instead of re-deriving it.
+
+Verified on macOS 26.5 / arm64:
+- `bdtools doctor ksnp_gui` names the wrong-OS payload before, passes after
+- 16 MTBC genomes: 12,057 SNPs, 9,867 core, 27 trees, rc 0
+- `bdtools test ksnp_gui`: **PASS**, reproducing the Linux golden exactly
+  (snps_all 44309, core_snps 34713) — the gate is now removed so this runs at all
+- kSNP4 prints "the output directory is missing some expected files" on the
+  3-genome golden set. Output dir is complete and the 16-genome run is clean, so
+  it reads as a small-N artifact of kSNP4's own check — **not confirmed against a
+  Linux run of the same 3 genomes.** Worth one check next time you're on wgs3.
+
+### 7b. Citation footers — all 9 GUIs
+
+`Citations.jsx` / `Citations.css`, vendored byte-identically (source of truth
+`amr_plus_gui`) and now covered by `check-shared-frontend.sh` via a new
+`SHARED_ALL` set — **shared with `vsnp_gui` too**, unlike the Results pane: every
+class is `cite-` prefixed and the sheet uses only variables both `App.css` and
+`styles.css` define, so it drops into either without restyling anything.
+
+Each GUI shows the bdtools GitHub citation plus its upstream paper(s): vSNP3
+(Hicks 2024), AMRFinderPlus (Feldgarden 2021) + mlst/PubMLST, IRMA (Shepard
+2016), GenoFLU (Youk 2023 — no software paper exists; that is what its README
+asks for), mlst + PubMLST/BIGSdb (Jolley 2018), Kraken 2 (Wood 2019) + Krona
+(Ondov 2011) + Bracken (Lu 2017), kSNP4 (Hall & Nisbet 2023). `ncbi_submit_gui`
+and `mhc_gui` show the suite citation only — the first has no upstream analysis
+tool, the second is developmental and should not yet advertise a method citation.
+
+Every reference was checked against Europe PMC or the upstream repo. **Do not add
+one from memory** — a wrong volume in a footer propagates into other people's
+bibliographies, which is exactly how the 545/548 error survived (§5.2).
+
+### 7c. To release this
+
+Nothing is pushed. Branches: `fix/ksnp-macos-and-citations` (umbrella),
+`fix/macos-ksnp4` (ksnp_gui), `feat/citation-footer` (the other 8).
+The checkouts are the *installed* ones under `~/.local/share/bdtools/checkouts/`
+and were on detached tags, so each branch starts from its release tag.
+
+```bash
+bin/check-shared-frontend.sh   # must be clean before tagging
+bin/bdtools lint               # dependency drift
+bin/bdtools doctor
+```
+Then per repo: merge to `main`, `npm run build`, tag, push, and bump the pin in
+`tools.yml` + `suite_version`.
+
+## 8. Verify after pulling elsewhere
 
 ```bash
 bin/bdtools update all

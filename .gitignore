@@ -15,11 +15,12 @@ checkouts/
 __pycache__/
 *.pyc
 
-# internal dev handoff / session notes — never publish
-HANDOFF*.md
-*_HANDOFF.md
-
-# local agent working notes (.claude/NEW_TOOL_LAYOUT.md etc). The shareable
-# contract lives in docs/BUILDING_A_TOOL.md; these carry in-progress state and
-# per-machine detail that would go stale in a release.
-.claude/
+# Session handoffs and the agent working notes under .claude/ are TRACKED: the
+# development record and the new-tool layout checklist are more useful to the
+# next contributor than they are risky, and keeping them local meant every
+# machine had a different copy. Review a handoff before committing it — no
+# credentials, keys, tokens or host addresses.
+#
+# Machine-local agent state stays ignored.
+.claude/settings.local.json
+.claude/*.local.md

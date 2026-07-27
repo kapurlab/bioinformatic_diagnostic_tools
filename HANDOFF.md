@@ -275,11 +275,32 @@ Underneath all of it, one mistake repeated in three places: every readiness chec
 asked `shutil.which(tool) is not None`. That answers "is there a file with this
 name on PATH", not "can this host exec it". The Linux payload satisfies it.
 
-Fixed: install picks the package by `uname -s` and replaces a wrong-OS payload
-instead of calling it "already installed"; `ksnp_gui/bin/ksnp_platform.py` is the
-one answer to "can kSNP4 run here" (magic bytes: ELF vs Mach-O), shared by the
-GUI's readiness gate and the pipeline preflight; `check.py` gained
-`check_binary_format()` behind a `binary_format_probes` spec key.
+**Where kSNP4 runs, definitively.** Both published packages are **x86_64 only**,
+so the OS is not the whole story:
+
+| host | verdict |
+|---|---|
+| x86_64 Linux (incl. WSL2 on Intel/AMD) | ✅ Linux package |
+| Intel Mac | ✅ Mac package |
+| Apple Silicon Mac | ✅ Mac package via Rosetta 2 |
+| **ARM Linux** (WSL2 on Windows-on-ARM, Graviton) | ❌ **no package exists** |
+| Apple Silicon **without** Rosetta 2 | ❌ until Rosetta is installed |
+
+The first version of this fix only compared ELF-vs-Mach-O, which would have let
+the identical bug through on ARM Linux — x86_64 ELF passes an "is it ELF" test and
+then fails at exec with no translation layer to save it. The check now reads the
+CPU field too (ELF `e_machine`, Mach-O `cputype`) and reports those last two rows
+as distinct states, because each has a different remedy: ARM Linux is "use another
+machine", missing Rosetta is a one-line `softwareupdate` fix. `install.sh` refuses
+ARM Linux up front rather than downloading 545 MB that can never run.
+
+Fixed: install picks the package by `uname -s`/`uname -m` and replaces a wrong-OS
+payload instead of calling it "already installed"; `ksnp_gui/bin/ksnp_platform.py`
+is the one answer to "can kSNP4 run here", shared by the GUI's readiness gate, the
+pipeline preflight, **and `deploy/install.sh` via a small CLI** (`check-dir` /
+`describe` / `package`) — that logic was briefly duplicated in bash with `od(1)`,
+and two implementations of a subtle check is exactly how they drift apart.
+`check.py` gained `check_binary_format()` behind a `binary_format_probes` spec key.
 
 ⚠️ **A repaired Mac has both archives unpacked in `vendor/`.** The post-unzip
 search for the kSNP4 dir is now format-aware — before, "first `kSNP4` that `find`

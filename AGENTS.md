@@ -81,16 +81,23 @@ Notes:
   `softwareupdate --install-rosetta --agree-to-license` and re-run. To force a
   native attempt anyway, set `BDTOOLS_NATIVE_ARM=1` (expect solve failures).
 - **`ksnp_gui` on macOS downloads ~1.0 GB.** kSNP4 is not a conda package;
-  `deploy/install.sh` fetches the kSNP4.1 package for the host OS from
-  SourceForge — the **Mac** package (~1.0 GB, Mach-O x86_64, run under Rosetta 2
-  on Apple Silicon) or the **Linux** one (~545 MB, ELF). Warn the user about the
-  download size on a metered connection; otherwise just let it run. kSNP4 is
-  **not** Linux-only — the suite used to assume it was and skipped the download on
-  macOS, leaving a GUI that could not analyse anything. If a machine still has the
-  wrong package from that era, `bdtools doctor ksnp_gui` now names it
-  ("built for Linux (ELF) but this host needs macOS (Mach-O)") and
-  `bdtools install ksnp_gui` replaces it. Never "fix" this by pointing
-  `--ksnp-url` at the other OS's zip.
+  `deploy/install.sh` fetches the kSNP4.1 package for the host from SourceForge —
+  the **Mac** package (~1.0 GB, Mach-O x86_64, run under Rosetta 2 on Apple
+  Silicon) or the **Linux** one (~545 MB, ELF). Warn the user about the download
+  size on a metered connection; otherwise just let it run. kSNP4 is **not**
+  Linux-only — the suite used to assume it was and skipped the download on macOS,
+  leaving a GUI that could not analyse anything. If a machine still has the wrong
+  package from that era, `bdtools doctor ksnp_gui` now names it ("built for Linux
+  (ELF) x86_64 but this host is macOS arm64") and `bdtools install ksnp_gui`
+  replaces it. Never "fix" this by pointing `--ksnp-url` at the other OS's zip.
+  - **Both kSNP4 packages are x86_64 only.** So kSNP works on x86_64 Linux
+    (including WSL2 on Intel/AMD), Intel Macs, and Apple Silicon via Rosetta 2 —
+    but **not on ARM Linux** (WSL2 on Windows-on-ARM, AWS Graviton, ARM servers),
+    which has no x86 translation layer. There is no package to install there;
+    `install.sh` refuses up front instead of downloading 545 MB that cannot run,
+    and doctor says so. Don't try to work around it — point the user at an x86_64
+    Linux host, a Mac, or an OOD deployment. On Apple Silicon without Rosetta 2,
+    doctor gives the exact `softwareupdate --install-rosetta` fix.
 
 Which `<tool>`? Use a name from `bin/bdtools list`, or `all`. If the user didn't
 say, ask which tool(s) they want. The tools are: `vsnp_gui`, `amr_plus_gui`,

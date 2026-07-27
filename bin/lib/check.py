@@ -102,58 +102,111 @@ def find_binary(name, env_bin, extra_dirs=()):
     return shutil.which(name, path=os.pathsep.join(p for p in search if p))
 
 
-# Executable-format magic bytes. ELF for Linux; Mach-O 64/32-bit little-endian and
-# universal ("fat") for macOS.
+# Executable-format magic bytes, plus the CPU field each format carries:
+# ELF e_machine (offset 0x12, uint16 LE) and Mach-O cputype (offset 4, uint32 LE).
+# The OS alone is not enough — see check_binary_format.
 _ELF_MAGIC = b"\x7fELF"
-_MACHO_MAGIC = (b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe", b"\xca\xfe\xba\xbe")
+_MACHO_THIN = (b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe")
+_MACHO_FAT = b"\xca\xfe\xba\xbe"
+_ELF_MACHINES = {0x03: "i386", 0x3E: "x86_64", 0xB7: "arm64", 0x28: "arm"}
+_MACHO_CPUS = {0x00000007: "i386", 0x01000007: "x86_64", 0x0100000C: "arm64"}
 
 
-def _describe_magic(magic):
+def _binary_target(path):
+    """(os, arch) a binary targets, or None if not a recognised executable."""
+    import struct
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(24)
+    except OSError:
+        return None
+    if len(head) < 20 or head[:2] == b"#!":
+        return None              # unreadable, tiny, or a script (portable)
+    magic = head[:4]
     if magic == _ELF_MAGIC:
-        return "Linux (ELF)"
-    if magic in _MACHO_MAGIC:
-        return "macOS (Mach-O)"
-    return "an unrecognised format"
+        m = struct.unpack("<H", head[18:20])[0]
+        return "linux", _ELF_MACHINES.get(m, "unknown")
+    if magic in _MACHO_THIN:
+        c = struct.unpack("<I", head[4:8])[0]
+        return "macos", _MACHO_CPUS.get(c, "unknown")
+    if magic == _MACHO_FAT:
+        # Universal binary: assume the loader finds a usable slice rather than
+        # parsing the fat header. Permissive on purpose — this guards against the
+        # obvious mistake, it is not a loader.
+        return "macos", "universal"
+    return None
+
+
+def _host_target():
+    os_name = {"Linux": "linux", "Darwin": "macos"}.get(
+        platform.system(), platform.system().lower())
+    m = platform.machine().lower()
+    arch = {"x86_64": "x86_64", "amd64": "x86_64",
+            "arm64": "arm64", "aarch64": "arm64"}.get(m, m)
+    return os_name, arch
+
+
+def _rosetta_available():
+    """Can this Apple Silicon host run x86_64 binaries?"""
+    try:
+        return subprocess.run(["/usr/bin/arch", "-x86_64", "/usr/bin/true"],
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                              timeout=10).returncode == 0
+    except Exception:
+        return False
 
 
 def check_binary_format(name, env_bin, extra_dirs=()):
     """Can this host actually exec `name`? Returns (verdict, detail).
 
-    verdict: True (right format) | False (wrong format) | None (nothing to judge).
+    verdict: True (runnable) | False (not runnable) | None (nothing to judge).
 
     A binary resolving on PATH does not mean it runs. ksnp_gui's kSNP4 payload is
     downloaded by hand from SourceForge, and a macOS host that got the Linux
     archive satisfied every existence check here, was then SKIPped by the old
     `os: linux` gate, and finally failed inside a real analysis with
     "OSError: [Errno 8] Exec format error" — with a run directory already on disk.
-    Checked from the magic bytes rather than by exec'ing: these binaries take
-    positional arguments and would block on stdin or write into the cwd.
+
+    OS *and* CPU are both checked, because the OS alone would have let the same
+    class of bug through on ARM: kSNP4 ships x86_64 only, so an aarch64 Linux host
+    (ARM WSL, Graviton) fails identically with no translation layer to save it,
+    while Apple Silicon succeeds via Rosetta 2 — a distinct state with a distinct
+    remedy, so it is reported separately rather than as a wrong-OS payload.
+
+    Read from the header rather than by exec'ing: these binaries take positional
+    arguments and would block on stdin or write into the cwd.
     """
     path = find_binary(name, env_bin, extra_dirs)
     if not path:
         return None, ""          # absence is the existence check's job, not ours
-    try:
-        with open(path, "rb") as fh:
-            magic = fh.read(4)
-    except OSError:
+    target = _binary_target(path)
+    if target is None:
         return None, ""
-    if not magic:
-        return None, ""
-    # A script (#!/...) is portable by nature — nothing to verify.
-    if magic[:2] == b"#!":
-        return None, ""
+    bin_os, bin_arch = target
+    host_os, host_arch = _host_target()
+    if host_os not in ("linux", "macos"):
+        return None, ""          # no rules for this platform; don't invent one
 
-    system = platform.system()
-    if system == "Linux":
-        want, ok = "Linux (ELF)", magic == _ELF_MAGIC
-    elif system == "Darwin":
-        want, ok = "macOS (Mach-O)", magic in _MACHO_MAGIC
-    else:
-        return None, ""          # no opinion on platforms we don't have rules for
-    if ok:
+    pretty = ("Linux (ELF)" if bin_os == "linux" else "macOS (Mach-O)") + f" {bin_arch}"
+    if bin_os != host_os:
+        # Host named from the same derivation the decision used, so the message
+        # can never contradict its own verdict.
+        host_pretty = {"linux": "Linux", "macos": "macOS"}[host_os]
+        return False, (f"{name} was built for {pretty} but this host is "
+                       f"{host_pretty} {host_arch} ({path})")
+    if bin_arch in ("universal", host_arch):
         return True, path
-    return False, (f"{name} was built for {_describe_magic(magic)} but this host "
-                   f"needs {want} ({path})")
+    if host_os == "macos" and host_arch == "arm64" and bin_arch == "x86_64":
+        if _rosetta_available():
+            return True, path
+        return False, (f"{name} is an Intel (x86_64) binary and Rosetta 2 is not "
+                       f"installed — fix: softwareupdate --install-rosetta "
+                       f"--agree-to-license ({path})")
+    if host_os == "linux" and host_arch == "arm64" and bin_arch == "x86_64":
+        return False, (f"{name} is x86_64 and this is ARM (aarch64) Linux, which "
+                       f"has no x86 translation layer — no build of this tool can "
+                       f"run here ({path})")
+    return False, (f"{name} is {bin_arch} but this host is {host_arch} ({path})")
 
 
 def resolve_asset_dirs(tool, tool_dir, asset_dirs):

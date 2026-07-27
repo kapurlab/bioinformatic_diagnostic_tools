@@ -121,6 +121,13 @@ on precisely the hosts that could be holding a wrong-OS payload. kSNP4 prints
 output dir is complete and a 16-genome run is clean, so it reads as a small-N
 artifact of kSNP4's own completeness check rather than a platform problem.
 
+Both kSNP4 packages are **x86_64 only**, so this test does not run everywhere:
+x86_64 Linux (incl. WSL2 on Intel/AMD), Intel Macs and Apple Silicon (Rosetta 2)
+are all fine, but **ARM Linux** has no x86 translation layer and no kSNP4 package
+exists for it. There is deliberately no `requires_os: linux-arm`-style gate for
+that — `bdtools doctor` reports it as an unrunnable payload with the reason, which
+is more useful than a test that quietly SKIPs.
+
 One expected macOS **SKIP**, not a failure:
 - **SRA-based tests** (`irma_gui`, `kraken_id_parse_gui`, `vsnp_gui`) need
   **sra-tools** (`prefetch`/`fasterq-dump`). `fetch_sra` finds them on `PATH` or in

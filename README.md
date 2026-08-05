@@ -175,7 +175,7 @@ skipped. Restart a running tool afterward to pick up the new paths:
 
 | Database | Used by | Installs to | Source |
 |---|---|---|---|
-| Kraken2 `k2_standard_08gb` (~8 GB) | kraken_id_parse_gui | `<root>/kraken2/k2_standard_08gb` | [genome-idx.s3](https://genome-idx.s3.amazonaws.com/kraken/k2_standard_08_GB_20260226.tar.gz) |
+| Kraken2 `k2_standard_08gb` (~8 GB) | kraken_id_parse_gui | `<root>/kraken2/k2_standard_08gb` | [AWS index collection](https://benlangmead.github.io/aws-indexes/k2) (builds are re-published; `setup-databases` pins a known-good one) |
 | BLAST `ref_prok_rep_genomes` | kraken_id_parse_gui | `<root>/blast/ref_prok_rep_genomes` | NCBI (`update_blastdb.pl`) |
 | vSNP reference options | vsnp_gui | `<root>/vsnp3/reference_options` | [USDA-VS/vSNP_reference_options](https://github.com/USDA-VS/vSNP_reference_options) |
 | vsnp dependencies | vsnp_gui | `<root>/vsnp3/vsnp_dependencies` | [USDA-VS/vsnp3_test_dataset](https://github.com/USDA-VS/vsnp3_test_dataset) (`vsnp_dependencies/`) |
@@ -192,21 +192,26 @@ whole job.
 
 ### 📍 Where the tools look for databases
 
-You rarely need this, but when a path looks wrong this is the order to check. No
-tool contains a path to any particular machine; each one is *told* where to look,
-and the first answer below wins:
+You rarely need this, but when a path looks wrong this is the order to check. A
+tool is *told* where its databases are — it does not assume — and the first answer
+below wins:
 
-1. **What you set in the tool's own Settings page** — saved in
-   `~/.config/<tool>/config.json`. Yours, permanent, and it beats everything else.
-   `bdtools setup-databases` writes here for you.
-2. **What this machine declares** — `DB_ROOT` (or `SITE_ROOT`) in
-   `sites/site.conf`, plus the location `setup-databases` recorded in
-   `~/.local/share/bdtools/db-root`. The launcher turns these into
-   `BDTOOLS_DB_ROOT` for every tool.
-3. **Nothing** — the field is left blank and the tool asks you to choose one. It
-   will not invent a path.
+1. **What you set in the tool's Settings page** — saved in
+   `~/.config/<tool>/config.json`. Yours, permanent, and it beats everything
+   below. `bdtools setup-databases` writes here for you.
+2. **`BDTOOLS_DB_ROOT`**, if something in your shell already exported it.
+3. **The location `setup-databases` recorded** — `~/.local/share/bdtools/db-root`.
+   Note this outranks `sites/site.conf`: a stale file here explains a path that
+   ignores your site config.
+4. **What the machine declares** — `DB_ROOT`, `DATABASES_ROOT`, or `SITE_ROOT` in
+   `sites/site.conf` (a site install writes this; a laptop usually has none).
+5. **`~/databases`** — the last-resort personal default.
 
-To see what your machine resolves, ask it:
+Whatever wins, a tool only offers the path if the data is actually there. If it
+isn't, the field stays **blank** and the tool asks you to choose — it will not show
+you a path that was never going to work.
+
+To see what your machine resolves, run this **from the repository directory**:
 
 ```bash
 bin/lib/site_paths.py .
@@ -216,6 +221,19 @@ bin/lib/site_paths.py .
 > `config.json` and only fills in values that are *missing*, so an update leaves
 > your database and project locations exactly as they were. Nothing rewrites that
 > file behind you.
+
+**One rough edge, so it doesn't surprise you.** The above is true for *databases*.
+The **shared projects** folder is only partly converted — it reaches four of the
+nine tools:
+
+- **Honours a configured location:** AMR Plus, Kraken ID Parse, vSNP, and MLST.
+- **Does not:** GenoFLU, IRMA, kSNP, NCBI Submit, and MHC — these still look at a
+  fixed path that exists only on the original lab server.
+
+Those five check whether the directory is there first, so elsewhere they show an
+**empty** shared area rather than a broken path. Nothing breaks; just don't expect a
+shared results view in those five yet. **Your own `~/projects` works normally in
+every tool** — this only affects the *shared* area.
 
 **Doing it by hand instead — and staging on large storage.** These databases
 are big (Kraken2 standard ~8 GB and up; BLAST nucleotide DBs are tens of GB). If

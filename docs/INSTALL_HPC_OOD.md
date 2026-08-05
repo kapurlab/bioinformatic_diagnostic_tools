@@ -178,6 +178,24 @@ ls /etc/ood/config/clusters.d/
 
 Everything else in `site.conf.example` is optional and documented inline.
 
+**Now load those values into your shell.** Later steps in this guide use
+`$SITE_ROOT` and `$TOOLS_ROOT`, and they are *not* set for you — `site.conf` is
+read by the installer, not by your login shell. Source it, and make it fail loudly
+rather than quietly expanding to nothing:
+
+```bash
+set -a; . sites/site.conf; set +a
+: "${SITE_ROOT:?SITE_ROOT is not set — check sites/site.conf}"
+: "${TOOLS_ROOT:?TOOLS_ROOT is not set — check sites/site.conf}"
+echo "SITE_ROOT=$SITE_ROOT"; echo "TOOLS_ROOT=$TOOLS_ROOT"
+```
+
+> **Do not skip this.** With `SITE_ROOT` unset, a later line like
+> `sudo mkdir -p $SITE_ROOT/databases/kraken2` expands to
+> `sudo mkdir -p /databases/kraken2` and silently creates directories at the root
+> of the filesystem. Run the block above in **every new shell** you use for this
+> install, and re-run it after any edit to `site.conf`.
+
 ### Step 3 — Build the tool environments
 
 **Do this before installing the card.**
@@ -267,7 +285,7 @@ $TOOLS_ROOT/kraken_id_parse_gui/env/bin/kraken2 --version
 #### 3d. Confirm all nine
 
 ```bash
-sudo BDTOOLS_TOOLSDIR=$TOOLS_ROOT bin/bdtools doctor
+BDTOOLS_TOOLSDIR=$TOOLS_ROOT bin/bdtools doctor
 ```
 
 `BDTOOLS_TOOLSDIR` is required here. Without it, `doctor` and `status` inspect
@@ -454,13 +472,26 @@ $SITE_ROOT/
 
 ### Fetching the data
 
+Kraken2 indexes are re-published periodically and old archives are removed, so
+**get a current link** rather than trusting the dated example below. The index
+collection lists every prebuilt build with its size and date:
+**<https://benlangmead.github.io/aws-indexes/k2>**. Copy the `.tar.gz` link for the
+build you want (*Standard-8* is the one referenced throughout this guide).
+
 ```bash
-# Kraken2 standard 8 GB index
-sudo mkdir -p $SITE_ROOT/databases/kraken2
+# Kraken2 standard 8 GB index — replace the URL with a current one from the page above
+sudo mkdir -p $SITE_ROOT/databases/kraken2/k2_standard_08gb
 cd $SITE_ROOT/databases/kraken2
-sudo curl -LO https://genome-idx.s3.amazonaws.com/kraken/k2_standard_08_GB_20260226.tar.gz
-sudo mkdir -p k2_standard_08gb
+sudo curl -fL -O https://genome-idx.s3.amazonaws.com/kraken/k2_standard_08_GB_20260226.tar.gz
 sudo tar -xzf k2_standard_08_GB_20260226.tar.gz -C k2_standard_08gb
+```
+
+The extracted directory must contain `hash.k2d`, `opts.k2d` and `taxo.k2d` — the
+index and its taxonomy travel together, and Kraken reads all three from that one
+directory:
+
+```bash
+ls $SITE_ROOT/databases/kraken2/k2_standard_08gb/hash.k2d
 ```
 
 ```bash
@@ -478,20 +509,13 @@ sudo git clone https://github.com/USDA-VS/vSNP_reference_options.git \
   $SITE_ROOT/refs/vsnp3/reference_options
 ```
 
-Confirm the Kraken2 index unpacked into the directory itself, not a nested one —
-`hash.k2d` must sit directly inside `k2_standard_08gb/`:
-
-```bash
-ls $SITE_ROOT/databases/kraken2/k2_standard_08gb/hash.k2d
-```
-
 > `bin/bdtools setup-databases` also downloads these, but it is built for
 > single-user laptop installs: it records the location in the **running user's**
 > `~/.local/share/bdtools/` and wires the **running user's** `~/.config`. On a
 > multi-user server it would configure only your own account. Stage the data by
 > hand as above.
 
-### How each tool finds its data — and the one gap
+### How each tool finds its data
 
 This is the part that decides whether users see a working app.
 
@@ -548,17 +572,36 @@ refuses a mismatched one rather than failing obscurely.
 
 ### Everything resolves from one file
 
-Worth stating plainly, because it is what makes this install unremarkable: **no
-tool contains a path to any particular site.** Each one reads the values below
-from its environment, and the launcher resolves them from your `sites/site.conf`
+Setting `SITE_ROOT` correctly in Step 2 is most of the configuration. The launcher
+turns your `sites/site.conf` into these variables and hands them to every tool
 (`bin/lib/site_paths.py` is the single resolver):
 
 | Variable | Resolved from | Consumed by |
 |---|---|---|
 | `BDTOOLS_DB_ROOT` | `DB_ROOT`, else `$SITE_ROOT/databases` | reference-database lookups |
-| `BDTOOLS_SHARED_PROJECTS_ROOT` | `SHARED_PROJECTS_ROOT`, else `$SITE_ROOT/projects` | shared results listing |
+| `BDTOOLS_SHARED_PROJECTS_ROOT` | `SHARED_PROJECTS_ROOT`, else `$SITE_ROOT/projects` | shared results listing — **but see the caveat below** |
 | `BDTOOLS_SITE_ROOT` | `SITE_ROOT` | tools keeping several trees under one root (vSNP) |
 | `BDTOOLS_TOOLS_ROOT` | `TOOLS_ROOT` | finding a sibling tool |
+
+**How complete this is, precisely.** Every **reference-database** path a tool needs
+comes from the values above, so nothing you install carries a database path
+belonging to another site.
+
+**Shared projects is only partly converted.** A `SHARED_PROJECTS_ROOT` you set here
+reaches four of the nine tools:
+
+| | Tools | Reads |
+|---|---|---|
+| Honours your setting | `amr_plus_gui`, `kraken_id_parse_gui` | `BDTOOLS_SHARED_PROJECTS_ROOT` |
+| | `vsnp_gui` | `VSNP_GUI_SHARED_PROJECTS_ROOT`, else `$SITE_ROOT/projects` |
+| | `mlst_gui` | its own `MLST_SHARED_PROJECTS` |
+| **Does not** | `genoflu_gui`, `irma_gui`, `ksnp_gui`, `ncbi_submit_gui`, `mhc_gui` | a fixed path from the original lab server |
+
+The five in the bottom row check that the directory exists before offering it, so on
+your cluster that check fails and they show an **empty** shared-projects area (or
+none, depending on the tool). Nothing breaks and no wrong path is displayed — but do
+not promise users a shared results area in those five yet. Per-user `~/projects`
+works everywhere, in every tool.
 
 So setting `SITE_ROOT` correctly in Step 2 is most of the configuration. To see
 exactly what your deployment resolves, ask it:
@@ -602,7 +645,7 @@ missing database and names the path it looked for. To check the whole suite the
 way a user experiences it:
 
 ```bash
-sudo BDTOOLS_TOOLSDIR=$TOOLS_ROOT bin/bdtools doctor
+BDTOOLS_TOOLSDIR=$TOOLS_ROOT bin/bdtools doctor
 ```
 
 ---
@@ -772,7 +815,7 @@ sudo git checkout <new-tag>            # reconcile any local commits first
 cd $TOOLS_ROOT/bioinformatic_diagnostic_tools
 sudo bin/bdtools install <tool> --server --no-card --site-conf sites/site.conf --dry-run
 sudo bin/bdtools install <tool> --server --no-card --site-conf sites/site.conf
-sudo BDTOOLS_TOOLSDIR=$TOOLS_ROOT bin/bdtools doctor <tool>
+BDTOOLS_TOOLSDIR=$TOOLS_ROOT bin/bdtools doctor <tool>
 ```
 
 To see what your deployment is actually running versus what is pinned:

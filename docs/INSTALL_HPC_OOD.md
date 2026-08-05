@@ -114,7 +114,7 @@ serves BAM/BAI to an embedded IGV viewer). **No WebSockets are used anywhere.**
 | Slurm | The card emits Slurm flags. Another scheduler needs the usual adapter change — see [Non-Slurm sites](#non-slurm-sites). |
 | `conda` or `mamba` | Used to build nine tool environments. A miniforge install is fine. |
 | A shared filesystem | Must be readable by all users **and mounted on the compute nodes**. |
-| Disk | ~25 GB for tool environments + conda base; ~36 GB for reference databases. See [Reference databases](#reference-databases). |
+| Disk | ~21 GB for the nine tool environments + conda base; ~36 GB for reference databases. Budget 60 GB and you will not be tight. See [Reference databases](#reference-databases). |
 | Node.js ≥ 20.19 | **Optional.** Every tool ships a prebuilt frontend, and the installer uses it. Only needed if you want to rebuild frontends from source. |
 
 You do **not** need to change Apache/nginx, PAM, authentication, dashboard
@@ -759,9 +759,10 @@ for serving a group.
    Practical mitigation: keep sandbox sessions short, and do not put patient or
    otherwise sensitive data through one. Use Path A for anything real.
 
-2. **Home-directory disk.** Nine conda environments plus a conda base is roughly
-   25 GB in `$HOME`. Many HPC home quotas are 10–50 GB, and conda failures
-   part-way through a quota-exhausted build are ugly to diagnose. Check first:
+2. **Home-directory disk.** Nine conda environments plus a conda base is about
+   21 GB in `$HOME` (measured on the reference install). Many HPC home quotas are
+   10–50 GB, and conda failures part-way through a quota-exhausted build are ugly
+   to diagnose. Check first:
 
    ```bash
    quota -s 2>/dev/null || df -h "$HOME"

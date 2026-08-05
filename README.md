@@ -217,10 +217,22 @@ To see what your machine resolves, run this **from the repository directory**:
 bin/lib/site_paths.py .
 ```
 
-> **Updating never changes paths you have already set.** A tool reads your saved
-> `config.json` and only fills in values that are *missing*, so an update leaves
-> your database and project locations exactly as they were. Nothing rewrites that
-> file behind you.
+> **Updating does not change the database paths you have set.** A tool loads your
+> saved `config.json` and fills in only the keys that are *missing*, so your
+> `kraken_db`, `blast_db` and equivalents survive an update untouched.
+>
+> Two deliberate exceptions, so they don't surprise you:
+> - **vSNP, local installs only.** `bdtools install` / `bdtools local` repoints five
+>   *derived* keys in `~/.config/vsnp_gui/config.json` (`vsnp3_path`,
+>   `vsnp3_reference_options_root`, `vcf_db_folders_root`, `vsnp_gui_deploy_path`,
+>   `audit_root`) at your local install and sets `shared_projects_root` to empty.
+>   That repairs configs which had frozen a server's paths; your other preferences
+>   in the file are kept. A server/OOD deployment never runs this step.
+> - **The shared-projects root in AMR Plus and vSNP** comes from the deployment when
+>   it provides one, in preference to the saved value — that is what lets a laptop
+>   switch off a shared area which only exists on a server.
+>
+> Your personal `projects_root` and your database paths are never overridden.
 
 **One rough edge, so it doesn't surprise you.** The above is true for *databases*.
 The **shared projects** folder is only partly converted — it reaches four of the

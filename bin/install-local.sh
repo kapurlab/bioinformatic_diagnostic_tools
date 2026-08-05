@@ -690,12 +690,40 @@ PY
   # needs no vendored payload must still launch on a machine where this fails.
   # PYBIN is a plain system python3 from common.sh, and tool_launch is
   # stdlib-only — it does not need the tool's own env to answer this.
-  local launch_path="${envbin}" _pp
-  _pp="$("${PYBIN}" "${KT_BIN_DIR}/lib/tool_launch.py" show "${TOOL}" "${PORT}" 2>/dev/null \
-    | "${PYBIN}" -c 'import json,sys
+  local launch_path="${envbin}" _pp _tl_show
+  _tl_show="$("${PYBIN}" "${KT_BIN_DIR}/lib/tool_launch.py" show "${TOOL}" "${PORT}" 2>/dev/null || true)"
+  _pp="$(printf '%s' "${_tl_show}" | "${PYBIN}" -c 'import json,sys
 try: print(json.load(sys.stdin)["env_overrides"].get("PATH_PREPEND",""))
 except Exception: print("")' 2>/dev/null)"
   [[ -n "${_pp}" ]] && launch_path="${_pp}"
+
+  # Hand the tool this deployment's resolved roots, exactly as the proxy dashboard
+  # does through tool_launch. Without this, `bdtools local` (and the legacy
+  # multi-port dashboard, which launches tools *through* `bdtools local`) started
+  # backends with only PATH+PYTHONPATH set — so a tool that asks the deployment
+  # where its databases are got no answer here while getting a correct one under
+  # the proxy dashboard. Two launchers disagreeing about the environment is the
+  # same failure mode the PATH_PREPEND lookup above exists to prevent.
+  #
+  # Values come from tool_launch (which owns the rule) and are applied only when
+  # not already set, so an explicit export by the caller still wins.
+  local _sv _k
+  while IFS= read -r _sv; do
+    [[ -n "${_sv}" ]] || continue
+    _k="${_sv%%=*}"
+    [[ -n "${!_k:-}" ]] && continue             # already set: the caller wins
+    export "${_sv}"
+  done < <(printf '%s' "${_tl_show}" | "${PYBIN}" -c 'import json,sys
+KEYS = ("BDTOOLS_DB_ROOT", "BDTOOLS_SHARED_PROJECTS_ROOT",
+        "BDTOOLS_SITE_ROOT", "BDTOOLS_TOOLS_ROOT")
+try:
+    ov = json.load(sys.stdin)["env_overrides"]
+except Exception:
+    sys.exit(0)
+for k in KEYS:
+    v = ov.get(k)
+    if v:
+        print("%s=%s" % (k, v))' 2>/dev/null)
 
   # Record the exact, reproducible launch command to the tool's dashboard log, so
   # every run (including this direct `bdtools local` one) is copy-paste rerunnable

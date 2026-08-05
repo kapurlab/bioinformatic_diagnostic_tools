@@ -30,7 +30,28 @@ BLAST_DBNAME="ref_prok_rep_genomes"
 VSNP_REFS_REPO="https://github.com/USDA-VS/vSNP_reference_options.git"
 VSNP_DEPS_REPO="https://github.com/USDA-VS/vsnp3_test_dataset.git"
 
-SHARED_ROOT_DEFAULT="/srv/kapurlab/databases"
+# The "shared" location comes from what this deployment declares (site.conf
+# DB_ROOT / SITE_ROOT, via site_paths), not from a literal. It used to be this
+# lab's own path, which meant anyone else choosing "shared" was offered
+# /srv/kapurlab/databases as though it were a general convention — a directory
+# that exists on exactly one set of machines. Empty here means "this machine has
+# no shared root declared", and we ask instead of suggesting someone else's.
+SHARED_ROOT_DEFAULT="$("${PYBIN:-python3}" - "${KT_BIN_DIR}/lib" "${REPO_DIR}" <<'PY' 2>/dev/null || true
+import sys
+sys.path.insert(0, sys.argv[1])
+import site_paths
+# Pass the repo so the admin-edited sites/site.conf counts, not just the
+# per-machine record that a previous run may have left behind.
+cfg = site_paths.site_config(sys.argv[2])
+for key in ("DB_ROOT", "DATABASES_ROOT"):
+    if (cfg.get(key) or "").strip():
+        print(cfg[key].strip()); break
+else:
+    root = (cfg.get("SITE_ROOT") or "").strip()
+    if root:
+        print(root.rstrip("/") + "/databases")
+PY
+)"
 HOME_ROOT_DEFAULT="${HOME}/databases"
 
 ROOT=""; LOC=""; WANT=()
@@ -65,12 +86,23 @@ if [[ -z "${ROOT}" ]]; then
   fi
   case "${LOC}" in
     home)   ROOT="${HOME_ROOT_DEFAULT}";;
-    # "Shared" is editable: the baked-in /srv/kapurlab path only exists on the
-    # lab servers, so on a laptop/other host let the user point it anywhere.
+    # "Shared" is whatever this machine declares, and always editable. With no
+    # declared root there is nothing sensible to suggest, so require a path
+    # rather than offer one that belongs to another site.
     shared) if [[ -t 0 && -t 1 ]]; then
-              read -r -p "Shared location [${SHARED_ROOT_DEFAULT}]: " sp
-              ROOT="${sp:-${SHARED_ROOT_DEFAULT}}"
-            else ROOT="${SHARED_ROOT_DEFAULT}"; fi;;
+              if [[ -n "${SHARED_ROOT_DEFAULT}" ]]; then
+                read -r -p "Shared location [${SHARED_ROOT_DEFAULT}]: " sp
+                ROOT="${sp:-${SHARED_ROOT_DEFAULT}}"
+              else
+                read -r -p "Shared location (full path): " sp
+                ROOT="${sp}"
+                [[ -n "${ROOT}" ]] || die "no path given"
+              fi
+            else
+              ROOT="${SHARED_ROOT_DEFAULT}"
+              [[ -n "${ROOT}" ]] || die "no shared database root is configured on this machine.
+  Pass --root DIR, or declare DB_ROOT (or SITE_ROOT) in sites/site.conf."
+            fi;;
     custom) read -r -p "Database directory: " ROOT
             [[ -n "${ROOT}" ]] || die "no path given";;
   esac

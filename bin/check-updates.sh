@@ -27,6 +27,9 @@ while [[ $# -gt 0 ]]; do
     --apply)   APPLY=1; shift;;
     --force)   FORCE=1; shift;;
     --dry-run) DRY_RUN=1; export DRY_RUN; shift;;
+    # Without this, --help was taken as a TOOL NAME and reported
+    # "manifest: no tool named '--help'".
+    -h|--help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
     *)         ARGS+=("$1"); shift;;
   esac
 done

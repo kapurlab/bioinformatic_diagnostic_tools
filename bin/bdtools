@@ -83,7 +83,35 @@ cmd_install() {
       --no-card)   passthru+=(--no-card); shift;;   # server: build a tool's env but skip its per-tool card
       --dashboard) dashboard=1; shift;;             # server: install the consolidated dashboard card
       --no-dashboard) no_dashboard=1; shift;;   # local: don't auto-open the dashboard at the end
-      -*)          die "install: unknown option '$1'";;
+      -h|--help)   cat <<'EOF'
+usage: bdtools install [--local|--sandbox|--server] <tool|all> [options]
+
+  --local     (default) personal install on this machine; tools served at
+              127.0.0.1 via `bdtools dashboard`. No Open OnDemand involved.
+  --sandbox   per-user Open OnDemand app in ~/ondemand/dev/. No admin rights
+              needed, but the Develop menu usually must be enabled for you.
+  --server    system-wide Open OnDemand install (needs root).
+
+Options:
+  --dry-run          print every action, change nothing. Use this first.
+  --site-conf PATH   site configuration (--server); default sites/site.conf
+  --prefix DIR       install root instead of ~/.local/share/bdtools
+  --no-card          --server: build the environment, register no per-tool card
+  --dashboard        --server: register the single consolidated dashboard card
+  --with-dev         --server: also register developer branch-picker cards
+  --no-dashboard     --local: don't open the dashboard when finished
+
+`all` means every tool in tools.yml. Examples:
+
+  bdtools install all                        # personal install of the whole suite
+  bdtools install --sandbox all              # per-user OOD apps
+  bdtools install all --server --no-card     # build envs site-wide, no cards
+  bdtools install --server --dashboard       # register the one OOD card
+
+Open OnDemand deployments: see docs/INSTALL_HPC_OOD.md.
+EOF
+                   return 0;;
+      -*)          die "install: unknown option '$1'  (see: bdtools install --help)";;
       *)         raw+=("$1"); shift;;
     esac
   done
@@ -385,6 +413,11 @@ cmd_dashboard() {
   local mode=serve rest=() port=8080 no_browser=0 tools_dir=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
+      # Without this, `bdtools dashboard --help` fell through to the catch-all and
+      # STARTED the dashboard — asking a command what it does should never launch
+      # a server. Prints the option list documented in the comment above.
+      -h|--help)    sed -n '/^cmd_dashboard()/,/^  local mode=serve/p' "$0" \
+                      | sed -n 's/^  #\{1,\} \{0,1\}/  /p'; return 0;;
       --restart)    mode=restart; shift;;
       --stop)       mode=stop; shift;;
       --no-browser) no_browser=1; rest+=("$1"); shift;;
@@ -603,7 +636,29 @@ cmd_dashboard() {
 cmd_check_updates() { "${KT_BIN_DIR}/check-updates.sh" "${1:-all}"; }
 
 cmd_update() {
-  [[ $# -ge 1 ]] || die "usage: bdtools update <tool|all> [--dry-run]"
+  # `update --help` used to reach the manifest lookup and report
+  # "no tool named '--help'", which reads like the user's mistake rather than a
+  # missing help path.
+  if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+    cat <<'EOF'
+usage: bdtools update <tool|all> [--dry-run] [--force]
+
+Move a tool's checkout to the newest upstream release tag and rebuild it, then
+bump that tool's pin in tools.yml. Report without changing anything:
+
+  bdtools check-updates [tool|all]
+
+--dry-run  print what would change, touch nothing
+--force    rebuild even if already on the newest tag
+
+Only bdtools-owned checkouts are updated. A server tree (e.g. one installed with
+`install --server`) is refused, because it may carry reviewed site commits that a
+force checkout would discard — reconcile those deliberately, then re-run
+`install --server`.
+EOF
+    return 0
+  fi
+  [[ $# -ge 1 ]] || die "usage: bdtools update <tool|all> [--dry-run]  (see: bdtools update --help)"
   "${KT_BIN_DIR}/check-updates.sh" --apply "$@"
 }
 

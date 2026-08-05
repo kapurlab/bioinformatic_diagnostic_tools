@@ -162,7 +162,11 @@ bin/bdtools setup-databases
 It first asks **where** to put the databases:
 
 - **Home** (`~/databases`) — a personal copy, good for a laptop.
-- **Shared** (`/srv/kapurlab/databases`) — one copy the whole machine/lab uses.
+- **Shared** — one copy the whole machine or lab uses. You are prompted for the
+  path. If this machine already declares a shared root (see
+  [Where the tools look](#-where-the-tools-look-for-databases)) it is offered as
+  the default; otherwise type the full path you want.
+- **Custom** — type any path.
 
 then downloads each database and **points the relevant GUIs at it automatically**
 (no manual path editing). Re-running is safe — anything already present is
@@ -179,6 +183,39 @@ skipped. Restart a running tool afterward to pick up the new paths:
 Set up only some of them by naming which: `bin/bdtools setup-databases kraken vsnp-refs`
 (choices: `kraken blast vsnp-refs vsnp-deps`). Pick the location non-interactively
 with `--home`, `--shared`, or `--root DIR`.
+
+The other five tools — `mlst_gui`, `genoflu_gui`, `irma_gui`, `ksnp_gui`,
+`ncbi_submit_gui` — need **no** external database. `amr_plus_gui` needs none
+either: its AMRFinderPlus database ships inside its conda environment.
+`mhc_gui` ships its BoLA references in the repository. So the list above is the
+whole job.
+
+### 📍 Where the tools look for databases
+
+You rarely need this, but when a path looks wrong this is the order to check. No
+tool contains a path to any particular machine; each one is *told* where to look,
+and the first answer below wins:
+
+1. **What you set in the tool's own Settings page** — saved in
+   `~/.config/<tool>/config.json`. Yours, permanent, and it beats everything else.
+   `bdtools setup-databases` writes here for you.
+2. **What this machine declares** — `DB_ROOT` (or `SITE_ROOT`) in
+   `sites/site.conf`, plus the location `setup-databases` recorded in
+   `~/.local/share/bdtools/db-root`. The launcher turns these into
+   `BDTOOLS_DB_ROOT` for every tool.
+3. **Nothing** — the field is left blank and the tool asks you to choose one. It
+   will not invent a path.
+
+To see what your machine resolves, ask it:
+
+```bash
+bin/lib/site_paths.py .
+```
+
+> **Updating never changes paths you have already set.** A tool reads your saved
+> `config.json` and only fills in values that are *missing*, so an update leaves
+> your database and project locations exactly as they were. Nothing rewrites that
+> file behind you.
 
 **Doing it by hand instead — and staging on large storage.** These databases
 are big (Kraken2 standard ~8 GB and up; BLAST nucleotide DBs are tens of GB). If
@@ -287,15 +324,29 @@ cd bioinformatic_diagnostic_tools
 bin/bdtools install --sandbox all        # or a single tool, e.g. install --sandbox mlst_gui
 ```
 
-Then open your OOD portal → the **Dev / sandbox** apps, and launch a tool card.
-Full runbook: [docs/INSTALL_HPC_OOD.md](docs/INSTALL_HPC_OOD.md).
+Then open your OOD portal → **Develop → My Sandbox Apps**, and launch a tool card.
+
+Two things to know before you rely on this:
+
+- **The Develop menu usually has to be switched on for you** — on a stock OOD site
+  that is a one-time admin action, not something you can do yourself. If you do not
+  see the menu, ask your admin.
+- **A sandbox tool session is not private to you.** Per-tool cards listen on all
+  interfaces with no password, so any authenticated OOD user at your site who
+  learns the host and port can use your running session. Fine for trying things
+  out; use the site-wide install below for real specimen data.
+
+Full runbook, including both points: [docs/INSTALL_HPC_OOD.md](docs/INSTALL_HPC_OOD.md).
 
 ### The OOD sysadmin (publish to all users) — `--server`
 
-Installs each tool as a **system app** under `/var/www/ood/apps/sys/`, registering
-**only the production card** (developer cards stay hidden; add `--with-dev` per
-tool only if you want them). Requires root and an already-running OOD. Always
-dry-run first — it shows exactly what it would write and changes nothing.
+The recommended deployment registers **one** OOD app: a dashboard that allocates a
+compute node once per session and runs every tool the user opens on that node. One
+scheduler job per session instead of one per tool, and authentication enforced once
+(per-session token plus an OOD-username match) instead of not at all.
+
+Requires root and an already-running OOD. Always dry-run first — it prints every
+action and changes nothing.
 
 ```bash
 sudo git clone https://github.com/kapurlab/bioinformatic_diagnostic_tools.git /opt/bdtools
@@ -303,22 +354,35 @@ cd /opt/bdtools
 
 # 1. Describe your site once (paths, cluster name, Unix groups):
 cp sites/site.conf.example sites/site.conf
-"$EDITOR" sites/site.conf          # set CLUSTER_NAME, TOOLS_ROOT, SYS_APPS_DIR, groups
+"$EDITOR" sites/site.conf          # set SITE_ROOT, CLUSTER_NAME, TOOLS_ROOT, SYS_APPS_DIR
 
-# 2. Dry-run FIRST — prints every action, writes nothing:
-sudo bin/bdtools install --server all --site-conf sites/site.conf --dry-run
+# 2. Build the tool environments, WITHOUT registering a card for each one:
+sudo bin/bdtools install all --server --no-card --site-conf sites/site.conf --dry-run
+sudo bin/bdtools install all --server --no-card --site-conf sites/site.conf
 
-# 3. Real install once the dry-run looks right:
-sudo bin/bdtools install --server all --site-conf sites/site.conf
+# 3. Register the single dashboard card:
+sudo bin/bdtools install --server --dashboard --site-conf sites/site.conf --dry-run
+sudo bin/bdtools install --server --dashboard --site-conf sites/site.conf
 
 # 4. Validate (download known samples, run, diff vs expected):
 BDTOOLS_TOOLSDIR=<your TOOLS_ROOT> bin/bdtools test all
 ```
 
-The production tool cards now show up in the OOD dashboard for all users. Full
-runbook (preflight checks, what it does and does **not** touch, updating):
-[docs/SYSADMIN.md](docs/SYSADMIN.md). Standing up a brand-new lab server from bare
-metal (no OOD yet)? Start at [docs/INSTALL_BARE_METAL.md](docs/INSTALL_BARE_METAL.md).
+> **Step 2 does not build every tool.** `vsnp_gui` and `kraken_id_parse_gui` do not
+> ship the standard installer, so it prints a warning for each and carries on —
+> the command still exits 0 with seven of nine environments built. Both need one
+> extra command each. **[docs/INSTALL_HPC_OOD.md](docs/INSTALL_HPC_OOD.md) is the
+> guide to follow for a real deployment**; the block above is the shape, not the
+> whole procedure.
+
+Per-tool cards are still supported for a dedicated single-tool allocation — omit
+`--no-card` for that tool — but they are not needed for routine use, and each one
+starts its own job with no application-level authentication.
+
+Also relevant: [docs/OOD_DASHBOARD.md](docs/OOD_DASHBOARD.md) (design and auth
+model), [docs/SYSADMIN.md](docs/SYSADMIN.md) (installer phases). Standing up a
+brand-new lab server from bare metal, with no OOD yet? Start at
+[docs/INSTALL_BARE_METAL.md](docs/INSTALL_BARE_METAL.md).
 
 ## All deployment paths at a glance
 
@@ -475,9 +539,10 @@ bin/bdtools dashboard --restart
 ```
 
 Which path is in the error tells you which case it is:
-- **`/srv/kapurlab/refs/…`** — an old build/config pointing at the lab server.
-  The `update` + config reset above fixes it. (If you build by hand, the install
-  must print `configured local vsnp site: …/vsnp3-site`.)
+- **A path under some shared server you are not on** (anything outside your home
+  or `BDTOOLS_HOME`) — an old build or a saved config still pointing at a previous
+  deployment. The `update` + config reset above fixes it. (If you build by hand,
+  the install must print `configured local vsnp site: …/vsnp3-site`.)
 - **`…/vsnp3-site/refs/…/<your-reference>`** — the reference lives in a folder you
   added under **Reference Locations**, not the default set. vsnp_gui **v0.2.1+**
   searches all your added locations; `bin/bdtools update vsnp_gui` gets it.

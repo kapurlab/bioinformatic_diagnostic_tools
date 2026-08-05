@@ -324,15 +324,23 @@ def resolve(tool, port, host="127.0.0.1"):
     # and the SIBLING Kraken install — from VSNP_GUI_SITE_ROOT, read ONCE at process
     # start (backend config.py). The Kraken path (_KRAKEN_GUI_ROOT) is derived from
     # that env var, NOT a config.json key, so a correct config.json can't repair it.
-    # On a SERVER deployment those paths live under /srv/... (the backend default)
-    # and script.sh.erb sets nothing extra. On a LOCAL/group install, install-local.sh
-    # builds a self-contained site tree at <BDTOOLS_HOME>/vsnp3-site and points the
-    # GUI there; this launch path must do the SAME, or the backend falls back to
-    # /srv/kapurlab and e.g. "Run Kraken" 503s ("Kraken ID Parse is not installed at
-    # /srv/kapurlab/tools/kraken_id_parse_gui"). Discriminator (server vs local) is
-    # simply whether that site tree exists — install-local.sh creates it only for
-    # local installs. setdefault() never overrides a value the caller already set, so
-    # an explicit --server / script.sh.erb export of VSNP_GUI_SITE_ROOT still wins.
+    # On a LOCAL/group install, install-local.sh builds a self-contained site tree at
+    # <BDTOOLS_HOME>/vsnp3-site and points the GUI there; this launch path must do the
+    # SAME, or the backend falls back to its built-in default and e.g. "Run Kraken"
+    # 503s ("Kraken ID Parse is not installed at <default>/tools/kraken_id_parse_gui").
+    # Discriminator (server vs local) is simply whether that site tree exists —
+    # install-local.sh creates it only for local installs.
+    #
+    # On a SERVER deployment there is no such tree, so take the root the deployment
+    # declares (site.conf SITE_ROOT, via site_paths). The backend's own fallback is a
+    # literal that is only correct on the reference install, so leaving it unset would
+    # send vSNP looking for a multi-GB reference set in a directory this site has
+    # never heard of — and finding nothing there looks identical to having no
+    # references configured. Resolving it here keeps every site path in site_paths,
+    # which is the one place allowed to know them.
+    #
+    # setdefault() never overrides a value the caller already set, so an explicit
+    # export by a card or a wrapper still wins.
     if tool == "vsnp_gui":
         _site = os.path.join(_bdtools_home(), "vsnp3-site")
         if os.path.isdir(_site):
@@ -340,6 +348,8 @@ def resolve(tool, port, host="127.0.0.1"):
             # Single-user local install: one Projects root. "" is authoritative-empty
             # in the backend (disables the multi-user shared root); mirrors install-local.sh.
             env.setdefault("VSNP_GUI_SHARED_PROJECTS_ROOT", "")
+        elif env.get(site_paths.ENV_SITE_ROOT):
+            env.setdefault("VSNP_GUI_SITE_ROOT", env[site_paths.ENV_SITE_ROOT])
         # Record the effective values (whatever won: caller's export or our default)
         # so the reproduce command carries them — the backend reads them once at start.
         for _k in ("VSNP_GUI_SITE_ROOT", "VSNP_GUI_SHARED_PROJECTS_ROOT"):

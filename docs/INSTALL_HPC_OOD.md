@@ -43,10 +43,11 @@ Please read these. They are the failures we have seen, not hypotheticals.
    card. Those still work, but each one starts *its own* scheduler job, and they
    have **no application-level authentication**. Registering them defeats the
    point of the dashboard. See [Why one card](#why-one-card-and-not-nine).
-5. **Databases are not downloaded for you, and one tool has hard-coded paths.**
-   Read [Reference databases](#reference-databases) before you tell users the app
-   is ready. Skipping this produces a dashboard where tools open fine and then
-   fail at run time.
+5. **Reference data is not downloaded for you.** Only two of the nine tools need
+   any, and it is about 36 GB, but you must stage it and it must be visible **on
+   the compute nodes**. Read [Reference databases](#reference-databases) before
+   you tell users the app is ready — otherwise tools open fine and fail at run
+   time.
 
 ---
 
@@ -146,8 +147,10 @@ choose becomes `TOOLS_ROOT` in the next step, and the umbrella **must** end up a
 ### Step 2 — Write `sites/site.conf`
 
 This single file is where every site-specific value lives. The installer reads it
-and rewrites the Kapur Lab literals (paths, cluster name, group names, branding)
-as it renders the card.
+and substitutes your paths, cluster name, group names and branding into the card as
+it renders it — the ordinary templating step any packaged OOD app does. Tool code
+contains no site paths; it reads what this file declares (see
+[Everything resolves from one file](#everything-resolves-from-one-file)).
 
 ```bash
 cp sites/site.conf.example sites/site.conf
@@ -300,10 +303,11 @@ Two warnings in the output are worth understanding:
 - `no tool env has starlette+httpx+uvicorn yet` — you skipped Step 3. Go back.
 
 If you would rather not use the installer, the card is an ordinary OOD app: copy
-`ood/apps/bdtools_dashboard/` to `$SYS_APPS_DIR/bdtools_dashboard/` and edit
-`form.yml`'s `cluster:` and the `/srv/kapurlab…` paths in
-`template/script.sh.erb` by hand. The installer only does that substitution for
-you.
+`ood/apps/bdtools_dashboard/` to `$SYS_APPS_DIR/bdtools_dashboard/`, set
+`form.yml`'s `cluster:`, and replace the two install-path defaults at the top of
+`template/script.sh.erb` with your `TOOLS_ROOT`. Substituting those values is the
+only thing the installer does to the card, so a hand copy is a supported path —
+just diff the result against the source so you can see exactly what changed.
 
 ### Step 6 — Make the session take a full node
 
@@ -519,43 +523,52 @@ echo "$SITE_ROOT/refs/vsnp3/reference_options" | \
 
 Without that file, the references are on disk and vSNP still cannot see them.
 
-**Kraken/BLAST — needs a decision from you.** `kraken_id_parse_gui` stores its
-database paths in a **per-user** config file,
-`~/.config/kraken_id_parse_gui/config.json`, which is created on that user's first
-launch from built-in defaults. Those defaults are the literal Kapur Lab paths
-(`/srv/kapurlab/databases/…`), and this tool does not read the site
-configuration. So at your site, each user's first launch seeds paths that do not
-exist.
+**Kraken/BLAST — handled for you, provided you used the layout above.**
+`kraken_id_parse_gui` takes `BDTOOLS_DB_ROOT` and looks for
+`kraken2/k2_standard_08gb` and `blast/ref_prok_rep_genomes` beneath it. Both
+values are exported for you — by the dashboard's launcher, and by the tool's own
+card if you install one.
 
-Pick one:
+If your data is somewhere other than `$DATABASES_ROOT/kraken2/…` and
+`$DATABASES_ROOT/blast/…`, you have two ordinary choices:
 
-- **Option 1 — match the expected paths (recommended; fixes it for everyone at
-  once).** Make the built-in defaults resolve by pointing them at your real data:
+- **Point the site configuration at it.** Set `DB_ROOT` in `sites/site.conf` to
+  whatever directory holds your `kraken2/` and `blast/` subdirectories. This is a
+  configuration change, nothing more.
+- **Let users select it.** In the tool, **Settings** → *Kraken2 DB* and *BLAST
+  DB*. Saved per user. Useful when different groups use different indexes.
 
-  ```bash
-  sudo mkdir -p /srv/kapurlab
-  sudo ln -s $SITE_ROOT/databases /srv/kapurlab/databases
-  ```
-
-  A single symlink, and every user's first launch is correct with no action from
-  them. Slightly inelegant — you are creating a `/srv/kapurlab` on your cluster —
-  but it is one link, it is obvious to a later admin, and it needs no per-user
-  work.
-
-- **Option 2 — have each user set it once.** In the Kraken tool, **Settings** →
-  set *Kraken2 DB* and *BLAST DB* to your paths. Saved per user, permanently.
-  Fine for a handful of users; poor at scale, and the failure mode is a confusing
-  error on someone's first real run.
-
-We consider the hard-coded default a defect on our side rather than something you
-should have to work around. It is tracked, and when it is fixed this tool will
-honour `BDTOOLS_DB_ROOT` like the others. Until then, Option 1 is the pragmatic
-answer.
+If neither the site nor the user has set a path, the field is simply blank and the
+tool asks for one. It will not invent a path and then fail on it.
 
 **AMRFinderPlus — nothing to do.** The database ships inside the conda
 environment and `amrfinder` finds it. Only configure a path if you want to
 override it with a newer database; the tool checks version compatibility and
 refuses a mismatched one rather than failing obscurely.
+
+### Everything resolves from one file
+
+Worth stating plainly, because it is what makes this install unremarkable: **no
+tool contains a path to any particular site.** Each one reads the values below
+from its environment, and the launcher resolves them from your `sites/site.conf`
+(`bin/lib/site_paths.py` is the single resolver):
+
+| Variable | Resolved from | Consumed by |
+|---|---|---|
+| `BDTOOLS_DB_ROOT` | `DB_ROOT`, else `$SITE_ROOT/databases` | reference-database lookups |
+| `BDTOOLS_SHARED_PROJECTS_ROOT` | `SHARED_PROJECTS_ROOT`, else `$SITE_ROOT/projects` | shared results listing |
+| `BDTOOLS_SITE_ROOT` | `SITE_ROOT` | tools keeping several trees under one root (vSNP) |
+| `BDTOOLS_TOOLS_ROOT` | `TOOLS_ROOT` | finding a sibling tool |
+
+So setting `SITE_ROOT` correctly in Step 2 is most of the configuration. To see
+exactly what your deployment resolves, ask it:
+
+```bash
+bin/lib/site_paths.py .
+```
+
+That prints the resolved roots as JSON, along with the site configuration it read
+them from. Run it before Step 5 and confirm the paths are the ones you intend.
 
 ### Permissions
 
@@ -790,7 +803,8 @@ it bound — start there.
 | Run progress never updates | Proxy is buffering SSE | Ensure `text/event-stream` is streamed unbuffered |
 | IGV/BAM panel will not load | HTTP `Range`/`206` not passed through | Allow range requests through the proxy |
 | Tool reports a missing database | Data not staged, or path not visible on the compute node | [Reference databases](#reference-databases); confirm compute-node mounts |
-| Kraken tool points at `/srv/kapurlab/...` | Hard-coded default | Option 1 or 2 in [How each tool finds its data](#how-each-tool-finds-its-data--and-the-one-gap) |
+| A database field is blank on first launch | No path declared, or the data is not at the expected subpath | Set `DB_ROOT` in `sites/site.conf`, or set it per user in the tool's Settings |
+| A tool reports a path from some other site | An old `~/.config/<tool>/config.json` is being reused | Saved user settings win over site defaults; clear or correct that file |
 
 ### Non-Slurm sites
 
@@ -814,7 +828,11 @@ We would rather you hear these from us than discover them.
   reviewed rather than run. Expect first-launch iteration on `submit.yml.erb`,
   not on the application. This is the strongest argument for rehearsing with
   Path B first.
-- **`kraken_id_parse_gui` hard-codes its database defaults**, as described above.
+- **Per-user settings outrank site defaults.** Every tool stores its own
+  preferences in `~/.config/<tool>/config.json`, and a saved value always wins over
+  what the site declares. That is what you want day to day, but it means a user who
+  ran an earlier build keeps whatever paths they had. If someone reports a stale
+  path, look there first.
 - **Two tools are labelled "under active development"** and the dashboard shows a
   caveat on their cards: `mhc_gui` (DRB3 typing is production-ready, Class I calls
   are provisional; not validated for diagnostic use) and `ncbi_submit_gui`

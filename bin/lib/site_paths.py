@@ -31,6 +31,7 @@ which already declares itself "the ONE place site-specific values live") or via
 Dependency-free (stdlib only) so it runs under any tool env's python.
 """
 import os
+import re
 import shlex
 from pathlib import Path
 
@@ -38,6 +39,7 @@ from pathlib import Path
 ENV_SHARED_PROJECTS_ROOT = "BDTOOLS_SHARED_PROJECTS_ROOT"
 ENV_DB_ROOT = "BDTOOLS_DB_ROOT"
 ENV_TOOLS_ROOT = "BDTOOLS_TOOLS_ROOT"
+ENV_SITE_ROOT = "BDTOOLS_SITE_ROOT"
 ENV_HOME = "BDTOOLS_HOME"
 
 _SITE_FILE = "site.conf"
@@ -74,8 +76,43 @@ def _read_site_file(path: Path) -> dict:
             parts = shlex.split(val, comments=True)
         except ValueError:
             continue
-        out[key] = parts[0] if parts else ""
+        out[key] = _expand(parts[0] if parts else "", out)
     return out
+
+
+# site.conf is *sourced as bash* by the installer, and site.conf.example teaches
+# that idiom in its own defaults (SITE_ROOT=/srv/${SITE_NAME},
+# TOOLS_ROOT=${SITE_ROOT}/tools, DB_ROOT=${SITE_ROOT}/databases). This module
+# reads the same file as text, so without expanding those references a site that
+# followed the example verbatim would hand tools the literal string
+# "${SITE_ROOT}/tools" — a path that cannot exist, arrived at by doing exactly
+# what the documentation showed.
+_VAR_RE = re.compile(r"\$\{(\w+)\}|\$(\w+)")
+
+
+def _expand(value: str, seen: dict) -> str:
+    """Expand ${VAR}/$VAR against earlier keys in this file, then the environment.
+
+    Bash-like in the ways that matter here: definitions resolve against what came
+    before them, and an unknown name expands to empty. Substitution is applied to
+    the replacement text too (bounded), so TOOLS_ROOT=${SITE_ROOT}/tools works when
+    SITE_ROOT itself was written as /srv/${SITE_NAME}.
+    """
+    if "$" not in value:
+        return value
+
+    def sub(m):
+        name = m.group(1) or m.group(2)
+        if name in seen:
+            return seen[name]
+        return os.environ.get(name, "")
+
+    for _ in range(8):                     # cheap cycle guard; nesting is shallow
+        expanded = _VAR_RE.sub(sub, value)
+        if expanded == value:
+            break
+        value = expanded
+    return value
 
 
 def site_config(repo_dir=None) -> dict:
@@ -138,6 +175,29 @@ def db_root(repo_dir=None) -> Path:
     return Path.home() / "databases"
 
 
+def site_root(repo_dir=None):
+    """The deployment's top-level shared root, or None if this isn't a site install.
+
+    Some tools organise several shared trees under one root rather than reading a
+    path per feature — vsnp_gui is the example: references, the shared VCF-db
+    folders, its sibling analysis env and the shared projects dir all hang off
+    <site_root>. Those tools take a single env var, so the launcher needs one
+    authoritative answer.
+
+    Returns None rather than guessing. In particular it does NOT derive the root
+    from tools_root's parent: TOOLS_ROOT is independently configurable, so
+    `dirname(TOOLS_ROOT)` is a coincidence of the default layout, and a wrong root
+    here is exactly the silent failure this module exists to prevent — the tool
+    would look confidently in a directory that simply has nothing in it.
+    """
+    env = os.environ.get(ENV_SITE_ROOT, "").strip()
+    if env:
+        return Path(env)
+    cfg = site_config(repo_dir)
+    val = (cfg.get("SITE_ROOT") or "").strip()
+    return Path(val) if val else None
+
+
 def tools_root(repo_dir=None) -> Path:
     """The directory that CONTAINS the tool checkouts, so a sibling is
     <tools_root>/<tool>. Lets one tool find another without assuming a layout."""
@@ -179,6 +239,9 @@ def as_env(repo_dir=None) -> dict:
     shared = shared_projects_root(repo_dir)
     if shared is not None:
         env[ENV_SHARED_PROJECTS_ROOT] = str(shared)
+    site = site_root(repo_dir)
+    if site is not None:
+        env[ENV_SITE_ROOT] = str(site)
     return env
 
 
@@ -187,8 +250,10 @@ if __name__ == "__main__":
     import sys
     repo = sys.argv[1] if len(sys.argv) > 1 else None
     shared = shared_projects_root(repo)
+    site = site_root(repo)
     print(json.dumps({
         "bdtools_home": str(bdtools_home()),
+        "site_root": str(site) if site else None,
         "tools_root": str(tools_root(repo)),
         "db_root": str(db_root(repo)),
         "shared_projects_root": str(shared) if shared else None,

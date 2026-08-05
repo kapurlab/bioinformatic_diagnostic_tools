@@ -83,7 +83,8 @@ if [[ ${DRY_RUN} -eq 0 ]]; then
   "${PYBIN:-python3}" - "${KT_BIN_DIR}/lib" \
       "${SHARED_PROJECTS_ROOT:-${SITE_ROOT}/projects}" \
       "${DB_ROOT:-${SITE_ROOT}/databases}" \
-      "${TOOLS_ROOT}" <<'PY' 2>/dev/null || warn "could not record site paths (tools will fall back to per-user defaults)"
+      "${TOOLS_ROOT}" \
+      "${SITE_ROOT}" <<'PY' 2>/dev/null || warn "could not record site paths (tools will fall back to per-user defaults)"
 import sys
 sys.path.insert(0, sys.argv[1])
 import site_paths
@@ -91,6 +92,11 @@ print("recorded site paths ->", site_paths.write_site_file({
     "SHARED_PROJECTS_ROOT": sys.argv[2],
     "DB_ROOT": sys.argv[3],
     "TOOLS_ROOT": sys.argv[4],
+    # SITE_ROOT is what tools that organise several shared trees under one root
+    # read (vsnp_gui takes exactly one env var for refs + VCF dbs + its sibling
+    # env + projects). Recording it means the launcher can answer that from
+    # configuration instead of the tool falling back to a baked-in literal.
+    "SITE_ROOT": sys.argv[5],
 }))
 PY
 fi

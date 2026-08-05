@@ -1,11 +1,21 @@
 #!/usr/bin/env bash
-# lint.sh — maintainer guardrail: flag dependency drift across the tool repos.
+# lint.sh — maintainer guardrail: dependency drift + OOD card validity.
 #
-# For each tool checkout, statically compares the dependencies its code actually
-# uses (python imports + programs it shells out to) against what its env spec
-# declares (environment.yml, requirements.txt, requirements.py). Catches the
-# "code grew a dependency the env doesn't ship" bug at release time instead of
-# on a user's fresh machine. No env build — fast enough for CI / pre-release.
+# Two static checks, no env build and no scheduler, so it is fast enough for CI:
+#
+#   1. Dependency drift — compares the dependencies each tool's code actually
+#      uses (python imports + programs it shells out to) against what its env
+#      spec declares (environment.yml, requirements.txt, requirements.py).
+#      Catches "the code grew a dependency the env doesn't ship" at release time
+#      instead of on a user's fresh machine.
+#   2. OOD cards — every card's YAML parses, form fields are defined, ERB
+#      renders, the rendered submission carries the keys OOD needs with no empty
+#      scheduler flags, and the shell templates pass `bash -n`. This is the only
+#      automated coverage the batch_connect submission path has: it cannot be run
+#      here (the reference OOD uses the linux_host adapter, which issues no
+#      resource request), so a Slurm site would otherwise be its first execution.
+#   Plus a frontend check: built assets must use relative URLs, or the OOD
+#   dashboard's sub-path proxy 404s every one of them.
 #
 #   lint.sh [tool ...]      (default: every tool with a checkout)
 set -uo pipefail
@@ -39,7 +49,30 @@ check_frontend_base() {
   return 0
 }
 
+# OOD cards are templates that only execute inside OOD, on a scheduler. The
+# consolidated dashboard's submit.yml.erb has never run anywhere — the reference
+# deployment uses the linux_host adapter, which issues no resource request — so
+# the first Slurm site is the first execution. Validate everything that does not
+# need a scheduler: YAML parses, form fields are defined, ERB renders, the
+# rendered submission has the keys OOD needs with no empty flags, and the shell
+# templates pass `bash -n`. See bin/lib/check_cards.py.
+check_cards() {
+  local dir="$1" name="$2" cards=()
+  while IFS= read -r c; do [[ -n "${c}" ]] && cards+=("${c}"); done \
+    < <(find "${dir}/ood/apps" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort)
+  [[ ${#cards[@]} -gt 0 ]] || return 0
+  "${PYBIN}" "${KT_BIN_DIR}/lib/check_cards.py" "${cards[@]}" || return 1
+  return 0
+}
+
 issues=0; checked=0
+
+# The umbrella owns the consolidated dashboard card; check it even when no tool
+# checkout exists, because it is the one card a production site installs.
+if [[ -d "${REPO_DIR}/ood/apps" ]]; then
+  check_cards "${REPO_DIR}" umbrella || issues=$((issues + 1))
+fi
+
 while read -r name; do
   [[ -n "$name" ]] || continue
   manifest_has "$name" || { warn "unknown tool: $name"; continue; }
@@ -51,13 +84,15 @@ while read -r name; do
   checked=$((checked + 1))
   "${PYBIN}" "${KT_BIN_DIR}/lib/lint.py" --tool "$name" --dir "${dir}" || issues=$((issues + 1))
   check_frontend_base "${dir}" "${name}" || issues=$((issues + 1))
+  check_cards "${dir}" "${name}" || issues=$((issues + 1))
 done < <(targets)
 
 echo
 if [[ ${checked} -eq 0 ]]; then warn "no tool checkouts found to lint."; exit 0; fi
 if [[ ${issues} -gt 0 ]]; then
-  warn "${issues} tool(s) have possible dependency drift. A ✗ is very likely a real gap"
-  warn "(add it to that tool's environment.yml); a ! is advisory — confirm before acting."
+  warn "${issues} check(s) failed. A ✗ is very likely real — a missing dependency"
+  warn "belongs in that tool's environment.yml; a broken card would fail at OOD"
+  warn "submit time. A ! is advisory — confirm before acting."
   exit 1
 fi
-ok "no dependency drift across ${checked} tool(s)."
+ok "no dependency drift, and every OOD card validates, across ${checked} tool(s)."

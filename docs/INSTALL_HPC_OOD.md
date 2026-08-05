@@ -872,11 +872,31 @@ We would rather you hear these from us than discover them.
   reviewed rather than run. Expect first-launch iteration on `submit.yml.erb`,
   not on the application. This is the strongest argument for rehearsing with
   Path B first.
-- **Per-user settings outrank site defaults.** Every tool stores its own
-  preferences in `~/.config/<tool>/config.json`, and a saved value always wins over
-  what the site declares. That is what you want day to day, but it means a user who
-  ran an earlier build keeps whatever paths they had. If someone reports a stale
-  path, look there first.
+
+  Everything short of handing the job to a scheduler *is* checked automatically,
+  and you can run that check yourself before you install anything:
+
+  ```bash
+  bin/bdtools lint
+  ```
+
+  For every card it confirms the YAML parses, each `form:` field has an
+  `attributes:` definition, the ERB renders under real ERB, the rendered
+  submission carries the `batch_connect` keys OOD requires with **no scheduler
+  flag that rendered to an empty value**, and the shell templates pass
+  `bash -n`. That covers the mistakes an unrun template usually hides. What it
+  cannot tell you is whether your partition names, account string and node limits
+  are right for your cluster — that is what the first real launch is for.
+- **For databases, per-user settings outrank site defaults.** Every tool keeps its
+  preferences in `~/.config/<tool>/config.json`, and a saved **database** path wins
+  over what the site declares. That is what you want day to day, but it means a user
+  who ran an earlier build keeps whatever paths they had — if someone reports a
+  stale path, look there first. Two documented exceptions run the other way:
+  `amr_plus_gui` and `vsnp_gui` take the **shared-projects** root from the
+  deployment in preference to a saved value (an empty value deliberately disables
+  the shared area, which is how a laptop switches off a server-only path), and a
+  *local* `bdtools install` repoints vSNP's derived reference paths. Neither applies
+  to a server deployment's database configuration.
 - **Two tools are labelled "under active development"** and the dashboard shows a
   caveat on their cards: `mhc_gui` (DRB3 typing is production-ready, Class I calls
   are provisional; not validated for diagnostic use) and `ncbi_submit_gui`

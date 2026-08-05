@@ -18,6 +18,17 @@ PERSONAL_REPO="${HOME}/bioinformatic_diagnostic_tools"
 if [ -d "${SHARED_REPO}/bin/ood_dashboard" ]; then
   REPO="${SHARED_REPO}"
   export BDTOOLS_TOOLSDIR=/srv/kapurlab/tools
+  # vsnp_gui reads its whole shared tree from VSNP_GUI_SITE_ROOT, ONCE at process
+  # start: refs (<root>/refs/vsnp3/reference_options), the shared VCF-db folders,
+  # the sibling vsnp3 analysis env (<root>/tools/vsnp3) and the sibling Kraken
+  # install. Its built-in default is the literal /srv/kapurlab, which is correct
+  # only on the reference install — so export it explicitly. `install --server`
+  # rewrites this literal to the site's SITE_ROOT, which is exactly why it must
+  # appear here rather than being left to the backend default: a card rendered
+  # for another site would otherwise send vSNP looking for a 3+ GB reference set
+  # under /srv/kapurlab and quietly find nothing. Only set for the SHARED repo —
+  # a personal/sandbox run keeps tool_launch.py's per-user vsnp3-site logic.
+  export VSNP_GUI_SITE_ROOT="${VSNP_GUI_SITE_ROOT:-/srv/kapurlab}"
 elif [ -d "${PERSONAL_REPO}/bin/ood_dashboard" ]; then
   REPO="${PERSONAL_REPO}"
 else

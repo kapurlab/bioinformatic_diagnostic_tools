@@ -1,37 +1,855 @@
-# Institutional OOD install (user sandbox app)
+# Deploying bdtools on an institutional Open OnDemand cluster
 
-Use this when your university/institution **already runs Open OnDemand** and you
-are a regular (non-admin) user. You install a tool as a personal **sandbox app**
-under `~/ondemand/dev/` — no sysadmin involvement, no system changes.
+**bdtools** (Kapur Laboratory bioinformatic diagnostic tools) is a suite of nine
+bacterial/viral whole-genome-sequencing diagnostic GUIs. On Open OnDemand it is
+published as **one app**: a dashboard that allocates a compute node once per
+session and runs whichever tools the user opens on that same node.
+
+There are two ways to install it. They are independent — read the one you need.
+
+| | [Path A — site-wide](#path-a--site-wide-install-admin) | [Path B — personal sandbox](#path-b--personal-sandbox-app-no-admin-rights) |
+|---|---|---|
+| Who runs it | An OOD administrator (needs `sudo`) | Any user, in their own `$HOME` |
+| Who can then use bdtools | **Everyone with OOD access** | Only that one user |
+| Where it appears | The OOD app list, for all users | **Develop → My Sandbox Apps** |
+| Good for | Production | Proving the install before Path A; development |
+
+If your goal is "make bdtools available to everyone on our cluster", you want
+**Path A**. Path B is the low-risk rehearsal — it needs no admin action and runs
+on the real scheduler under real site authentication, so it is the fastest way to
+find site-specific problems before touching `/var/www/ood`.
+
+---
+
+## Before you start — the five things that actually go wrong
+
+Please read these. They are the failures we have seen, not hypotheticals.
+
+1. **This is a `batch_connect` app, not a Passenger app.** If you are following
+   OSC's [Passenger app tutorial](https://osc.github.io/ood-documentation/latest/tutorials/tutorials-passenger-apps.html),
+   you are reading about a different kind of app — one that runs on the OOD web
+   node. bdtools runs on a **compute node** via the scheduler. See
+   [Which kind of OOD app this is](#which-kind-of-ood-app-this-is).
+2. **Order matters: build the tool environments *before* installing the card.**
+   The dashboard needs a Python that has `starlette`, `httpx` and `uvicorn`, and
+   it gets that from a tool environment. Install the card first and the session
+   will start and immediately exit with an error.
+3. **Two of the nine tools do not build with the standard command, and the
+   installer only *warns* about it.** `bdtools install all --server` will finish
+   looking successful while `vsnp_gui` and `kraken_id_parse_gui` have no
+   environment at all. [Steps 3b and 3c](#step-3--build-the-tool-environments)
+   are not optional.
+4. **Install only the dashboard card.** Each tool also ships its own per-tool
+   card. Those still work, but each one starts *its own* scheduler job, and they
+   have **no application-level authentication**. Registering them defeats the
+   point of the dashboard. See [Why one card](#why-one-card-and-not-nine).
+5. **Databases are not downloaded for you, and one tool has hard-coded paths.**
+   Read [Reference databases](#reference-databases) before you tell users the app
+   is ready. Skipping this produces a dashboard where tools open fine and then
+   fail at run time.
+
+---
+
+## Which kind of OOD app this is
+
+`ood/apps/bdtools_dashboard/manifest.yml` declares `role: batch_connect`. A
+session works like this:
+
+```
+Browser ──► OOD web node ──► /rnode/<compute-node>/<port>/ ──► dashboard (0.0.0.0:$port)
+   (site auth, mod_ood_proxy)                                        │  on the compute node
+                                                                     ├─► vsnp_gui   on 127.0.0.1:p1
+                                                                     ├─► mlst_gui   on 127.0.0.1:p2
+                                                                     └─► … one per tool opened
+```
+
+The user launches one session. The dashboard is the only process OOD proxies to.
+Each tool the user clicks is started by the dashboard on **loopback** on that same
+node and reverse-proxied under `/t/<tool>/`.
+
+This matters because the workloads are real: read alignment, assembly, tree
+building, and a Kraken2 classification that reads an 8 GB (or larger) index. They
+cannot run on the web node, which is why this is not a Passenger app.
+
+What *does* carry over from the Passenger tutorial is the parts that are the same
+for every app role: apps live in `/var/www/ood/apps/sys/<app>`, a `manifest.yml`
+makes them appear in the dashboard, and `~/ondemand/dev` is the sandbox mechanism.
+
+### Why one card and not nine
+
+| | Nine per-tool cards | One dashboard card |
+|---|---|---|
+| Scheduler jobs | One **per tool opened** | One **per session** |
+| Authentication | None at the app layer | Per-session token **+** OOD-username match |
+| Network exposure | Each tool binds `0.0.0.0` on the node | Tools bind `127.0.0.1`; only the dashboard is proxied |
+
+The dashboard's security model, in full:
+
+- Each tool binds `127.0.0.1` on the compute node, so it is unreachable from
+  other nodes or by other users even if they guess the host and port.
+- The dashboard requires **both**:
+  - the per-session secret generated by the `batch_connect` `basic` template
+    (`$password`), handed to the browser once as `?t=…` and then held as an
+    HttpOnly cookie; and
+  - an `X-Forwarded-User` header equal to the session owner. `mod_ood_proxy` sets
+    and overwrites that header (`/opt/ood/mod_ood_proxy/lib/ood/proxy.lua:26` in
+    OOD 3.1.16), so a user cannot forge it. If the header is absent the token
+    still applies; set `BDTOOLS_STRICT_USER_HEADER=1` to hard-require it.
+- Nothing runs as root. No daemon is added to the web node. No setuid binaries.
+
+Proxy requirements, so you can check them against your site's configuration:
+Server-Sent Events (`text/event-stream`) must stream **unbuffered** (that is how
+run progress reaches the browser), and HTTP `Range`/`206` must pass through (vSNP
+serves BAM/BAI to an embedded IGV viewer). **No WebSockets are used anywhere.**
+
+---
+
+## Prerequisites
+
+| Requirement | Notes |
+|---|---|
+| Open OnDemand already running | This guide does **not** install OOD core. Verified against 3.1.16. |
+| A cluster definition | `/etc/ood/config/clusters.d/<id>.yml`. You will need `<id>`. |
+| Slurm | The card emits Slurm flags. Another scheduler needs the usual adapter change — see [Non-Slurm sites](#non-slurm-sites). |
+| `conda` or `mamba` | Used to build nine tool environments. A miniforge install is fine. |
+| A shared filesystem | Must be readable by all users **and mounted on the compute nodes**. |
+| Disk | ~25 GB for tool environments + conda base; ~36 GB for reference databases. See [Reference databases](#reference-databases). |
+| Node.js ≥ 20.19 | **Optional.** Every tool ships a prebuilt frontend, and the installer uses it. Only needed if you want to rebuild frontends from source. |
+
+You do **not** need to change Apache/nginx, PAM, authentication, dashboard
+branding, Unix groups, or `clusters.d`. The installer does not touch them.
+
+---
+
+## Path A — site-wide install (admin)
+
+Roughly 45 minutes of your attention, plus unattended download time for conda
+environments and reference data.
+
+### Step 1 — Clone the umbrella repository
+
+Clone it onto the shared filesystem, at the path you intend to keep. The
+dashboard's session script resolves the checkout by path, so this is not a
+throwaway location.
+
+```bash
+sudo mkdir -p /shared/apps/bdtools
+sudo git clone https://github.com/kapurlab/bioinformatic_diagnostic_tools.git \
+  /shared/apps/bdtools/bioinformatic_diagnostic_tools
+cd /shared/apps/bdtools/bioinformatic_diagnostic_tools
+```
+
+Substitute your own path for `/shared/apps/bdtools` throughout. Whatever you
+choose becomes `TOOLS_ROOT` in the next step, and the umbrella **must** end up at
+`$TOOLS_ROOT/bioinformatic_diagnostic_tools` — the card looks for it there.
+
+### Step 2 — Write `sites/site.conf`
+
+This single file is where every site-specific value lives. The installer reads it
+and rewrites the Kapur Lab literals (paths, cluster name, group names, branding)
+as it renders the card.
+
+```bash
+cp sites/site.conf.example sites/site.conf
+```
+
+Now edit it. These are the fields that matter:
+
+| Field | Set it to | Example |
+|---|---|---|
+| `SITE_NAME` | Short lowercase slug for your site | `psu` |
+| `SITE_DISPLAY` | Human-readable name, used in titles | `"Penn State ICDS"` |
+| `SITE_ROOT` | Shared root for tools, refs, projects | `/shared/apps/bdtools` |
+| `CLUSTER_NAME` | **Your cluster id** — must match `/etc/ood/config/clusters.d/<id>.yml` | `roar` |
+| `TOOLS_ROOT` | Where tool checkouts and environments go | `${SITE_ROOT}/tools` |
+| `CONDA_BASE` | An existing conda/miniforge base | `${TOOLS_ROOT}/miniforge3` |
+| `SYS_APPS_DIR` | OOD system apps directory | `/var/www/ood/apps/sys` |
+| `DATABASES_ROOT` | Where reference databases will live | `${SITE_ROOT}/databases` |
+
+`CLUSTER_NAME` is the one value you cannot guess. If you are unsure, list what
+exists:
+
+```bash
+ls /etc/ood/config/clusters.d/
+```
+
+Everything else in `site.conf.example` is optional and documented inline.
+
+### Step 3 — Build the tool environments
+
+**Do this before installing the card.**
+
+#### 3a. The seven standard tools
+
+`--no-card` means "build the environment, do not register a per-tool card" —
+which is what you want, because the dashboard is the only card you will register.
+
+Review first:
+
+```bash
+sudo bin/bdtools install all --server --no-card --site-conf sites/site.conf --dry-run
+```
+
+Then run it for real:
+
+```bash
+sudo bin/bdtools install all --server --no-card --site-conf sites/site.conf
+```
+
+This clones each tool at its pinned tag into `$TOOLS_ROOT/<tool>` and builds its
+conda environment at `$TOOLS_ROOT/<tool>/env`. Expect it to take a while;
+`amr_plus_gui` and `kraken_id_parse_gui` are multi-GB environments.
+
+> **Read the output.** This command builds seven of the nine tools. For the other
+> two it prints a **warning and continues** — it does not fail. Look for:
+>
+> ```
+> !! vsnp_gui has no deploy/install.sh — build its env+frontend manually,
+> !! kraken_id_parse_gui has no deploy/install.sh — build its env+frontend manually,
+> ```
+>
+> Those two are Steps 3b and 3c. If you skip them, the suite will appear to
+> install cleanly and those two tools will fail when a user opens them.
+
+#### 3b. `vsnp_gui` — build the shared `vsnp3` environment
+
+vSNP is the largest tool and does not use the common layout. Its analysis engine
+lives in a **sibling** environment at `$TOOLS_ROOT/vsnp3`, shared with the GUI, and
+it ships its own installer.
+
+That installer, `deploy/install_ood.sh`, is a full site-bootstrap script with
+phases for Unix groups, storage, OOD cards and cron. **You only want the
+`toolchain` phase** — the conda `vsnp3` environment, backend dependencies,
+upstream patches, and the frontend build. Naming the phase explicitly is what
+keeps it from touching anything else.
+
+```bash
+cd $TOOLS_ROOT/vsnp_gui
+sudo cp deploy/site.conf.example deploy/site.conf
+```
+
+Edit `deploy/site.conf` so `SITE_ROOT`, `CLUSTER_NAME` and `CONDA_BASE` match what
+you put in the umbrella's `sites/site.conf`, then:
+
+```bash
+sudo ./deploy/install_ood.sh --site-conf deploy/site.conf --dry-run toolchain
+sudo ./deploy/install_ood.sh --site-conf deploy/site.conf toolchain
+```
+
+Confirm the environment exists and carries both the analysis tools and the web
+server dependencies:
+
+```bash
+$TOOLS_ROOT/vsnp3/bin/python -c 'import fastapi, uvicorn, pydantic; print("web deps OK")'
+ls $TOOLS_ROOT/vsnp3/bin/vsnp3_step1.py $TOOLS_ROOT/vsnp3/bin/snp-dists
+```
+
+#### 3c. `kraken_id_parse_gui` — build from its environment file
+
+This tool has no `deploy/` directory at all. Its environment file documents the
+exact command, and `-p` puts the environment where the launcher looks for it:
+
+```bash
+cd $TOOLS_ROOT/kraken_id_parse_gui
+sudo conda env create -p $TOOLS_ROOT/kraken_id_parse_gui/env \
+  -f conda_setup/environment.yml
+```
+
+Verify:
+
+```bash
+$TOOLS_ROOT/kraken_id_parse_gui/env/bin/kraken2 --version
+```
+
+#### 3d. Confirm all nine
+
+```bash
+sudo BDTOOLS_TOOLSDIR=$TOOLS_ROOT bin/bdtools doctor
+```
+
+`BDTOOLS_TOOLSDIR` is required here. Without it, `doctor` and `status` inspect
+*your personal* checkouts and will happily report a healthy suite while the shared
+install is broken. Every tool should report `environment present` and
+`programs on PATH`. Database findings are expected at this stage — Step 4 fixes
+those.
+
+### Step 4 — Stage the reference databases
+
+Do this now, before the card exists, so the app is usable the first time anyone
+opens it. Full detail is in [Reference databases](#reference-databases) below;
+come back here when you are done.
+
+### Step 5 — Install the dashboard card
+
+```bash
+sudo bin/bdtools install --server --dashboard --site-conf sites/site.conf --dry-run
+```
+
+The dry run prints exactly which files it will write (six of them) into
+`$SYS_APPS_DIR/bdtools_dashboard`. Read it, then:
+
+```bash
+sudo bin/bdtools install --server --dashboard --site-conf sites/site.conf
+```
+
+Two warnings in the output are worth understanding:
+
+- `no clusters.d/<name>.yml` — your `CLUSTER_NAME` does not match a real cluster
+  definition. **Fix this**; the card's form pins that cluster and the session
+  cannot submit without it.
+- `no tool env has starlette+httpx+uvicorn yet` — you skipped Step 3. Go back.
+
+If you would rather not use the installer, the card is an ordinary OOD app: copy
+`ood/apps/bdtools_dashboard/` to `$SYS_APPS_DIR/bdtools_dashboard/` and edit
+`form.yml`'s `cluster:` and the `/srv/kapurlab…` paths in
+`template/script.sh.erb` by hand. The installer only does that substitution for
+you.
+
+### Step 6 — Make the session take a full node
+
+The card ships a *sized* request: 16 cores, 64 GB, 8 hours, with partition and
+account as form fields. Those defaults comfortably cover concurrent
+bacterial-WGS work.
+
+To give each session a **whole node instead**, edit
+`$SYS_APPS_DIR/bdtools_dashboard/submit.yml.erb`. Replace the `native:` block:
+
+```erb
+  native:
+    - "--nodes=1"
+    - "--ntasks=1"
+    - "--cpus-per-task=<%= context.num_cores.to_i %>"
+    - "--mem=<%= context.mem_gb.to_i %>G"
+    - "--partition=<%= context.slurm_partition.to_s.strip %>"
+```
+
+with:
+
+```erb
+  native:
+    - "--nodes=1"
+    - "--exclusive"
+    - "--mem=0"
+    - "--partition=<%= context.slurm_partition.to_s.strip %>"
+```
+
+`--exclusive` reserves the entire node for the session; `--mem=0` requests all of
+that node's memory. Every tool the user opens then shares the whole node.
+
+Two consequences to decide about deliberately:
+
+- The **CPU cores** and **Memory** form fields no longer control the allocation.
+  Either remove them from `form.yml`'s `form:` list to avoid misleading users, or
+  leave them as documentation of intent.
+- Exclusive whole-node jobs queue longer than sized ones, and they bill for the
+  whole node. On a busy shared partition the sized default is often the better
+  user experience. **Our recommendation:** keep the sized request, and set
+  `num_cores`/`mem_gb` defaults in `form.yml` to your standard node size. Users
+  who need less can dial it down, and nothing sits in the queue waiting for a
+  fully idle node.
+
+Also in `form.yml`: the partition and account fields are free-text and default to
+empty. If your site has specific partitions, or requires `--account`, replace the
+text field with a `select` so users cannot guess wrong:
+
+```yaml
+  slurm_partition:
+    widget: "select"
+    label: "Slurm partition"
+    options:
+      - ["Open (shared)", "open"]
+      - ["Standard", "standard"]
+```
+
+### Step 7 — Verify
+
+Do all six. Items 4 and 5 exercise proxy behaviour that nothing else tests.
+
+1. **The card appears.** Log into OOD. "Diagnostic Tools Dashboard" is listed
+   under Bioinformatics.
+2. **A session starts.** Launch it. The job queues, then starts. If it fails
+   immediately, read the session's `output.log` — the session script prints the
+   checkout path, the Python it selected, and the port.
+3. **The dashboard loads.** Click the connect button. The landing page opens at
+   `/rnode/<host>/<port>/?t=…` and lists the nine tools.
+4. **A tool opens and runs.** Open one and start a small job. Live progress
+   updates confirm SSE is streaming unbuffered. *(If the page loads but progress
+   never moves, your proxy is buffering.)*
+5. **Range requests work.** In vSNP, open a result with the IGV panel and confirm
+   the alignment renders. *(This is the only check that covers HTTP 206.)*
+6. **Another user cannot reach the session.** Both halves of the auth model are
+   worth confirming separately. With a session running, from any shell that can
+   reach the compute node:
+
+   ```bash
+   # (a) no session token at all -> rejected
+   curl -s -w ' [%{http_code}]\n' http://<compute-node>:<port>/
+
+   # (b) VALID token but a different username -> still rejected
+   curl -s -w ' [%{http_code}]\n' \
+     -H 'X-Forwarded-User: someone-else' \
+     'http://<compute-node>:<port>/?t=<session-token>'
+   ```
+
+   Both must return **403**. Check (b) is the important one: it proves that
+   knowing the token is not sufficient. Its body reads
+   `forbidden (user mismatch)`, which distinguishes it from a token failure. Read
+   the token off the session card's "Open Diagnostic Tools" link — it is the `?t=`
+   query parameter — or from `BDTOOLS_SESSION_TOKEN` in the rendered `script.sh`
+   in the session directory. (It is deliberately *not* written to `output.log`.)
+
+   To require the username header rather than merely enforcing it when present,
+   set `BDTOOLS_STRICT_USER_HEADER=1` in the card's `template/script.sh.erb`; a
+   request with no header then returns `forbidden (missing user header)`.
+
+---
+
+## Reference databases
+
+Reference data is **not** bundled with the tools and **not** downloaded by the
+installer. You stage it once, on shared storage, and all users read the same copy.
+
+### What is actually required
+
+Only two of the nine tools need external reference data. This is smaller than
+people expect:
+
+| Database | Needed by | Size | Required? |
+|---|---|---|---|
+| Kraken2 `k2_standard_08gb` | `kraken_id_parse_gui` | **8.1 GB** | Yes, for that tool |
+| BLAST `ref_prok_rep_genomes` | `kraken_id_parse_gui` | **25 GB** | Yes, for that tool |
+| vSNP `reference_options` | `vsnp_gui` | **3.2 GB** | Yes, for vSNP |
+| vsnp3 test dataset | `vsnp_gui` | small | Optional (validation runs) |
+| AMRFinderPlus database | `amr_plus_gui` | — | **No** — ships inside the conda environment |
+| BoLA MHC references | `mhc_gui` | — | **No** — ships in the repository |
+| *(nothing)* | `mlst_gui`, `genoflu_gui`, `irma_gui`, `ksnp_gui`, `ncbi_submit_gui` | — | These need no external data |
+
+**Baseline total: about 36 GB.**
+
+Optionally, a much larger Kraken2 index (for example `k2_core_nt`, ~307 GB) gives
+broader classification. It is a straight swap of the `kraken_db` path. Start with
+the 8 GB index — it works, and you can grow later.
+
+### Recommended layout
+
+Anchor everything under your `SITE_ROOT`. vSNP in particular derives several
+paths from one root, so this layout is not arbitrary:
+
+```
+$SITE_ROOT/
+├── databases/
+│   ├── kraken2/k2_standard_08gb/          # Kraken2 index (hash.k2d etc.)
+│   └── blast/ref_prok_rep_genomes.*       # BLAST database files
+├── refs/
+│   └── vsnp3/
+│       ├── reference_options/             # vSNP reference sets
+│       └── vcf_db_folders/                # shared VCF databases (optional)
+├── tools/                                 # $TOOLS_ROOT — checkouts + envs
+└── projects/                              # shared results (see Permissions)
+```
+
+### Fetching the data
+
+```bash
+# Kraken2 standard 8 GB index
+sudo mkdir -p $SITE_ROOT/databases/kraken2
+cd $SITE_ROOT/databases/kraken2
+sudo curl -LO https://genome-idx.s3.amazonaws.com/kraken/k2_standard_08_GB_20260226.tar.gz
+sudo mkdir -p k2_standard_08gb
+sudo tar -xzf k2_standard_08_GB_20260226.tar.gz -C k2_standard_08gb
+```
+
+```bash
+# BLAST ref_prok_rep_genomes (update_blastdb.pl ships in any tool env with BLAST+)
+sudo mkdir -p $SITE_ROOT/databases/blast
+cd $SITE_ROOT/databases/blast
+sudo $TOOLS_ROOT/kraken_id_parse_gui/env/bin/update_blastdb.pl \
+  --decompress ref_prok_rep_genomes
+```
+
+```bash
+# vSNP reference options
+sudo mkdir -p $SITE_ROOT/refs/vsnp3
+sudo git clone https://github.com/USDA-VS/vSNP_reference_options.git \
+  $SITE_ROOT/refs/vsnp3/reference_options
+```
+
+Confirm the Kraken2 index unpacked into the directory itself, not a nested one —
+`hash.k2d` must sit directly inside `k2_standard_08gb/`:
+
+```bash
+ls $SITE_ROOT/databases/kraken2/k2_standard_08gb/hash.k2d
+```
+
+> `bin/bdtools setup-databases` also downloads these, but it is built for
+> single-user laptop installs: it records the location in the **running user's**
+> `~/.local/share/bdtools/` and wires the **running user's** `~/.config`. On a
+> multi-user server it would configure only your own account. Stage the data by
+> hand as above.
+
+### How each tool finds its data — and the one gap
+
+This is the part that decides whether users see a working app.
+
+**vSNP — handled for you.** vSNP reads one environment variable,
+`VSNP_GUI_SITE_ROOT`, once at start-up, and derives everything from it:
+
+| Derived path | Purpose |
+|---|---|
+| `$VSNP_GUI_SITE_ROOT/refs/vsnp3/reference_options` | reference sets |
+| `$VSNP_GUI_SITE_ROOT/refs/vsnp3/vcf_db_folders` | shared VCF databases |
+| `$VSNP_GUI_SITE_ROOT/tools/vsnp3` | the analysis environment |
+| `$VSNP_GUI_SITE_ROOT/projects` | shared projects root |
+
+The dashboard's session script exports it, and `install --server` rewrites the
+value from your `SITE_ROOT`. Nothing to do — but if you hand-copied the card
+instead of using the installer, confirm the export is correct:
+
+```bash
+grep VSNP_GUI_SITE_ROOT $SYS_APPS_DIR/bdtools_dashboard/template/script.sh.erb
+```
+
+**vSNP also needs its references registered**, which is a separate step from
+staging them. The `vsnp3` environment reads a path file:
+
+```bash
+echo "$SITE_ROOT/refs/vsnp3/reference_options" | \
+  sudo tee $TOOLS_ROOT/vsnp3/dependencies/reference_options_paths.txt
+```
+
+Without that file, the references are on disk and vSNP still cannot see them.
+
+**Kraken/BLAST — needs a decision from you.** `kraken_id_parse_gui` stores its
+database paths in a **per-user** config file,
+`~/.config/kraken_id_parse_gui/config.json`, which is created on that user's first
+launch from built-in defaults. Those defaults are the literal Kapur Lab paths
+(`/srv/kapurlab/databases/…`), and this tool does not read the site
+configuration. So at your site, each user's first launch seeds paths that do not
+exist.
+
+Pick one:
+
+- **Option 1 — match the expected paths (recommended; fixes it for everyone at
+  once).** Make the built-in defaults resolve by pointing them at your real data:
+
+  ```bash
+  sudo mkdir -p /srv/kapurlab
+  sudo ln -s $SITE_ROOT/databases /srv/kapurlab/databases
+  ```
+
+  A single symlink, and every user's first launch is correct with no action from
+  them. Slightly inelegant — you are creating a `/srv/kapurlab` on your cluster —
+  but it is one link, it is obvious to a later admin, and it needs no per-user
+  work.
+
+- **Option 2 — have each user set it once.** In the Kraken tool, **Settings** →
+  set *Kraken2 DB* and *BLAST DB* to your paths. Saved per user, permanently.
+  Fine for a handful of users; poor at scale, and the failure mode is a confusing
+  error on someone's first real run.
+
+We consider the hard-coded default a defect on our side rather than something you
+should have to work around. It is tracked, and when it is fixed this tool will
+honour `BDTOOLS_DB_ROOT` like the others. Until then, Option 1 is the pragmatic
+answer.
+
+**AMRFinderPlus — nothing to do.** The database ships inside the conda
+environment and `amrfinder` finds it. Only configure a path if you want to
+override it with a newer database; the tool checks version compatibility and
+refuses a mismatched one rather than failing obscurely.
+
+### Permissions
+
+Reference data is read-only to users; only admins curate it:
+
+```bash
+sudo chown -R root:root $SITE_ROOT/databases $SITE_ROOT/refs
+sudo chmod -R a+rX      $SITE_ROOT/databases $SITE_ROOT/refs
+```
+
+For results, decide how much users should see of each other's work. Both are in
+production use:
+
+- **Private results only** — no shared projects directory. Each user works in
+  `~/projects`. Simplest, and the right default if your users are not one team.
+- **Shared, read-only visibility** — create `$SITE_ROOT/projects` mode `0755`.
+  Everyone can see and open every project; users still write to `~/projects`.
+  This is the Kapur Lab configuration.
+- **Shared and collaborative** — `$SITE_ROOT/projects` owned by a group, mode
+  `2775` (setgid so new files inherit the group). Users write into shared
+  projects directly. Only do this if they are genuinely one team.
+
+Every path must be mounted **on the compute nodes**, not just the login and web
+nodes. A database that resolves on the login node and not on the compute node
+produces a tool that looks configured and fails at run time.
+
+### What users see when data is missing
+
+Tools degrade honestly rather than silently: the affected tool reports the
+missing database and names the path it looked for. To check the whole suite the
+way a user experiences it:
+
+```bash
+sudo BDTOOLS_TOOLSDIR=$TOOLS_ROOT bin/bdtools doctor
+```
+
+---
+
+## Path B — personal sandbox app (no admin rights)
+
+Everything lands in `$HOME`; nothing system-wide; no `sudo`. The tool runs as a
+normal `batch_connect` session on the real scheduler under real site
+authentication. This is both the recommended rehearsal for Path A and the normal
+route for a developer.
+
+### Do you have permission? (usually you must ask)
+
+**Check first, in five seconds:** log into OOD and look for a **Develop** menu in
+the top navigation bar. If it is there, you are set — skip to
+[Install](#install). If it is not, read on: on a stock OOD site, enabling it is an
+*administrator* action, not something you can do yourself.
+
+By default OOD looks for a per-user gateway directory that only root can create.
+Creating `~/ondemand/dev` yourself does nothing unless your site has opted into
+the "everyone a developer" configuration. So send your admin this request — it is
+two commands, affects only your account, and grants no elevated privileges:
+
+```bash
+# Enable OOD sandbox apps for user <username>
+sudo mkdir -p /var/www/ood/apps/dev/<username>
+sudo ln -s /home/<username>/ondemand/dev /var/www/ood/apps/dev/<username>/gateway
+```
+
+Adjust the home-directory path if your site does not use `/home/<username>`. After
+that, the Develop menu appears the next time you load the Dashboard (restart your
+web session if it does not).
+
+Admins who want this available to everyone can instead enable app development
+site-wide, so that any user who creates `~/ondemand/dev` gets the Develop menu —
+see [Enabling App Development](https://osc.github.io/ood-documentation/latest/how-tos/app-development/enabling-development-mode.html).
+The dashboard's own check is `app_development_enabled?` in
+`dashboard/config/configuration_singleton.rb`, which also honours an
+`OOD_APP_DEVELOPMENT` environment variable set via `pun_custom_env` in
+`/etc/ood/config/nginx_stage.yml`.
+
+Some sites restrict sandbox apps deliberately. If yours does, that is a
+conversation with your admin rather than something to work around — and it is a
+good reason to go straight to Path A.
+
+### Install
 
 ```bash
 git clone https://github.com/kapurlab/bioinformatic_diagnostic_tools.git
 cd bioinformatic_diagnostic_tools
-bin/bdtools install --sandbox <tool> --dry-run    # review first
-bin/bdtools install --sandbox <tool>
+bin/bdtools install --sandbox all --dry-run
+bin/bdtools install --sandbox all
 ```
 
-What it does:
+`all` installs the whole suite, one tool at a time. A tool that fails does not
+abort the rest — read the summary at the end for any `install failed:` lines.
 
-1. Ensure the tool is checked out (clones the pinned version if needed).
-2. **If the tool ships its own `deploy/setup-sandbox.sh`** (e.g. vsnp_gui),
-   delegate to it — it builds the tool's env, applies any patches, registers
-   references, and links the tool's dedicated sandbox card. Fully working today.
-3. **Otherwise** (generic path): build the conda env + frontend under your space
-   (reusing the tool's build), write `~/.config/<tool>/sandbox.env`
-   (`BDTOOLS_APP_DIR` + `BDTOOLS_APP_ENV`), and symlink an OOD card into
-   `~/ondemand/dev/<tool>` so it shows up under **Develop → My Sandbox Apps**.
+For each tool this checks out the source under
+`~/.local/share/bdtools/checkouts/<tool>`, builds its conda environment, writes
+`~/.config/<tool>/sandbox.env` recording the source and environment paths, and
+symlinks an OOD card into `~/ondemand/dev/<tool>`.
 
-The tool then runs as a normal `batch_connect` session on the institution's
-scheduler, under the institution's auth.
+`vsnp_gui` takes a different route — it has its own `deploy/setup-sandbox.sh`,
+which the installer delegates to. That script also applies the vsnp3 patches and
+registers references, so vSNP is the best-supported sandbox tool.
 
-> **The one site-specific edit.** Every suite tool now ships a dedicated
-> `*_sandbox` card, which the installer links automatically. Each card's
-> `form.yml` has `cluster: "CHANGE_ME"` — set it to your HPC's cluster id (ask
-> your OOD admin). The card sources `~/.config/<tool>/sandbox.env` (written by
-> the installer), so your checkout + conda env can live anywhere in `$HOME`.
-> The session runs on a Slurm compute node (cores/memory/partition are form
-> fields). `vsnp_gui/ood/apps/vsnp_gui_sandbox` is the reference design.
+### The one edit you must make per card
 
-Reference databases that aren't bundled are not auto-pulled — stage them into
-your space (or point at a shared copy) per the tool's own docs.
+Every sandbox card ships with a placeholder cluster:
+
+```yaml
+cluster: "CHANGE_ME"
+```
+
+Nothing rewrites this — the sandbox installer does not know your cluster id. Set
+it in each card you intend to launch:
+
+```bash
+ls /etc/ood/config/clusters.d/          # find your cluster id
+cd ~/.local/share/bdtools/checkouts
+sed -i 's/cluster: "CHANGE_ME"/cluster: "roar"/' \
+  */ood/apps/*_sandbox/form.yml
+```
+
+Substitute your real cluster id for `roar`. A card left as `CHANGE_ME` will not
+submit.
+
+> These files are inside git checkouts, so the edit shows up as a local
+> modification and `bdtools update` — which force-checks-out — will discard it.
+> Re-apply the `sed` after updating.
+
+Then: **Develop → My Sandbox Apps → *tool* →** set partition →  **Launch**.
+
+### Limitations and who can access your sandbox session
+
+Be clear-eyed about these. A sandbox install is for rehearsal and development, not
+for serving a group.
+
+1. **No application-level authentication, and the tool listens on all
+   interfaces.** Every per-tool card — sandbox and production alike — starts
+   `uvicorn` with `--host 0.0.0.0` and no token check. Anyone who can reach
+   `/rnode/<host>/<port>/` can use your running session: they see your data, and
+   they can start jobs that run as **you**.
+
+   Concretely, **any authenticated OOD user at your site** who learns the host and
+   port can reach it. It is not exposed to the internet, and other sites cannot
+   see it, but it is not private to you either. Only the consolidated dashboard
+   (Path A) closes this: loopback binding plus a per-session token plus an
+   OOD-username match.
+
+   Practical mitigation: keep sandbox sessions short, and do not put patient or
+   otherwise sensitive data through one. Use Path A for anything real.
+
+2. **Home-directory disk.** Nine conda environments plus a conda base is roughly
+   25 GB in `$HOME`. Many HPC home quotas are 10–50 GB, and conda failures
+   part-way through a quota-exhausted build are ugly to diagnose. Check first:
+
+   ```bash
+   quota -s 2>/dev/null || df -h "$HOME"
+   ```
+
+   If home is too small, install a subset (`bin/bdtools install --sandbox
+   mlst_gui ksnp_gui`) or relocate with `--prefix /path/with/space`.
+
+3. **Reference databases are not staged.** Same data as Path A, and the same
+   sizes. If your site already has a shared copy, point the tools at it in each
+   tool's Settings rather than downloading another 36 GB into your home
+   directory. For vSNP specifically, its own sandbox installer can copy and
+   register the reference set for you — but that flag is not accepted by the
+   `bdtools` wrapper, so call the script directly:
+
+   ```bash
+   ~/.local/share/bdtools/checkouts/vsnp_gui/deploy/setup-sandbox.sh \
+     --refs-from /shared/path/vSNP_reference_options
+   ```
+
+   `--refs-from` takes any rsync source, local or `user@host:/path`. Run it
+   without the flag and it prints the directory to copy references into.
+
+4. **One scheduler job per tool.** Sandbox cards are per-tool, so opening three
+   tools queues three jobs. There is no sandbox variant of the consolidated
+   dashboard card. You can still test the dashboard from a personal checkout: its
+   session script falls back to `$HOME/bioinformatic_diagnostic_tools`, so clone
+   the umbrella at exactly that path and symlink
+   `ood/apps/bdtools_dashboard` into `~/ondemand/dev/`.
+
+5. **Only you can use it.** Sandbox apps appear under *your* Develop menu only.
+   Making bdtools available to colleagues means Path A.
+
+---
+
+## Updating an existing deployment
+
+Server checkouts are deliberately **not** managed by `bdtools update`. That
+command force-checks-out, which would silently discard any site or licensing
+commits in a server tree. `install --server` instead verifies that each
+checkout's `HEAD` exactly matches the tag pinned in `tools.yml` and refuses to
+build a stale or diverged tree — so a rebuild cannot quietly ship the wrong
+commit.
+
+To promote a new release:
+
+```bash
+cd $TOOLS_ROOT/<tool>
+sudo git fetch --tags
+sudo git checkout <new-tag>            # reconcile any local commits first
+cd $TOOLS_ROOT/bioinformatic_diagnostic_tools
+sudo bin/bdtools install <tool> --server --no-card --site-conf sites/site.conf --dry-run
+sudo bin/bdtools install <tool> --server --no-card --site-conf sites/site.conf
+sudo BDTOOLS_TOOLSDIR=$TOOLS_ROOT bin/bdtools doctor <tool>
+```
+
+To see what your deployment is actually running versus what is pinned:
+
+```bash
+BDTOOLS_TOOLSDIR=$TOOLS_ROOT bin/bdtools status
+```
+
+Set `BDTOOLS_TOOLSDIR` every time. Without it these commands report your personal
+checkouts, and a badly out-of-date server install looks current.
+
+---
+
+## Troubleshooting
+
+Every session writes an `output.log` you can read from the OOD session card. The
+session script prints the checkout it resolved, the Python it chose, and the port
+it bound — start there.
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Session starts then exits immediately | No Python with `starlette`+`httpx`+`uvicorn` | Build a tool environment (Step 3) |
+| `ERROR: cannot find the bioinformatic_diagnostic_tools checkout` | Umbrella is not at `$TOOLS_ROOT/bioinformatic_diagnostic_tools` | Move it there, or fix `SHARED_REPO` in the card's `script.sh.erb` |
+| Card missing from the app list | Not rendered into `$SYS_APPS_DIR` | Re-run Step 5; check `manifest.yml` exists in the destination |
+| Job never submits | `cluster:` does not match a real cluster, or partition is blank/invalid | Fix `form.yml`; compare with `ls /etc/ood/config/clusters.d/` |
+| Dashboard loads, a tool 404s | That tool's environment was not built | `bdtools doctor`; Steps 3b/3c are the usual culprits |
+| Blank page, assets 404 | Frontend assets requested from an absolute root path | Run `bin/bdtools lint`, which fails on non-relative asset URLs |
+| Run progress never updates | Proxy is buffering SSE | Ensure `text/event-stream` is streamed unbuffered |
+| IGV/BAM panel will not load | HTTP `Range`/`206` not passed through | Allow range requests through the proxy |
+| Tool reports a missing database | Data not staged, or path not visible on the compute node | [Reference databases](#reference-databases); confirm compute-node mounts |
+| Kraken tool points at `/srv/kapurlab/...` | Hard-coded default | Option 1 or 2 in [How each tool finds its data](#how-each-tool-finds-its-data--and-the-one-gap) |
+
+### Non-Slurm sites
+
+`submit.yml.erb` emits Slurm flags (`--nodes`, `--cpus-per-task`, `--mem`,
+`--partition`, `--account`). For another scheduler, replace the `native:` list
+with your adapter's equivalent; nothing else in the card is scheduler-specific.
+The `batch_connect` `basic` template and the single proxied port work the same way
+under any adapter.
+
+---
+
+## Known limitations — please read before scheduling the work
+
+We would rather you hear these from us than discover them.
+
+- **The Slurm submission path has not been exercised in production.** The
+  reference deployment runs OOD 3.1.16 with the **`linux_host`** adapter
+  (Singularity + tmux, no scheduler), so its cards carry no resource request at
+  all. The dashboard application itself is in daily use — through an equivalent
+  single-port local proxy — but the `batch_connect` + Slurm submission has been
+  reviewed rather than run. Expect first-launch iteration on `submit.yml.erb`,
+  not on the application. This is the strongest argument for rehearsing with
+  Path B first.
+- **`kraken_id_parse_gui` hard-codes its database defaults**, as described above.
+- **Two tools are labelled "under active development"** and the dashboard shows a
+  caveat on their cards: `mhc_gui` (DRB3 typing is production-ready, Class I calls
+  are provisional; not validated for diagnostic use) and `ncbi_submit_gui`
+  (review generated submission files before sending them to NCBI). If you would
+  rather not offer one at all, the dashboard lists exactly what is in `tools.yml`
+  — remove that tool's entry, or point the card at a trimmed copy of the manifest
+  by exporting `BDTOOLS_MANIFEST=/path/to/site-tools.yml` in
+  `template/script.sh.erb`. The second option leaves the repository untouched,
+  which keeps future updates clean.
+- **kSNP4 is a vendored 545 MB SourceForge package**, not a conda package, and
+  x86_64 only. It unpacks group-unreadable, so a shared install needs
+  `chmod -R a+rX` over `ksnp_gui/vendor/`. There is no build for ARM Linux.
+- **`bdtools doctor` is not fully deployment-aware.** For vSNP it can report
+  missing modules or references based on per-user paths even when the shared
+  install is correct. Treat a doctor failure as a prompt to check the specific
+  path it names, not as proof the deployment is broken.
+
+---
+
+## Reference
+
+- [OOD_DASHBOARD.md](OOD_DASHBOARD.md) — the dashboard's design and auth model
+- [SYSADMIN.md](SYSADMIN.md) — installer phases and per-tool card mechanics
+- [OOD_ADMIN_HANDOFF.md](OOD_ADMIN_HANDOFF.md) — one-page summary for a planning meeting
+- [../ansible/](../ansible/) — an `osc.ood`-style role, if you manage OOD with Ansible
+Open OnDemand documentation (the `latest` links track current OOD; this suite is
+verified against 3.1.16, so expect minor wording differences):
+
+- [Interactive Apps](https://osc.github.io/ood-documentation/latest/how-tos/app-development/interactive.html)
+  — the `batch_connect` app role this suite uses (`form.yml`, `submit.yml.erb`,
+  `template/`)
+- [Enabling App Development](https://osc.github.io/ood-documentation/latest/how-tos/app-development/enabling-development-mode.html)
+  — the per-user gateway symlink that turns on the Develop menu (Path B)
+- [App Development overview](https://osc.github.io/ood-documentation/latest/how-tos/app-development.html)
+- [Passenger app tutorial](https://osc.github.io/ood-documentation/latest/tutorials/tutorials-passenger-apps.html)
+  — a *different* app role, included here only because it is often circulated by
+  mistake for this kind of app; see
+  [Which kind of OOD app this is](#which-kind-of-ood-app-this-is)

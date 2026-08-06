@@ -73,6 +73,25 @@ if [[ -d "${REPO_DIR}/ood/apps" ]]; then
   check_cards "${REPO_DIR}" umbrella || issues=$((issues + 1))
 fi
 
+# The dashboard's own page, before any tool: a syntax error in its script block
+# leaves users with a header and an empty page — no cards, no update banner, no
+# Shut down / Restart — and nothing in any log to say why. It must be checked as
+# SERVED (after Python evaluates the PAGE string), which is what the test does.
+if [[ ${#ONLY[@]} -eq 0 ]]; then
+  echo "dashboard page"
+  if "${PYBIN}" -m unittest discover -s "${REPO_DIR}/tests" -p "test_page_js.py" \
+       >/dev/null 2>&1; then
+    ok "  the dashboard page's JavaScript parses and its banner renders"
+  else
+    warn "  the dashboard page's JavaScript FAILED to parse or render — users would"
+    warn "  get a blank dashboard. Details:"
+    "${PYBIN}" -m unittest discover -s "${REPO_DIR}/tests" -p "test_page_js.py" 2>&1 \
+      | sed 's/^/    /' | tail -25
+    issues=$((issues + 1))
+  fi
+  echo
+fi
+
 while read -r name; do
   [[ -n "$name" ]] || continue
   manifest_has "$name" || { warn "unknown tool: $name"; continue; }

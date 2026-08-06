@@ -796,7 +796,7 @@ function renderUpdates(d){
       what: "each GUI's own release — new tag + environment rebuild" },
     { key: 'package', items: avail.filter(i=>i.kind==='package'),
       label: 'Update conda packages', target: 'packages:all', count: true,
-      what: 'the conda analysis software inside a tool\'s environment (vsnp3, AMRFinderPlus, kraken2 …)' },
+      what: "the conda analysis software inside a tool's environment (vsnp3, AMRFinderPlus, kraken2 …)" },
   ].filter(g=>g.items.length);
   // Numbered 1..N over the groups PRESENT, so left-to-right always reads as the
   // run order with no gaps when only some kinds have updates.

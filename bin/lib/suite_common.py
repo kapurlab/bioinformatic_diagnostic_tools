@@ -76,8 +76,16 @@ def port_open(host, port, timeout=0.5):
         return False
 
 
-def write_dashboard_state(path, port, control_token):
-    """Atomically write the private local-dashboard control record."""
+def write_dashboard_state(path, port, control_token, session_token=""):
+    """Atomically write the private local-dashboard control record.
+
+    `session_token` is recorded so a second launch can rebuild the ?t=… URL and
+    just open the dashboard that is already running. Only the process that printed
+    that URL used to know it, so double-clicking the launcher again on a host with
+    session auth had nothing to open — it reported "already running" to a terminal
+    the desktop launcher does not show. The file is 0600, and it already carries
+    the strictly more powerful control token.
+    """
     if not path:
         return
     directory = os.path.dirname(path)
@@ -87,6 +95,7 @@ def write_dashboard_state(path, port, control_token):
         "pid": os.getpid(),
         "port": int(port),
         "control_token": control_token,
+        "session_token": session_token,
         "started_at": int(time.time()),
     }
     try:

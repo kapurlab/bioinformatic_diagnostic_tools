@@ -398,6 +398,27 @@ print(pid, port)
 PY
 }
 
+# The URL of the ALREADY-RUNNING dashboard, session key included, or nothing.
+#
+# Needed because "it is already running" is only actionable if you can be taken
+# there. From a terminal the printed URL was enough; from a desktop launcher there
+# is no terminal to read, so a second double-click looked like it did nothing.
+_dashboard_recorded_url() {
+  [[ -f "${BDTOOLS_DASHBOARD_STATE_FILE:-}" ]] || return 1
+  "${PYBIN}" - "${BDTOOLS_DASHBOARD_STATE_FILE}" <<'PY'
+import json, os, sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as fh:
+        st = json.load(fh)
+    pid, port = int(st["pid"]), int(st["port"])
+    os.kill(pid, 0)
+except Exception:
+    sys.exit(1)
+tok = (st.get("session_token") or "").strip()
+print(f"http://127.0.0.1:{port}/" + (f"?t={tok}" if tok else ""))
+PY
+}
+
 cmd_dashboard() {
   # Landing page that lists installed GUIs and launches the one you pick. It
   # prefers the single-port reverse-proxy dashboard (bin/ood_dashboard/app.py):
@@ -533,9 +554,17 @@ cmd_dashboard() {
     _owner="$(_dashboard_port_owner "${port}")"
     if [[ -n "${_rec}" && "${_rec##* }" == "${port}" ]]; then
       # Our own dashboard is already up on this port. Wanting "the dashboard" is
-      # already satisfied — point at it instead of failing.
+      # already satisfied — point at it instead of failing, and (unless asked not
+      # to) open it, so a desktop launcher with no visible terminal still lands the
+      # user on the page they double-clicked for.
+      local _url; _url="$(_dashboard_recorded_url || true)"
       ok "The dashboard is already running on port ${port} (pid ${_rec%% *})."
-      info "  Open it:            http://127.0.0.1:${port}/"
+      info "  Open it:            ${_url:-http://127.0.0.1:${port}/}"
+      if [[ ${no_browser} -eq 0 && -n "${_url}" ]]; then
+        for o in open xdg-open wslview; do
+          command -v "$o" >/dev/null 2>&1 && { "$o" "${_url}" >/dev/null 2>&1; break; }
+        done
+      fi
       info "  Pick up new code:   bin/bdtools dashboard --restart"
       info "  Stop it:            bin/bdtools dashboard --stop"
       return 0
@@ -614,7 +643,23 @@ cmd_dashboard() {
     rc=0
     "${runcmd[@]}" || rc=$?
     if [[ ${rc} -eq 42 && ${_stop} -eq 0 ]]; then
-      printf '\n  ↻ Restarting the dashboard (requested from your browser)…\n\n'
+      printf '\n  ↻ Restarting the dashboard (requested from your browser)…\n'
+      # Wait for the port to become bindable before relaunching, instead of
+      # relaunching straight into it. The outgoing process has exited by now, but
+      # the socket it was listening on is not always immediately re-bindable — the
+      # rules differ between Linux and the BSD stack macOS uses, and a browser that
+      # was mid-request leaves connections behind. Losing that race exited the
+      # server with a bare "address already in use" and ended this loop, which from
+      # the browser side is indistinguishable from a hang: the page waits forever
+      # for a dashboard that no longer exists.
+      if ! _dashboard_wait_port_free "${port}" 30; then
+        local _owner; _owner="$(_dashboard_port_owner "${port}")"
+        warn "port ${port} did not become free within 30s${_owner:+ — still held by ${_owner}}."
+        info "  Not relaunching: it would fail to bind. The browser tab will report this."
+        rc=1
+        break
+      fi
+      printf '\n'
       continue
     fi
     break

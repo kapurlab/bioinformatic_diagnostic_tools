@@ -210,6 +210,89 @@ class DashboardSafetyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(cross_site.status_code, 403)
 
 
+@unittest.skipUnless(HAS_PROXY_DEPS, "proxy dashboard dependencies are not installed")
+class RestartHandoverTests(unittest.IsolatedAsyncioTestCase):
+    """Restart hands one port from an outgoing process to an incoming one.
+
+    The browser decides "we are back" from /api/info. It used to accept any 200,
+    but the outgoing dashboard keeps serving while it stops the tool servers —
+    measured at 10.5s with a backend that ignores SIGTERM — so the page reconnected
+    to the process that was leaving, then reloaded into its exit. These tests pin
+    the two properties that make the handover observable and bounded.
+    """
+
+    def make_suite(self):
+        with mock.patch.object(APP.Suite, "_discover", return_value=[]):
+            return APP.Suite()
+
+    async def test_info_reports_boot_identity_and_refuses_once_exiting(self):
+        request = SimpleNamespace(headers={}, url=SimpleNamespace(path="/api/info"),
+                                  method="GET", query_params={}, cookies={})
+        healthy = await APP.api_info(request)
+        self.assertEqual(healthy.status_code, 200)
+        body = json.loads(healthy.body)
+        self.assertTrue(body["boot_id"])
+        self.assertFalse(body["restarting"])
+
+        previous = APP.EXITING
+        APP.EXITING = True
+        try:
+            leaving = await APP.api_info(request)
+        finally:
+            APP.EXITING = previous
+        # 503, not 200: a poller must not read the outgoing process as the new one.
+        self.assertEqual(leaving.status_code, 503)
+        self.assertTrue(json.loads(leaving.body)["restarting"])
+
+    async def test_boot_id_is_unique_per_process(self):
+        # Two dashboards in the same second must still differ, or a fast restart
+        # looks like no restart at all and the page never reloads.
+        self.assertIn("-", APP.BOOT_ID)
+        pid, stamp = APP.BOOT_ID.split("-", 1)
+        self.assertEqual(int(pid), os.getpid())
+        self.assertGreater(int(stamp), 0)
+
+    async def test_stop_backends_kills_a_backend_that_ignores_sigterm(self):
+        # The exit path passes a short grace; without a bound here, a backend that
+        # will not exit holds the whole restart open.
+        suite = self.make_suite()
+
+        class Stubborn(FakeProcess):
+            def terminate(self):               # SIGTERM ignored, as a wedged
+                self.terminated += 1           # backend or one stuck in
+                                               # uninterruptible I/O behaves
+            async def wait(self):
+                while self.returncode is None:  # only kill() ends this
+                    await asyncio.sleep(0.01)
+                return self.returncode
+
+        stubborn = Stubborn()
+        suite.running["mlst_gui"] = {"port": 12347, "proc": stubborn, "log": None}
+        await asyncio.wait_for(suite.stop_backends(grace=0.05), timeout=5)
+        self.assertEqual(stubborn.terminated, 1)
+        self.assertEqual(stubborn.killed, 1)
+        self.assertEqual(suite.running, {})
+
+    async def test_exit_budget_is_shorter_than_the_pollers_patience(self):
+        # The overlay explains a slow stop at 12s and gives up at 60s (dashboard.py
+        # restartDash). The exit budget must land well inside that, or the user is
+        # told the dashboard is gone while it is still stopping tools.
+        self.assertLess(APP.EXIT_STOP_GRACE, APP.EXIT_STOP_BUDGET)
+        self.assertLessEqual(APP.EXIT_STOP_BUDGET, 12)
+
+
+class RestartPollerTests(unittest.TestCase):
+    """The page-side half of the same contract, asserted against the served JS."""
+
+    def test_poller_waits_for_a_changed_boot_id(self):
+        page = (ROOT / "bin/dashboard.py").read_text(encoding="utf-8")
+        restart = page.split("async function restartDash()", 1)[1].split("\n}", 1)[0]
+        self.assertIn("const wasBoot=bootId", restart)
+        self.assertIn("d.boot_id!==wasBoot", restart)
+        # A bare `if(r.ok){ ...reload }` is the bug: it accepts the outgoing process.
+        self.assertNotIn("if(r.ok){ overlay('Back up'", restart)
+
+
 class StateFileTests(unittest.TestCase):
     def test_source_override_reuses_installed_environment(self):
         with tempfile.TemporaryDirectory() as tmp:

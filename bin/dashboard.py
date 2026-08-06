@@ -259,21 +259,29 @@ class Suite:
                 self.quiescing = False
         return snapshot
 
-    def stop_backends(self, names=None):
+    def stop_backends(self, names=None, grace=10):
+        """Stop selected idle backends. `grace` is the SIGTERM budget for the whole
+        set; the exit path passes a shorter one, because there a user is watching a
+        "restarting…" spinner that cannot finish until this returns."""
         with self.lock:
             selected = set(names or self.running)
             entries = [(n, v) for n, v in self.running.items() if n in selected]
         for _, v in entries:
             if v["proc"].poll() is None:
                 v["proc"].terminate()
-        deadline = time.monotonic() + 10
+        deadline = time.monotonic() + grace
         for _, v in entries:
             remaining = max(0, deadline - time.monotonic())
             try:
                 v["proc"].wait(timeout=remaining)
             except subprocess.TimeoutExpired:
                 v["proc"].kill()
-                v["proc"].wait(timeout=5)
+                try:
+                    v["proc"].wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    # SIGKILLed but unreaped (uninterruptible I/O — a network
+                    # volume is the usual cause). Do not block the caller on it.
+                    pass
         with self.lock:
             for name, v in entries:
                 self.running.pop(name, None)
@@ -401,20 +409,36 @@ class Suite:
 SUITE = None
 
 
-def _stop_tools():
+# Identity of THIS process, and whether it has agreed to exit. A restart hands one
+# port from an outgoing process to an incoming one, and the page has to be able to
+# tell which one answered it — polling for "any 200" made it reconnect to the
+# process that was still on its way out. Kept in lock-step with the proxy
+# dashboard's BOOT_ID/EXITING, since both serve the same PAGE.
+BOOT_ID = f"{os.getpid()}-{int(time.time() * 1000)}"
+EXITING = False
+EXIT_STOP_GRACE = 3
+
+
+def _stop_tools(grace=10):
     """Terminate every tool server this dashboard launched (best effort)."""
     if SUITE is None:
         return
-    SUITE.stop_backends()
+    SUITE.stop_backends(grace=grace)
 
 
 def _schedule_exit(code):
     """Stop the tools, then exit the process with `code` after the HTTP response
     has flushed. The `bdtools dashboard` supervisor loop reads the code: 42 =>
     relaunch (Restart), anything else => stop for good (Shut down)."""
+    global EXITING
+    EXITING = True
+
     def run():
         time.sleep(0.4)
-        _stop_tools()
+        try:
+            _stop_tools(grace=EXIT_STOP_GRACE)
+        except Exception:
+            pass          # never let a stubborn backend strand the restart
         remove_dashboard_state(STATE_FILE)
         os._exit(code)
     threading.Thread(target=run, daemon=True).start()
@@ -575,11 +599,12 @@ addEventListener('storage',e=>{if(e.key===THEME_KEY)applyTheme(preferredTheme(),
 applyTheme(document.documentElement.dataset.themeMode||'system',false);
 function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
 let controlToken='';
+let bootId='';          // identity of the dashboard process we are talking to
 async function ensureControl(){
   if(controlToken) return controlToken;
   const r=await fetch('./api/info',{cache:'no-store'});
   if(!r.ok) throw new Error('could not obtain dashboard control token');
-  const d=await r.json(); controlToken=d.control_token||'';
+  const d=await r.json(); controlToken=d.control_token||''; bootId=d.boot_id||'';
   return controlToken;
 }
 async function controlFetch(url,options={}){
@@ -757,6 +782,7 @@ async function loadInfo(){
   try{
     const r = await fetch('./api/info'); const d = await r.json();
     controlToken=d.control_token||'';
+    bootId=d.boot_id||'';
     document.getElementById('host').innerHTML =
       'This dashboard is running on <b>'+esc(d.host)+'</b>.';
     if(d.can_control) document.getElementById('ctl').style.display='';
@@ -818,22 +844,42 @@ async function restartDash(){
   }catch(e){ alert(String(e)); return; }
   overlay('Restarting the dashboard…',
     'Stopping idle tool servers and reloading updated code. This page will reconnect automatically.');
-  // The server exits, the terminal supervisor relaunches it on the same port;
-  // poll until it answers again, then reload to the fresh dashboard.
+  // The server exits, the terminal supervisor relaunches it on the same port; poll
+  // until a DIFFERENT process answers, then reload to the fresh dashboard.
+  //
+  // "Answers at all" is not good enough, and getting that wrong is what made
+  // Restart hang. The outgoing process keeps serving while it stops the tool
+  // servers, so the first reply usually comes from the dashboard that is on its
+  // way out; reloading then races its exit, and a reload that lands in the
+  // changeover loses the page AND the script that was retrying. boot_id changes
+  // only when a new process has taken the port, so that is what we wait for.
+  const wasBoot=bootId;
   let tries=0;
   const ping=async()=>{
     tries++;
     try{
       const r=await fetch('./api/info',{cache:'no-store'});
-      if(r.ok){ overlay('Back up','Reloading…','✓'); setTimeout(()=>location.reload(),700); return; }
+      if(r.ok){
+        const d=await r.json();
+        if(!wasBoot || (d.boot_id && d.boot_id!==wasBoot)){
+          overlay('Back up','Reloading…','✓'); setTimeout(()=>location.reload(),700); return;
+        }
+      }
     }catch(e){}
-    if(tries>90){
-      overlay('Still restarting…',
-        'This is taking longer than usual. If the page does not come back, restart '+
-        'from a terminal with <code>./bdtools dashboard --restart</code>.'); }
+    if(tries===12){
+      overlay('Restarting the dashboard…',
+        'Still stopping tool servers. A backend that is slow to exit can hold this '+
+        'up for a few seconds.');
+    }
+    if(tries>60){
+      overlay('The dashboard has not come back',
+        'It stopped, but nothing is answering on this address — the relaunch did not '+
+        'succeed. Go to the terminal (or Console log) where you started it: it prints '+
+        'why. Then start it again with <code>./bdtools dashboard</code>.'); return;
+    }
     setTimeout(ping,1000);
   };
-  setTimeout(ping,1500);
+  setTimeout(ping,1200);
 }
 load(); setInterval(load, 5000);
 loadInfo();
@@ -871,9 +917,12 @@ class Handler(BaseHTTPRequestHandler):
         if path in ("/", "/index.html"):
             self._send(200, PAGE, "text/html; charset=utf-8")
         elif path == "/api/info":
-            self._send(200, json.dumps(
+            # boot_id + the 503-while-exiting rule are what let the restart overlay
+            # tell the outgoing process from the incoming one; see BOOT_ID below.
+            self._send(503 if EXITING else 200, json.dumps(
                 {"host": socket.gethostname(), "local": True, "can_control": True,
-                 "control_token": CONTROL_TOKEN}))
+                 "control_token": CONTROL_TOKEN,
+                 "boot_id": BOOT_ID, "restarting": EXITING}))
         elif path == "/api/tools":
             self._send(200, json.dumps(SUITE.state()))
         elif path == "/api/updates":

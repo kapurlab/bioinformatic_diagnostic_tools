@@ -101,6 +101,30 @@ COOKIE = "bdtools_session"
 CONTROL_TOKEN = os.environ.get("BDTOOLS_CONTROL_TOKEN", "").strip() or secrets.token_urlsafe(32)
 ACTIVE_JOB_STATES = {"queued", "running", "stopping", "cancelling"}
 
+# Identity of THIS process, and whether it has agreed to exit.
+#
+# Restart is two processes handing over one port, and the browser has to tell them
+# apart. It could not: the page polled /api/info and treated the first 200 as "the
+# new dashboard is up", but the OLD process keeps serving for as long as it takes
+# to stop the tool servers — measured at 10.5s with an unresponsive backend, since
+# stop_backends allows a 10s SIGTERM grace. So the page reloaded into a server that
+# still had seconds to live and was about to drop the port, and a reload that lands
+# in the changeover window dead-ends with no script left to retry.
+#
+# BOOT_ID makes the handover observable (poll until it CHANGES), and EXITING makes
+# the dying process stop claiming to be healthy. Both are needed: the flag alone
+# would still let a page that reconnected too early think it had a live dashboard.
+BOOT_ID = f"{os.getpid()}-{int(time.time() * 1000)}"
+EXITING = False
+# Total budget for stopping tool servers before this process exits anyway. The old
+# path had none: stop_backends waits out its SIGTERM grace, then SIGKILLs, then
+# waits again with no bound — and a final wait() can hang indefinitely on a process
+# stuck in uninterruptible I/O (an NFS or macOS network volume is the usual way).
+# A restart that never completes is worse than one that leaves a stray backend, so
+# cap it and exit regardless.
+EXIT_STOP_BUDGET = 6.0
+EXIT_STOP_GRACE = 3.0
+
 # Host names a LOCAL dashboard will answer to. This is the DNS-rebinding guard:
 # the browser's same-origin policy keys on the NAME, not the address, so a page
 # on evil.com whose DNS is re-pointed at 127.0.0.1 becomes "same-origin" with
@@ -352,8 +376,13 @@ class Suite:
                 self.quiescing = False
         return snapshot
 
-    async def stop_backends(self, names=None):
-        """Terminate selected idle backends, wait, then kill only on timeout."""
+    async def stop_backends(self, names=None, grace=10):
+        """Terminate selected idle backends, wait, then kill only on timeout.
+
+        `grace` is how long a backend gets to exit on SIGTERM. The default suits an
+        ordinary stop; the exit path shortens it, because there the whole dashboard
+        is waiting behind this and the user is watching a spinner (see EXIT_STOP_GRACE).
+        """
         selected = set(names or self.running)
         entries = [(n, v) for n, v in list(self.running.items()) if n in selected]
         for _, v in entries:
@@ -365,7 +394,7 @@ class Suite:
         waiting = [v["proc"].wait() for _, v in entries if v["proc"].returncode is None]
         if waiting:
             try:
-                await asyncio.wait_for(asyncio.gather(*waiting), timeout=10)
+                await asyncio.wait_for(asyncio.gather(*waiting), timeout=grace)
             except asyncio.TimeoutError:
                 for _, v in entries:
                     if v["proc"].returncode is None:
@@ -402,8 +431,8 @@ class Suite:
             self.updating.clear()
             self.tools = self._discover()
 
-    async def shutdown(self):
-        await self.stop_backends()
+    async def shutdown(self, grace=10):
+        await self.stop_backends(grace=grace)
 
 
 SUITE = None
@@ -597,12 +626,19 @@ async def api_info(request):
     # the in-browser Shut down / Restart controls are wired up. can_control is only
     # true in local mode: under OOD the node is shared, so users must not be able to
     # kill it — those routes aren't even registered there.
-    return JSONResponse({
+    #
+    # 503 once this process has agreed to exit: this endpoint is what the restart
+    # overlay polls to decide the dashboard is back, and a dying process answering
+    # 200 is exactly how that decision went wrong (see BOOT_ID).
+    body = {
         "host": socket.gethostname(),
         "local": LOCAL,
         "can_control": LOCAL,
         "control_token": CONTROL_TOKEN if LOCAL else "",
-    })
+        "boot_id": BOOT_ID,
+        "restarting": EXITING,
+    }
+    return JSONResponse(body, status_code=503 if EXITING else 200)
 
 
 async def _delayed_exit(code):
@@ -612,10 +648,21 @@ async def _delayed_exit(code):
     # stop for good (Shut down). os._exit sets the exit status directly (uvicorn
     # would otherwise mask it) and skips the lifespan handler, so we stop the
     # child tools explicitly here first.
+    global EXITING
+    EXITING = True
     await asyncio.sleep(0.4)
     try:
         if SUITE is not None:
-            await SUITE.shutdown()
+            # Bounded: a backend that will not die must not be able to strand the
+            # dashboard in "restarting" forever. On timeout the backends have
+            # already been SIGKILLed by stop_backends; exiting past a process the
+            # kernel has not reaped yet is the lesser evil.
+            await asyncio.wait_for(
+                SUITE.shutdown(grace=EXIT_STOP_GRACE), timeout=EXIT_STOP_BUDGET
+            )
+    except Exception:
+        # Timeout, or a backend that vanished mid-stop. Either way: still exit.
+        pass
     finally:
         sc.remove_dashboard_state(_STATE_FILE)
         os._exit(code)
@@ -773,7 +820,7 @@ def build_app():
         SUITE = Suite()
         CLIENT = httpx.AsyncClient(timeout=httpx.Timeout(10.0, read=300.0), follow_redirects=False)
         if LOCAL:
-            sc.write_dashboard_state(_STATE_FILE, _DASHBOARD_PORT, CONTROL_TOKEN)
+            sc.write_dashboard_state(_STATE_FILE, _DASHBOARD_PORT, CONTROL_TOKEN, TOKEN)
             # Warm both in the background so the page is usable immediately.
             asyncio.create_task(SUITE.refresh_readiness())
             UPDATES.check_async()

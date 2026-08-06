@@ -146,6 +146,7 @@ class ReportTests(unittest.TestCase):
             (meta / "vsnp3-3.35-hdfd78af_0.json").touch()
             with mock.patch.object(PKG, "env_dir_for", return_value=tmp), \
                  mock.patch.object(PKG, "latest_version", return_value="3.36"), \
+                 mock.patch.object(PKG, "unsatisfiable_here", return_value={}), \
                  mock.patch.object(PKG, "_save_cache", lambda cache: None):
                 records = PKG.report(["vsnp_gui"], use_network=True)
         vsnp = next(r for r in records if r["package"] == "vsnp3")
@@ -159,6 +160,7 @@ class ReportTests(unittest.TestCase):
     def test_a_tool_with_no_env_is_reported_not_installed(self):
         with mock.patch.object(PKG, "env_dir_for", return_value=""), \
              mock.patch.object(PKG, "latest_version", return_value="3.36"), \
+             mock.patch.object(PKG, "unsatisfiable_here", return_value={}), \
              mock.patch.object(PKG, "_save_cache", lambda cache: None):
             records = PKG.report(["vsnp_gui"], use_network=True)
         self.assertTrue(records)
@@ -194,18 +196,19 @@ class ReportTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             meta = Path(tmp) / "conda-meta"
             meta.mkdir()
-            (meta / "ncbi-amrfinderplus-3.12.8-hf69ffd2_0.json").touch()
+            (meta / "vsnp3-3.35-hdfd78af_0.json").touch()
             with mock.patch.object(PKG, "env_dir_for", return_value=tmp), \
-                 mock.patch.object(PKG, "latest_version", return_value="4.2.7"), \
+                 mock.patch.object(PKG, "latest_version", return_value="3.36"), \
+                 mock.patch.object(PKG, "unsatisfiable_here", return_value={}), \
+                 mock.patch.object(PKG, "held",
+                                   return_value={"vsnp_gui": {"vsnp3"}}), \
                  mock.patch.object(PKG, "_save_cache", lambda cache: None):
-                records = PKG.report(["amr_plus_gui"], use_network=True)
-        rec = next(r for r in records if r["package"] == "ncbi-amrfinderplus")
+                rec = next(r for r in PKG.report(["vsnp_gui"], use_network=True)
+                           if r["package"] == "vsnp3")
         # The newer version is still reported — held is not hidden.
-        self.assertEqual(rec["latest"], "4.2.7")
-        self.assertEqual(rec["installed"], "3.12.8")
+        self.assertEqual(rec["latest"], "3.36")
         self.assertTrue(rec["held"])
-        # ...but it must not be offered, or the banner nags forever and the update
-        # fails every time it is clicked.
+        # ...but not offered, or the banner nags forever and the update always fails.
         self.assertFalse(rec["update_available"])
         self.assertIn("held", rec["status"])
 

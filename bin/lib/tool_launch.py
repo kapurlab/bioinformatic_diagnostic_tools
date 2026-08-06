@@ -203,6 +203,39 @@ def _sandbox_env(tool):
     return app_dir, app_env
 
 
+# resolve() builds the sibling map by asking resolve() about each sibling, so the
+# nested calls must NOT build it again — that recurses until the stack blows, and
+# resolve() is on the dashboard's hot path (every discovery pass, every launch).
+_SCANNING_SIBLINGS = False
+
+
+def _manifest_tool_names():
+    try:
+        _v, tools = manifest.parse(_MANIFEST)
+        return [t.get("name", "") for t in tools if t.get("name")]
+    except Exception:
+        return []
+
+
+def _env_dir_for_tool(name):
+    """The env that would run `name`, or "" — asked of resolve(), not guessed.
+
+    Guessing <root>/<name>/env would miss a personal conda env or a shared sibling
+    env, and would then hand a caller a path that does not exist.
+    """
+    global _SCANNING_SIBLINGS
+    outer = _SCANNING_SIBLINGS
+    _SCANNING_SIBLINGS = True
+    try:
+        plan = resolve(name, 0)
+    except Exception:
+        return ""
+    finally:
+        _SCANNING_SIBLINGS = outer
+    d = plan.get("env_dir") or ""
+    return "" if d in ("", "(base)") else d
+
+
 def resolve(tool, port, host="127.0.0.1"):
     """Return a launch plan dict: argv, cwd, env (full environ + overrides), python, env_dir.
 
@@ -318,6 +351,35 @@ def resolve(tool, port, host="127.0.0.1"):
     for _k, _v in site_paths.as_env(_REPO_DIR).items():
         env[_k] = _v
         env_overrides[_k] = _v
+    # Which conda env provides each OTHER tool's software.
+    #
+    # BDTOOLS_TOOLS_ROOT above says where the sibling checkouts are, which is enough
+    # to find a sibling's SCRIPT but not the environment built for it — and running a
+    # sibling's script under this tool's python defeats the point, because the
+    # binaries it shells out to still resolve from this env. That is the whole reason
+    # amr_plus had to carry its own copy of mlst, which then held its own
+    # AMRFinderPlus two major versions back: one shared env can only ever install the
+    # lowest common denominator of everything in it.
+    #
+    # With this map a tool can invoke a sibling's software from the env built for it
+    # (<env>/bin/<prog>, with <env>/bin first on PATH so the callee's own perl/blast
+    # resolve there too), and each analysis package is then free to move at its own
+    # pace. Exported as "tool=envdir" pairs plus one variable per tool, since a shell
+    # script consuming this should not have to parse anything.
+    _sibs = []
+    for _name in ([] if _SCANNING_SIBLINGS else _manifest_tool_names()):
+        if _name == tool:
+            continue
+        _senv = _env_dir_for_tool(_name)
+        if not _senv:
+            continue
+        _sibs.append(f"{_name}={_senv}")
+        _var = "BDTOOLS_SIBLING_ENV_" + _name.upper()
+        env[_var] = _senv
+        env_overrides[_var] = _senv
+    if _sibs:
+        env["BDTOOLS_SIBLING_ENVS"] = os.pathsep.join(_sibs)
+        env_overrides["BDTOOLS_SIBLING_ENVS"] = env["BDTOOLS_SIBLING_ENVS"]
     env["BDTOOLS_TOOLS_ROOT"] = tools_root
     env_overrides["BDTOOLS_TOOLS_ROOT"] = tools_root
     # vsnp_gui resolves its shared paths — references, VCF-db root, the vsnp3 env,

@@ -64,21 +64,27 @@ tools:
 
   - name: amr_plus_gui
     repo: https://github.com/kapurlab/amr_plus_gui.git
-    version: v0.3.2
+    version: v0.3.3
     ood_apps: [amr_plus_gui]
     dev_apps: [amr_plus_gui_dev]
     env: amr_plus
     databases: [amrfinder_db]
-    # These three are the joint solution of this env's spec, confirmed with a
-    # fresh dry-run solve — not the newest of each. `mlst` transitively requires
-    # perl-bioperl -> perl-bio-samtools, which holds perl and zlib down, and that
-    # caps ncbi-amrfinderplus at 3.12.8 and kraken2 at 2.1.3 HERE. Newer exists
-    # (4.2.7 / 2.17.1) and both are shown, but neither can be installed into this
-    # env, so they are held rather than offered forever.
-    #   Dropping mlst from amr_plus would free both (mlst_gui has its own env with
-    #   mlst 2.35.0) — a change to the amr_plus_gui spec, not something to pin around.
-    packages: [bioconda::ncbi-amrfinderplus=3.12.8, bioconda::kraken2=2.1.3, bioconda::mlst=2.33.1]
-    packages_held: [ncbi-amrfinderplus, kraken2]
+    # mlst is deliberately NOT here. It moved to mlst_gui's env, which amr_plus now
+    # invokes through BDTOOLS_SIBLING_ENV_MLST_GUI, and that removed the cap: mlst
+    # pulls perl-bioperl -> perl-bio-samtools, holding perl and zlib down, which had
+    # pinned this env to ncbi-amrfinderplus 3.12.8 and kraken2 2.1.3.
+    #
+    # 3.12.8 could not read the deployed AMRFinder database at all — the 4.x layout
+    # renamed AMRProt to AMRProt.fa, so the old binary reports "the BLAST database
+    # for AMRProt was not found", and its own default DB path points into a conda
+    # build directory that does not exist. Matching the binary to the database that
+    # is actually deployed is what makes this the stable version, not the bold one.
+    #
+    # Verified installable together on linux-64, osx-64 and osx-arm64.
+    # NOTE: an EXISTING env still physically contains mlst, so the solve there stays
+    # blocked (reported, not an error) until the env is rebuilt:
+    #     bin/bdtools install amr_plus_gui --rebuild
+    packages: [bioconda::ncbi-amrfinderplus=4.2.7, bioconda::kraken2=2.17.1]
 
   - name: irma_gui
     repo: https://github.com/kapurlab/irma_gui.git

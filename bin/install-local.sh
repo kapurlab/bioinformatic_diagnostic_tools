@@ -185,6 +185,21 @@ with_progress() {
       warn "${label} — giving up after ${attempt} attempt(s) (exit ${rc})"
       return ${rc}
     fi
+    # A conda create that fails is rolled back, but the rollback is not perfect:
+    # __pycache__ files conda did not track are left behind, and the retry then dies
+    # in a storm of "ClobberError: path already exists in the target prefix ... may
+    # have been created by another package manager". Clear a PARTIAL prefix first so
+    # attempt 2 starts clean. Guarded to a partial env: it must be an absolute
+    # env-shaped path with no working python, which a built env always has.
+    if [[ "${1:-}" == "_conda_step" ]]; then
+      local _envdir="${2:-}"
+      if [[ -n "${_envdir}" && "${_envdir}" == /* && -d "${_envdir}" \
+            && ! -x "${_envdir}/bin/python" \
+            && ( "${_envdir}" == */env || "${_envdir}" == */envs/* ) ]]; then
+        warn "  removing the partially-created env before retrying: ${_envdir}"
+        rm -rf "${_envdir}"
+      fi
+    fi
     warn "${label} — failed/stalled (exit ${rc}); retrying in 5s…"
     sleep 5; attempt=$(( attempt + 1 ))
   done
@@ -326,8 +341,54 @@ ensure_env_java() {
 _conda_step() {
   local envdir="$1"; shift
   harden_conda_hooks "${envdir}"
-  "$@"
+  # Scrub the strict-shell options and pre-define the CONDA_BACKUP_* names before
+  # handing control to conda. Both are needed, and neither is covered by
+  # harden_conda_hooks, which can only patch hooks that ALREADY exist:
+  #
+  #   * On a fresh `env create` there are no hooks yet. The transaction installs the
+  #     clang/gfortran hooks and then runs a post-link script that sources them; the
+  #     hook reads $CONDA_BACKUP_CLANGXX with no default, dies under `set -u`, and
+  #     conda rolls the transaction back — which DELETES the hooks again. So the
+  #     retry starts with nothing to harden and fails identically. That is the loop
+  #     seen on macOS: "post-link script failed for package spades-4.3.0",
+  #     "deactivate_clangxx_osx-arm64.sh: CONDA_BACKUP_CLANGXX: unbound variable",
+  #     twice, then "giving up after 2 attempt(s)".
+  #   * `set -u` reaches those scripts only when SHELLOPTS is exported somewhere in
+  #     the chain (a profile, a wrapper, a parent process) — verified: with
+  #     SHELLOPTS exported a child bash inherits nounset and the hook dies; with it
+  #     scrubbed the same hook runs clean. We cannot control every ancestor, so
+  #     scrub it here rather than hope.
+  #
+  # Defining the CONDA_BACKUP_* names as empty is the belt to that braces: a hook
+  # that reads one now finds it set, whether or not it was ever patched, whether or
+  # not the transaction rolled back, on every platform.
+  local -a pre=(env -u SHELLOPTS -u BASHOPTS)
+  local v
+  for v in ${_CONDA_BACKUP_VARS}; do
+    # Mirror the current value when the variable is set, empty when it is not.
+    # Built as an ARRAY, not a command substitution: CFLAGS/LDFLAGS/CMAKE_ARGS
+    # routinely contain spaces, and unquoted word-splitting would turn the rest of
+    # the flags into the command conda was supposed to be.
+    if [[ -n "${!v+x}" ]]; then pre+=("CONDA_BACKUP_${v}=${!v}")
+    else pre+=("CONDA_BACKUP_${v}="); fi
+  done
+  local rc=0
+  "${pre[@]}" "$@" || rc=$?
+  # Harden again on the way out: this transaction may have just installed the very
+  # hooks that break the NEXT one, and hardening only before a step can never see
+  # those. Cheap and idempotent.
+  harden_conda_hooks "${envdir}"
+  return ${rc}
 }
+
+# The toolchain variables whose conda deactivate hooks read $CONDA_BACKUP_<VAR> with
+# no default. Over-inclusive on purpose: an unused placeholder costs nothing, while a
+# missing one is a rolled-back transaction that cannot self-heal.
+_CONDA_BACKUP_VARS="CC CXX CPP FC F77 F90 GCC GXX GFORTRAN CLANG CLANGXX
+  AR AS RANLIB LD LD_GOLD NM STRIP OBJDUMP OBJCOPY READELF SIZE STRINGS ADDR2LINE
+  CFLAGS CXXFLAGS CPPFLAGS FFLAGS LDFLAGS DEBUG_CFLAGS DEBUG_CXXFLAGS DEBUG_FFLAGS
+  DEBUG_CPPFLAGS HOST BUILD CONDA_BUILD_SYSROOT CMAKE_ARGS CMAKE_PREFIX_PATH
+  MESON_ARGS _CONDA_PYTHON_SYSCONFIGDATA_NAME"
 
 generic_build() {
   local conda; conda="$(detect_conda)" || die "conda/mamba not found. Install miniforge first."

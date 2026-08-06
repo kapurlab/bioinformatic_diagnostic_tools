@@ -428,3 +428,77 @@ class DoctorReportsUnfinishedBuildTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class CondaStepGuardTests(unittest.TestCase):
+    """conda transactions must survive a strict ambient shell and a failed attempt.
+
+    The failure this pins, seen on macOS building kraken_id_parse_gui:
+
+        deactivate_clangxx_osx-arm64.sh: CONDA_BACKUP_CLANGXX: unbound variable
+        LinkError: post-link script failed for package spades-4.3.0
+        ... giving up after 2 attempt(s)
+
+    harden_conda_hooks cannot fix that one. The env was being CREATED, so no hook
+    existed to patch; the transaction installed the hook, a post-link script sourced
+    it and died, and the rollback deleted the hook again — so the retry began with
+    nothing to harden and failed identically. The guard has to be in the environment
+    conda is invoked with, not in files that may not exist yet.
+    """
+
+    def setUp(self):
+        src = (ROOT / "bin/install-local.sh").read_text(encoding="utf-8")
+        self.step = src[src.index("_conda_step() {"):src.index("generic_build() {")]
+        self.progress = src[src.index("with_progress() {"):src.index("# _run_watched:")]
+
+    def _run(self, snippet, env=None):
+        script = (f'set -uo pipefail\nsource "{ROOT}/bin/lib/common.sh"\n'
+                  f'{self.step}\n{snippet}\n')
+        e = dict(os.environ)
+        e.pop("DRY_RUN", None)
+        if env:
+            e.update(env)
+        return subprocess.run(["bash", "-c", script], capture_output=True, text=True, env=e)
+
+    def test_an_unguarded_hook_survives_an_exported_shelloopts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            hook = Path(tmp) / "postlink.sh"
+            hook.write_text('export CLANGXX="${CONDA_BACKUP_CLANGXX}"\necho POSTLINK_OK\n')
+            # Without the guard this is the exact macOS failure.
+            bare = subprocess.run(
+                ["bash", "-c", f'set -u; export SHELLOPTS; bash "{hook}"'],
+                capture_output=True, text=True)
+            self.assertIn("unbound variable", bare.stderr)
+            # Through _conda_step it runs.
+            got = self._run(f'_conda_step /nonexistent-env bash "{hook}"',
+                            env={"SHELLOPTS": "braceexpand:errexit:nounset:pipefail"})
+            self.assertIn("POSTLINK_OK", got.stdout, got.stderr)
+
+    def test_nounset_does_not_reach_the_child(self):
+        got = self._run('_conda_step /nonexistent-env bash -c '
+                        '\'echo "OPTS=${SHELLOPTS:-none}"\'',
+                        env={"SHELLOPTS": "braceexpand:errexit:nounset:pipefail"})
+        self.assertIn("OPTS=", got.stdout)
+        self.assertNotIn("nounset", got.stdout.split("OPTS=")[1])
+
+    def test_a_flag_value_with_spaces_stays_one_value(self):
+        # Built as an array, not a command substitution: unquoted word-splitting on
+        # CFLAGS/LDFLAGS/CMAKE_ARGS would turn the rest of the flags into the command.
+        got = self._run('_conda_step /nonexistent-env bash -c '
+                        '\'echo "[$CONDA_BACKUP_CFLAGS]"\'',
+                        env={"CFLAGS": "-O2 -I/with space/inc"})
+        self.assertIn("[-O2 -I/with space/inc]", got.stdout, got.stderr)
+
+    def test_every_placeholder_is_defined_even_when_unset_locally(self):
+        got = self._run('_conda_step /nonexistent-env bash -c '
+                        '\'for v in CLANGXX AR CFLAGS GFORTRAN LDFLAGS; do '
+                        'eval "echo $v=\\${CONDA_BACKUP_$v?MISSING}"; done\'')
+        self.assertNotIn("MISSING", got.stdout + got.stderr, got.stderr)
+
+    def test_a_retry_clears_only_a_partial_env(self):
+        # A built env has bin/python; a rolled-back create does not. Removing the
+        # wrong one would destroy a working installation.
+        self.assertIn("rm -rf", self.progress)
+        for guard in ('== /*', '-x "${_envdir}/bin/python"', '*/env', '*/envs/*'):
+            self.assertIn(guard, self.progress,
+                          f"the partial-env cleanup is missing the {guard!r} guard")

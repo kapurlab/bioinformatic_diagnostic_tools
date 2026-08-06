@@ -230,7 +230,13 @@ phase_toolchain() {
        && grep -q -- '--skip-frontend' "${DIR}/deploy/install.sh" 2>/dev/null; then
       a+=(--skip-frontend)
     fi
+    # The tool installer runs conda, which sources this env's activation hooks
+    # around every package post-link script — and a toolchain hook that reads
+    # CONDA_BACKUP_* unguarded fails the whole transaction under `set -u`
+    # (see common.sh:harden_conda_hooks). Guard them before and after.
+    harden_conda_hooks "${DIR}/env"
     run "${DIR}/deploy/install.sh" ${a[@]+"${a[@]}"} || die "${TOOL} deploy/install.sh failed"
+    harden_conda_hooks "${DIR}/env"
   else
     warn "${TOOL} has no deploy/install.sh — build its env+frontend manually,"
     warn "  or (for vsnp_gui) use vsnp_gui/deploy/install_ood.sh which builds the vsnp3 env."

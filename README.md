@@ -460,6 +460,15 @@ is in effect when tools rebuild. On local (macOS/Linux) installs, launching a GU
 after updating also self-heals its shared-tool links (e.g. vSNP3's link to Kraken
 ID Parse).
 
+`update all` updates every tool even if one of them fails, lists the failures at
+the end, and exits non-zero. A tool whose build did not finish is recorded as
+unfinished, so re-running `bin/bdtools update <tool>` retries it instead of
+reporting it as already up to date — and `bin/bdtools doctor` names it. A failed
+build does not destroy the existing environment (conda rolls the transaction
+back), so the tool keeps running on its previous dependencies until the rebuild
+succeeds. See
+[docs/INSTALL_LOCAL.md](docs/INSTALL_LOCAL.md#when-an-update-fails).
+
 `bdtools update` intentionally manages personal bdtools checkouts only; it will
 not force-checkout an external or server source tree. For OOD production,
 reconcile each server checkout with the version pinned in `tools.yml`, review

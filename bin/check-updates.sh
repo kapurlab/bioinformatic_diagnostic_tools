@@ -8,8 +8,12 @@
 #
 # --apply skips any tool already sitting on the target ref with a built env
 # (the rebuild would re-solve/re-download for no change). Pass --force to
-# rebuild those anyway. Tools not yet checked out are skipped with a note
+# rebuild those anyway. A tool whose last build did NOT finish is never skipped,
+# with or without --force. Tools not yet checked out are skipped with a note
 # (install them with `bdtools install <tool>`) so `--apply all` never aborts.
+#
+# `--apply all` runs every tool even if one fails: each tool is updated in its
+# own subshell, and the failures are listed together at the end (exit 1).
 #
 # "Newest" = the highest version-sorted git tag on the tool's remote (via
 # `git ls-remote`, so it works for any public repo with no auth and even before
@@ -21,6 +25,7 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
 APPLY=0
 FORCE=0
 NOT_INSTALLED=()   # tools named in an --apply run that aren't checked out yet
+FAILED=()          # tools whose update/build did not finish (reported at the end)
 ARGS=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -29,7 +34,7 @@ while [[ $# -gt 0 ]]; do
     --dry-run) DRY_RUN=1; export DRY_RUN; shift;;
     # Without this, --help was taken as a TOOL NAME and reported
     # "manifest: no tool named '--help'".
-    -h|--help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
+    -h|--help) sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
     *)         ARGS+=("$1"); shift;;
   esac
 done
@@ -72,8 +77,7 @@ apply_one() {
   # so `update all` completes cleanly and tells the user what still needs installing.
   if [[ ! -d "${dir}/.git" ]]; then
     warn "${name} not installed — skipping (run: bdtools install ${name})"
-    NOT_INSTALLED+=("${name}")
-    return 0
+    return 4     # collected by the caller (each tool runs in its own subshell)
   fi
 
   # `update` owns only bdtools' per-user managed checkouts. A server source tree
@@ -107,11 +111,23 @@ apply_one() {
   # `update all` grind through a fresh conda solve per tool even when nothing
   # was newer. Skip unless --force. Only for a concrete tag target; branch-
   # tracked tools (latest empty) always refresh in case the branch moved.
+  #
+  # "The env is built" cannot mean only "a python exists in it": this function
+  # moves the checkout to the target ref BEFORE building, so a build that failed
+  # half-way leaves the tool at the target ref with the PREVIOUS env still in
+  # place, python and all. That state used to be reported as "already up to
+  # date", which is how a failed conda update turned into new code silently
+  # running an old env. A recorded build failure for this exact ref disqualifies
+  # the fast path (see common.sh, build state).
   current="$(git -C "$dir" describe --tags --always 2>/dev/null || echo '')"
   if [[ ${FORCE} -eq 0 && -n "${latest}" && "${current}" == "${target}" ]] \
      && "${KT_BIN_DIR}/install-local.sh" --print-python "$name" >/dev/null 2>&1; then
-    ok "${name} already at ${target} with a built env — skipping (use --force to rebuild)"
-    return 0
+    if build_failed_for "${name}" "${current}"; then
+      warn "${name}: at ${target}, but its last build did not finish — rebuilding instead of skipping."
+    else
+      ok "${name} already at ${target} with a built env — skipping (use --force to rebuild)"
+      return 0
+    fi
   fi
 
   log "updating ${name} -> ${target}"
@@ -125,23 +141,59 @@ apply_one() {
   # didn't materialize as a local ref (shallow tag fetches land there).
   run git -C "$dir" checkout -f -q "${target}" \
     || run git -C "$dir" checkout -f -q FETCH_HEAD
+  # The pin moves BEFORE the build, and has to: install-local.sh's
+  # ensure_checkout resolves the checkout against the manifest pin, so building
+  # with the pin still on the old tag would check the code back out to the old
+  # tag and build that instead. The cost is that a failed build below leaves the
+  # manifest advertising a version whose env was never finished — which is why
+  # install-local.sh records the failure and the fast path above honors it.
   if [[ -n "$latest" && "$latest" != "$pinned" ]]; then
     log "bumping manifest pin: ${name} ${pinned} -> ${latest}"
     run manifest_set "$name" version "$latest"
   fi
   log "rebuilding ${name}"
-  local a=(--rebuild); [[ ${DRY_RUN} -eq 1 ]] && a+=(--dry-run)
-  run "${KT_BIN_DIR}/install-local.sh" --build-only "${a[@]}" "$name"
+  local a=(--rebuild) rc=0
+  [[ ${DRY_RUN} -eq 1 ]] && a+=(--dry-run)
+  run "${KT_BIN_DIR}/install-local.sh" --build-only "${a[@]}" "$name" || rc=$?
+  # 3 = install-local's "no local-build path" sentinel: the code was updated, the
+  # env belongs to the tool's OOD installer. Not a failure.
+  [[ ${rc} -eq 3 ]] && { warn "${name}: code updated; its env is provisioned by the OOD installer, not locally."; return 3; }
+  [[ ${rc} -eq 0 ]] || return ${rc}
   ok "${name} updated"
 }
 
 if [[ ${APPLY} -eq 1 ]]; then
   [[ "${TARGET}" != "all" || ${#ARGS[@]} -gt 0 ]] || die "name a tool or 'all'"
-  while read -r n; do [[ -n "$n" ]] && apply_one "$n"; done < <(targets)
+  # One tool's failure must not abandon the rest. This ran under `set -e` with
+  # apply_one called directly, so the first tool that failed to build — or hit a
+  # `die` for a dirty checkout — ended the whole run, and every tool after it in
+  # tools.yml was left un-updated with nothing said about it. A macOS conda
+  # post-link error on one tool silently cost the user every update behind it.
+  # Each tool now runs in its own subshell (so even `die` only ends that tool),
+  # and the outcomes are summarized at the end.
+  rc=0
+  while read -r n; do
+    [[ -n "$n" ]] || continue
+    rc=0; ( apply_one "$n" ) || rc=$?
+    case "${rc}" in
+      0|3) ;;                            # updated, or code-only (no local env)
+      4)   NOT_INSTALLED+=("$n");;
+      *)   FAILED+=("$n"); warn "${n}: update failed (exit ${rc}) — continuing with the remaining tools.";;
+    esac
+  done < <(targets)
   if [[ ${#NOT_INSTALLED[@]} -gt 0 ]]; then
     echo
     warn "not installed (skipped): ${NOT_INSTALLED[*]}"
     info "  install them with:  bdtools install ${NOT_INSTALLED[*]}"
+  fi
+  if [[ ${#FAILED[@]} -gt 0 ]]; then
+    echo
+    warn "FAILED to update: ${FAILED[*]}"
+    info "  The real error is in the log above. These are recorded as unfinished, so"
+    info "  re-running picks them up (no --force needed):"
+    info "      bin/bdtools update ${FAILED[*]}"
+    info "  To see what an env is missing:  bin/bdtools doctor ${FAILED[*]}"
+    exit 1
   fi
 else
   while read -r n; do [[ -n "$n" ]] && report_one "$n"; done < <(targets)

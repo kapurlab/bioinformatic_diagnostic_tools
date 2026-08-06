@@ -56,6 +56,16 @@ while read -r name; do
   else
     "${PYBIN}" "${KT_BIN_DIR}/lib/check.py" --tool "$name" --dir "${dir}" \
             --python "${py}" --scope "${SCOPE}" || issues=$((issues + 1))
+    # An env can pass every check above and still be the WRONG env: if the last
+    # build didn't finish, this code is newer than the environment running it
+    # (conda rolls a failed transaction back, so the previous env survives
+    # intact — and silently). Say so here, where users look when something is off.
+    ref="$(git -C "${dir}" describe --tags --always 2>/dev/null || echo '')"
+    if build_failed_for "$name" "${ref}"; then
+      warn "${name}: the last environment build did not finish — this checkout (${ref:-?}) may be running the previous env."
+      info "  FIX: bin/bdtools update ${name}"
+      issues=$((issues + 1))
+    fi
     echo
   fi
 done < <(targets)

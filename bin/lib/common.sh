@@ -172,5 +172,136 @@ conda_base_dir() {
   [[ -n "${bin}" ]] && dirname "$(dirname "${bin}")"
 }
 
+# ---- conda env platform ----------------------------------------------------
+# host_conda_subdir — the conda platform this machine runs natively. Used to
+# spot an env that cannot run here at all (one built on/for another arch), which
+# otherwise surfaces as unexplained "Bad CPU type" / missing-symbol failures at
+# run time rather than at install time.
+host_conda_subdir() {
+  local s m; s="$(uname -s)"; m="$(uname -m)"
+  case "${s}:${m}" in
+    Darwin:arm64)          echo osx-arm64;;
+    Darwin:x86_64)         echo osx-64;;
+    Linux:x86_64)          echo linux-64;;
+    Linux:aarch64|Linux:arm64) echo linux-aarch64;;
+    Linux:ppc64le)         echo linux-ppc64le;;
+    *)                     echo "";;            # unknown: callers skip the check
+  esac
+}
+
+# env_conda_subdir ENVDIR — the conda platform an EXISTING env was built for,
+# read from the packages it actually contains (conda-meta/*.json "subdir"),
+# ignoring noarch. Empty when the env doesn't exist or records nothing.
+#
+# Why this exists: an env's architecture is fixed at creation — every binary in
+# it was linked for one subdir. Nothing was pinning the solver to that subdir on
+# a later update, so an env created for one platform could be updated for
+# another (the live case: an osx-64 env on Apple Silicon — see install-local.sh's
+# ensure_conda_subdir — updated with an osx-arm64 solve). That mixes
+# architectures inside one prefix: if you are lucky it fails in a post-link
+# script, if you are not it fails at run time in a diagnostic pipeline.
+# Callers pin CONDA_SUBDIR to this value before any conda op on an existing env.
+env_conda_subdir() {
+  local envdir="${1:-}" out
+  [[ -n "${envdir}" && -d "${envdir}/conda-meta" ]] || return 0
+  # Majority vote: a rolled-back or hand-patched env can carry a stray record
+  # from another platform, and the env's real architecture is whatever the bulk
+  # of it was built for. The trailing `|| true` matters — every grep in here
+  # returns 1 on "nothing matched" (a noarch-only env), and callers run under
+  # `set -euo pipefail`, where that would abort the install instead of reporting
+  # "no architecture recorded".
+  out="$( { grep -ho '"subdir":[[:space:]]*"[^"]*"' "${envdir}"/conda-meta/*.json 2>/dev/null || true; } \
+    | sed 's/.*"\([^"]*\)"[[:space:]]*$/\1/' \
+    | grep -v '^noarch$' | sort | uniq -c | sort -rn | awk 'NR==1{print $2}' || true )"
+  printf '%s' "${out}"
+}
+
+# harden_conda_hooks ENVDIR — make an env's conda activate/deactivate hooks
+# survive `set -u`. Idempotent; safe to call before and after every conda op.
+#
+# The compiler-toolchain packages (cctools/ld64/clang_*/gcc_*) ship
+# etc/conda/{activate,deactivate}.d hooks that read $CONDA_BACKUP_<TOOL> with no
+# default. conda sources those hooks around package post-link scripts, so under
+# `set -u` the first package with a post-link script dies and takes the whole
+# transaction with it:
+#
+#   deactivate_cctools_osx-64.sh: line 63: CONDA_BACKUP_AR: unbound variable
+#   LinkError: post-link script failed for package ...::spades-4.3.0...
+#
+# conda then rolls back — so one upstream hook bug blocks every future env
+# update for that tool, on every machine whose env has such a hook. Wrapping
+# each affected hook in a save/restore of `set -u` fixes it without changing
+# what the hook does.
+#
+# Plain `case $-` / `set` rather than a function with `local -`: these files are
+# sourced by whatever shell the user (or conda) is running — bash for post-link
+# scripts, zsh for an interactive `conda activate` on macOS — so the guard has to
+# be portable shell. The one wart is that a hook which `return`s early leaves
+# `set +u` set in the sourcing shell; harmless in both of those contexts, and far
+# better than a failed transaction.
+harden_conda_hooks() {
+  local envdir="${1:-}" f n=0 first
+  [[ "${DRY_RUN:-0}" -eq 1 ]] && return 0
+  [[ -n "${envdir}" && -d "${envdir}" ]] || return 0
+  for f in "${envdir}"/etc/conda/activate.d/*.sh "${envdir}"/etc/conda/deactivate.d/*.sh; do
+    [[ -f "${f}" && -w "${f}" ]] || continue          # missing, or a read-only shared env: leave it
+    grep -q 'CONDA_BACKUP_' "${f}" 2>/dev/null || continue   # only toolchain hooks have this bug
+    grep -q 'bdtools set-u guard' "${f}" 2>/dev/null && continue   # already guarded
+    # Keep any shebang on line 1 (cosmetic for a sourced file, but a file that
+    # starts with a guard comment no longer looks like the script it is).
+    first="$(head -1 "${f}" 2>/dev/null || true)"
+    # Write through the original file (not a rename) so mode/ownership survive.
+    { case "${first}" in '#!'*) printf '%s\n' "${first}";; esac
+      printf '%s\n' \
+        '# >>> bdtools set-u guard >>> (this hook reads CONDA_BACKUP_* unguarded)' \
+        'case $- in *u*) _bdtools_reset_u=1; set +u ;; *) _bdtools_reset_u=0 ;; esac'
+      case "${first}" in '#!'*) tail -n +2 "${f}";; *) cat "${f}";; esac
+      printf '%s\n' \
+        '[ "${_bdtools_reset_u:-0}" = 1 ] && set -u' \
+        'unset _bdtools_reset_u' \
+        '# <<< bdtools set-u guard <<<'
+    } > "${f}.bdtools-tmp" 2>/dev/null || { rm -f "${f}.bdtools-tmp"; continue; }
+    cat "${f}.bdtools-tmp" > "${f}" && n=$(( n + 1 ))
+    rm -f "${f}.bdtools-tmp"
+  done
+  [[ ${n} -gt 0 ]] && ok "guarded ${n} conda activation hook(s) in ${envdir} against \`set -u\` (upstream CONDA_BACKUP_* bug)"
+  return 0
+}
+
+# ---- build state -----------------------------------------------------------
+# Did a tool's env build finish? `bdtools update` must be able to answer that on
+# the NEXT run, and it could not: the update force-checks-out the new tag and
+# bumps the manifest pin BEFORE building (install-local.sh's ensure_checkout
+# resolves the checkout against the pin, so the pin has to move first), and its
+# fast path then skips any tool already at the target ref whose env has a
+# python. A build that died half-way leaves exactly that state — new code, old
+# env, python still present — so the next `bdtools update` said "already at
+# <tag> with a built env — skipping" and never retried. These helpers record the
+# failure so the retry cannot be silently skipped.
+_build_state_file() { printf '%s' "${BDTOOLS_HOME}/state/${1}.build-failed"; }
+
+build_state_fail() {   # TOOL REF DETAIL — remember that this build did not finish
+  [[ "${DRY_RUN:-0}" -eq 1 ]] && return 0
+  local f; f="$(_build_state_file "$1")"
+  mkdir -p "$(dirname "${f}")" 2>/dev/null || return 0
+  printf 'ref=%s\nwhen=%s\ndetail=%s\n' \
+    "${2:-unknown}" "$(date '+%Y-%m-%d %H:%M:%S')" "${3:-}" > "${f}" 2>/dev/null || true
+}
+
+build_state_ok() {     # TOOL — this build finished; forget any recorded failure
+  [[ "${DRY_RUN:-0}" -eq 1 ]] && return 0
+  rm -f "$(_build_state_file "$1")" 2>/dev/null || true
+}
+
+# build_failed_for TOOL REF — did the last recorded build of TOOL fail at REF?
+# A failure recorded against a different ref is stale (the tool has moved on)
+# and is ignored; a failure with no ref recorded counts for any ref.
+build_failed_for() {
+  local f ref; f="$(_build_state_file "$1")"
+  [[ -f "${f}" ]] || return 1
+  ref="$(sed -n 's/^ref=//p' "${f}" 2>/dev/null | head -1)"
+  [[ -z "${ref}" || "${ref}" == "unknown" || "${ref}" == "${2:-}" ]]
+}
+
 # ---- resolve the suite's python (deferred until conda_base_dir exists) -----
 PYBIN="$(bd_python || true)"; : "${PYBIN:=python3}"

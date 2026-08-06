@@ -25,7 +25,11 @@ same backend that OOD proxies in production; only the front door differs.
   `softwareupdate --install-rosetta --agree-to-license` (the installer tells you
   if it's missing). `genoflu_gui` happens to resolve natively, but all four use
   the Rosetta env for consistency. Force a native attempt with
-  `BDTOOLS_NATIVE_ARM=1` (expect solve failures).
+  `BDTOOLS_NATIVE_ARM=1` (expect solve failures). An env that already exists
+  keeps the platform it was built for — updates re-derive it from the env itself,
+  so an osx-64 env is never updated with an arm64 solve (that mixes
+  architectures in one prefix). To move a tool to a different platform, delete
+  its `env/` and reinstall.
 - **`vsnp_gui` is heavier to install** — `bdtools install vsnp_gui` builds the
   bioconda `vsnp3` env (+ web layer + patches) and downloads the USDA-VS
   reference sets (~320 MB) into `~/.local/share/bdtools/vsnp3-refs/`. The
@@ -143,6 +147,33 @@ bin/bdtools status
 bin/bdtools check-updates
 bin/bdtools update irma_gui
 ```
+
+### When an update fails
+
+`bin/bdtools update all` runs every tool even if one of them fails. Failures are
+listed together at the end and the command exits non-zero:
+
+```
+!! FAILED to update: kraken_id_parse_gui
+   ...
+   bin/bdtools update kraken_id_parse_gui
+```
+
+What to know:
+
+- **The other tools were still updated.** Only the named ones need attention.
+- **A build that didn't finish is remembered** (in
+  `$BDTOOLS_HOME/state/<tool>.build-failed`). Re-running `bdtools update <tool>`
+  retries it — no `--force` needed. This matters because the update moves the
+  checkout to the new tag *before* building, so a failed build leaves new code
+  next to the previous env; without that record the next update would report the
+  tool as already up to date.
+- **The env is not destroyed by a failed update.** `conda env update` is additive
+  and conda rolls a failed transaction back, so the previous env stays in place —
+  the tool keeps running, on its old dependencies, until the rebuild succeeds.
+- **`bin/bdtools doctor <tool>`** says which modules/programs an env is actually
+  missing, which is the fastest way to tell whether a failed update matters for
+  the analyses you run.
 
 ## Where things live
 

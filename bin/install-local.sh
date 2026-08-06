@@ -168,7 +168,14 @@ _env_built() {
 # returns the command's own exit code (124 if it was killed for stalling).
 with_progress() {
   local label="$1"; shift
-  if [[ "${DRY_RUN:-0}" -eq 1 ]]; then echo "  [dry-run] ${label}: $*"; return 0; fi
+  if [[ "${DRY_RUN:-0}" -eq 1 ]]; then
+    # Print the command the user could run, not our internal wrapper: a payload
+    # of `_conda_step <envdir> conda env update …` is reported as the conda call.
+    local shown=("$@")
+    [[ "${shown[0]:-}" == "_conda_step" ]] && shown=("${shown[@]:2}")
+    echo "  [dry-run] ${label}: ${shown[*]:-}"
+    return 0
+  fi
   local tries="${BDTOOLS_BUILD_TRIES:-2}" attempt=1 rc=0
   while :; do
     [[ "${tries}" -gt 1 ]] && log "${label} — attempt ${attempt}/${tries}"
@@ -311,6 +318,17 @@ ensure_env_java() {
     && ok "linked ${envdir}/bin/java -> lib/jvm/bin/java (JRE)"
 }
 
+# _conda_step ENVDIR cmd [args...] — one conda operation, with the env's
+# activation hooks guarded first. Run as the with_progress payload (not around
+# it) on purpose: if a transaction installs a hook that then breaks a later
+# package's post-link script, attempt 2 of the same step starts by fixing the
+# hook the failed attempt left behind, so the retry can actually succeed.
+_conda_step() {
+  local envdir="$1"; shift
+  harden_conda_hooks "${envdir}"
+  "$@"
+}
+
 generic_build() {
   local conda; conda="$(detect_conda)" || die "conda/mamba not found. Install miniforge first."
   ok "conda: ${conda}"
@@ -322,16 +340,17 @@ generic_build() {
       # env never picked up additions like 'humanize'). conda env update is
       # additive — it won't remove anything the user added.
       with_progress "${TOOL}: updating conda env from spec (--rebuild)" \
-        "${conda}" env update -p "${DIR}/env" -f "${env_file}"
+        _conda_step "${DIR}/env" "${conda}" env update -p "${DIR}/env" -f "${env_file}"
     else
       ok "env present: ${DIR}/env"
     fi
   elif [[ -f "${env_file}" ]]; then
     with_progress "${TOOL}: creating conda env (solve can take several minutes)" \
-      "${conda}" env create -p "${DIR}/env" -f "${env_file}"
+      _conda_step "${DIR}/env" "${conda}" env create -p "${DIR}/env" -f "${env_file}"
   else
     die "no ${env_file} — cannot build env"
   fi
+  harden_conda_hooks "${DIR}/env"   # hooks this build installed: fix them for next time
   ensure_env_java "${DIR}/env"
   if [[ -f "${DIR}/backend/requirements.txt" ]]; then
     log "pip install backend requirements"
@@ -364,14 +383,60 @@ generic_build() {
   fi
 }
 
-# On Apple Silicon (macOS arm64), most of the bioinformatics dependency closure
-# has NO native osx-arm64 conda build — e.g. IRMA needs `blat`, and shovill pulls
-# spades/mash/skesa — none fully built for arm64 on bioconda. A native solve just
-# fails. The standard fix is to build the env as osx-64 and let Rosetta 2 run it
-# (the complete, mature osx-64 package set resolves cleanly). Exporting
-# CONDA_SUBDIR here is inherited by each tool's deploy/install.sh. Opt out with
-# BDTOOLS_NATIVE_ARM=1 (expect solve failures) or by pre-setting CONDA_SUBDIR.
+# _env_prefix_for_subdir — the env this build will operate on: the in-checkout
+# prefix env, or the named --personal env a delegated deploy/install.sh builds.
+# Echoes nothing when neither exists yet (a fresh build).
+_env_prefix_for_subdir() {
+  local cbase
+  [[ -d "${DIR}/env/conda-meta" ]] && { printf '%s' "${DIR}/env"; return 0; }
+  cbase="$(conda_base_dir 2>/dev/null || true)"
+  [[ -n "${cbase}" && -n "${ENV_NAME:-}" && -d "${cbase}/envs/${ENV_NAME}/conda-meta" ]] \
+    && printf '%s' "${cbase}/envs/${ENV_NAME}"
+  return 0
+}
+
+# Decide the conda platform (subdir) every solve in this build must target.
+#
+# Rule 1 — an EXISTING env wins, on every platform. Its architecture was fixed
+# when it was created, so an update has to keep solving for that same subdir; a
+# mixed-architecture prefix is at best a post-link failure and at worst a tool
+# that dies mid-analysis. This is not hypothetical: an env built osx-64 (rule 2)
+# was later updated by an osx-arm64 solve on the same Mac, because nothing
+# re-derived the subdir from the env.
+#
+# Rule 2 — a FRESH env on Apple Silicon (macOS arm64) is built osx-64 under
+# Rosetta 2. Much of the bioinformatics closure has no native osx-arm64 build —
+# IRMA needs `blat`, shovill pulls spades/mash/skesa — so a native solve fails or
+# resolves a partial toolchain. The mature osx-64 set resolves cleanly.
+#
+# Either way CONDA_SUBDIR is exported, so each tool's deploy/install.sh inherits
+# it. Opt out of rule 2 with BDTOOLS_NATIVE_ARM=1 (expect solve failures) or by
+# pre-setting CONDA_SUBDIR; rule 1 always wins over both, because it describes
+# what is already on disk rather than a preference.
 ensure_conda_subdir() {
+  local envdir existing host
+  envdir="$(_env_prefix_for_subdir)"
+  existing="$(env_conda_subdir "${envdir}")"
+  if [[ -n "${existing}" ]]; then
+    if [[ -n "${CONDA_SUBDIR:-}" && "${CONDA_SUBDIR}" != "${existing}" ]]; then
+      warn "CONDA_SUBDIR=${CONDA_SUBDIR}, but ${envdir} was built for ${existing} — solving for ${existing}."
+      info "  An env's architecture is fixed at creation; updating it for another platform mixes binaries."
+      info "  To move this tool to ${CONDA_SUBDIR}, delete the env first:  rm -rf ${envdir}"
+    fi
+    export CONDA_SUBDIR="${existing}"
+    ok "env platform: ${existing} (pinned from the existing env, not the host)"
+    # An env from another machine/arch cannot run here at all. Say so now, at
+    # install time, instead of leaving "Bad CPU type"/missing-symbol errors to
+    # surface mid-analysis. osx-64 on Apple Silicon is the one expected mismatch
+    # (rule 2 — Rosetta runs it).
+    host="$(host_conda_subdir)"
+    if [[ -n "${host}" && "${existing}" != "${host}" ]] \
+       && ! [[ "${host}" == "osx-arm64" && "${existing}" == "osx-64" ]]; then
+      warn "${envdir} was built for ${existing}, but this machine is ${host} — that env cannot run here."
+      info "  Rebuild it for this machine:  rm -rf ${envdir} && bin/bdtools install ${TOOL}"
+    fi
+    return 0
+  fi
   [[ "$(uname -s)" == "Darwin" && "$(uname -m)" == "arm64" ]] || return 0
   [[ -n "${CONDA_SUBDIR:-}" ]] && { info "CONDA_SUBDIR preset to ${CONDA_SUBDIR} — honoring it."; return 0; }
   [[ "${BDTOOLS_NATIVE_ARM:-0}" == "1" ]] && {
@@ -400,8 +465,9 @@ build_vsnp_local() {
     ok "env present: ${DIR}/env"
   else
     with_progress "${TOOL}: creating vsnp3 env (bioconda vsnp3 + snp-dists; solve can take several minutes)" \
-      "${conda}" create -y -p "${DIR}/env" -c conda-forge -c bioconda vsnp3 snp-dists
+      _conda_step "${DIR}/env" "${conda}" create -y -p "${DIR}/env" -c conda-forge -c bioconda vsnp3 snp-dists
   fi
+  harden_conda_hooks "${DIR}/env"
   # 2. web layer (uvicorn is served from this same python)
   [[ -x "${DIR}/env/bin/pip" ]] && run "${DIR}/env/bin/pip" install --upgrade \
       fastapi uvicorn pydantic python-multipart aiofiles
@@ -539,6 +605,10 @@ build_vsnp_local() {
 
 build() {
   ensure_conda_subdir
+  # Guard the existing env's activation hooks before anything runs conda —
+  # including a delegated deploy/install.sh, whose own conda calls hit the same
+  # upstream CONDA_BACKUP_* bug (see harden_conda_hooks).
+  harden_conda_hooks "$(_env_prefix_for_subdir)"
   if [[ -x "${DIR}/deploy/install.sh" ]]; then
     log "delegating env+frontend build to ${TOOL}/deploy/install.sh"
     local args=(); [[ ${DRY_RUN} -eq 1 ]] && args+=(--dry-run)
@@ -768,7 +838,26 @@ if [[ ${DO_BUILD} -eq 0 ]] && ! have_python; then
   warn "${TOOL} not built yet — building first"; DO_BUILD=1
 fi
 
-[[ ${DO_BUILD} -eq 1 ]]  && build
+# Build, and leave a record of whether it finished. Almost every failure path in
+# build() ends in `die`/`set -e` (an exit, not a return), so an EXIT trap is the
+# only way to catch them all — and the record matters: `bdtools update` decides
+# whether to retry a tool from it (see common.sh, build state), and without it a
+# half-built env at the right git ref looked exactly like a finished one.
+if [[ ${DO_BUILD} -eq 1 ]]; then
+  BUILD_REF="$(git -C "${DIR}" describe --tags --always 2>/dev/null || echo unknown)"
+  _record_build_exit() {
+    local rc=$?
+    # 3 is install-local's "this tool has no local-build path" sentinel — a clean
+    # skip, not a failed build (bdtools install treats it the same way).
+    [[ ${rc} -eq 0 || ${rc} -eq 3 ]] && return 0
+    build_state_fail "${TOOL}" "${BUILD_REF}" "install-local.sh --build exit ${rc}"
+    warn "${TOOL}: build did not finish (exit ${rc}) — recorded, so 'bdtools update ${TOOL}' will retry it rather than skip it."
+  }
+  trap _record_build_exit EXIT
+  build
+  trap - EXIT
+  build_state_ok "${TOOL}"
+fi
 
 # Self-check the env we just built: confirm the tool's required python modules
 # import and its programs are on PATH (scope=env skips database checks — those

@@ -1,295 +1,308 @@
-# Handoff — macOS kSNP4, citations, dashboard robustness
+# Handoff — dashboard restart, desktop launcher, version visibility, cross-platform stability
 
-Session: 2026-07-27. Owner: tks5563. (Development record, kept in-repo.)
-Supersedes [docs/HANDOFF_2026-07-26.md](docs/HANDOFF_2026-07-26.md), which is
-archived rather than deleted — it holds the open AMRFinderPlus decision, the
-hard-coded-path work, and the blow-by-blow of the macOS kSNP4 debugging.
+Session: 2026-08-06. Owner: tks5563. (Development record, kept in-repo.)
+Supersedes [docs/HANDOFF_2026-07-27.md](docs/HANDOFF_2026-07-27.md), which is archived
+rather than deleted — it holds the macOS kSNP4 work, the citation footers, and the
+"five guards that protected the wrong thing" analysis this session extends.
 
 ## TL;DR
 
-Everything below is **released, tagged, pushed and pinned**. Suite
-`2026.07.27h` / `suite-2026.07.11`.
+Everything below is **released, tagged, pushed and pinned**. Suite `2026.08.04`.
 
 | tool | tag | tool | tag |
 |---|---|---|---|
-| vsnp_gui | v0.4.35 | ksnp_gui | **v0.5.0** |
-| amr_plus_gui | v0.3.2 | genoflu_gui | v0.3.2 |
+| vsnp_gui | **v0.4.37** | ksnp_gui | v0.5.0 |
+| amr_plus_gui | **v0.3.3** | genoflu_gui | v0.3.2 |
 | mlst_gui | v0.3.3 | irma_gui | v0.3.2 |
-| kraken_id_parse_gui | v0.2.2 | ncbi_submit_gui | v0.2.2 |
+| kraken_id_parse_gui | v0.2.3 | ncbi_submit_gui | v0.2.2 |
 | mhc_gui | v0.2.2 | | |
 
 **What shipped**
 
-- **kSNP4 runs on macOS.** It was treated suite-wide as Linux-only; it is not.
-  Verified end to end on macOS 26.5/arm64, including the golden test reproducing
-  the Linux baseline exactly.
-- **Citation footers in all 9 GUIs** — the bdtools citation plus the upstream
-  tool's paper. Every reference checked against Europe PMC or the upstream repo.
-- **Five infrastructure bugs fixed**, all of a kind: a guard that protected the
-  wrong thing and degraded to *silently doing the wrong work*. See §2.
-- **kSNP provenance surfaced** — which kSNP4 produced a result is now answerable
-  from Settings, the run log, and `run_manifest.json`.
-- **Results pane shows run date *and* time**, and rows are clickable.
-- Dashboard retitled **Kapur Laboratory bioinformatic diagnostic tools (bdtools)**.
+- **The in-browser Restart no longer hangs.** Root cause measured, not guessed: the
+  outgoing dashboard keeps answering for up to 10.5 s, and the page accepted that as
+  "we're back". §1.
+- **A real desktop launcher** — `bdtools make-launcher` builds a macOS `.app` (icon, no
+  Terminal window, no Gatekeeper prompt) or a Linux/WSL menu entry, movable anywhere. §2.
+- **You can see which analysis package versions produced a result**, per tool, on every
+  card — and be told when a newer one exists. `bdtools versions`. §3.
+- **Cross-platform stability is now enforced, not documented.** A package only moves to
+  a version installable on *every* deployed platform. §4.
+- **"Cannot be done" stopped being reported as an error.** §4.
+- **One env per analysis tool** is now the rule, with the plumbing to follow it. It lifted
+  AMRFinderPlus from 3.12.8 — which cannot read the deployed database at all — to 4.2.7. §5.
+- **conda builds survive a strict ambient shell**, so a failed env build can self-heal
+  instead of failing identically twice. §6.
+- **IGV no longer refuses a reference GFF it just handed out** (a new user's viewer failed
+  to load entirely). §7.
 
-**Still open** — see §5. The AMRFinderPlus database decision is still yours to make.
+**Read §8 before trusting anything I claimed.** Four of this session's bugs were mine,
+including one that blanked the dashboard twice. What prevents each recurrence is listed.
+
+**Still open — §9.** The amr_plus assembler divergence needs a decision from you.
 
 ---
 
-## 1. kSNP4 on macOS — the headline fix
+## 1. The Restart hang
 
-A macOS run of 16 MTBC genomes died 0.4 s in:
+Restart is two processes handing one port over, and the page could not tell them apart.
 
-    OSError: [Errno 8] Exec format error: 'MakeKSNP4infile'
+Measured on wgs3: after `POST /api/restart` the **old** process keeps answering
+`/api/info` with 200 for **~10.5 s** while it stops tool servers (`stop_backends` allowed
+a 10 s SIGTERM grace, awaited unbounded). The page treated the first 200 as "the new
+dashboard is up" and reloaded 0.7 s later — into a server with 8 s left to live. A reload
+landing in the changeover destroys both the page and the script that was retrying, which
+is why it presented as a permanent hang.
 
-SourceForge publishes a **kSNP4.1 Mac package** (Mach-O x86_64, fine under
-Rosetta 2) beside the Linux one. The suite assumed Linux-only, so `install.sh`
-hard-coded the Linux URL, `install-local.sh` passed `--skip-ksnp` off Linux, and
-`requirements.py` carried `os: linux` — which made **doctor SKIP ksnp_gui on
-macOS**, so the one check that could have caught a wrong-OS payload never ran on
-the machines carrying one. `tests/ksnp_gui/test.yml` had the same gate.
+Contract now, in both dashboards (they share `dashboard.py`'s `PAGE`):
 
-Underneath, one mistake in three places: every readiness check asked
-`shutil.which(tool) is not None`. That answers *"is there a file with this name on
-PATH"*, not *"can this host exec it"*. The Linux payload satisfies it.
+- `/api/info` returns `boot_id` (pid + start ms) and **503 once the process is exiting**.
+- The restart poller waits for `boot_id` to **change**, not for any 200.
+- Exit is bounded: 3 s SIGTERM grace inside a 6 s budget, then exit regardless — an
+  unreapable SIGKILLed child (network volume) must not strand a restart.
+- The supervisor waits for the port to be **bindable** (30 s) before relaunching. macOS
+  and Linux differ on rebinding, and losing that race used to end the loop silently,
+  which from the browser is indistinguishable from a hang.
 
-### Where kSNP4 runs, definitively
+Result: 10.9 s → **4.0 s** with a backend that ignores SIGTERM; ~1 s normally.
 
-Both published packages are **x86_64 only**, so the OS is not the whole story:
+A wedged tool makes Restart return **409** (`active or unverifiable analyses`) as an
+alert — a different failure, not this one.
 
-| host | verdict |
+## 2. `bdtools make-launcher`
+
+`Open Dashboard.command` is opened *by* Terminal.app (hence the window), and locates the
+suite with `cd "$(dirname "$0")"` — so a copy on the Desktop silently does nothing.
+
+`bdtools make-launcher` generates the platform's native thing instead:
+
+| platform | output |
 |---|---|
-| x86_64 Linux (incl. WSL2 on Intel/AMD) | ✅ Linux package |
-| Intel Mac | ✅ Mac package |
-| Apple Silicon Mac | ✅ Mac package via Rosetta 2 |
-| **ARM Linux** (WSL2 on Windows-on-ARM, Graviton) | ❌ **no package exists** |
-| Apple Silicon **without** Rosetta 2 | ❌ until Rosetta is installed |
+| macOS | `Kapur Lab Dashboard.app` — icon, **no Terminal window**, not quarantined so no right-click→Open |
+| Linux | applications-menu entry + hicolor icons (`--dest ~/Desktop` for a trusted desktop copy) |
+| WSL | the same entry (WSLg surfaces it in the Start Menu) + a `.ico` for a native shortcut |
 
-`ksnp_gui/bin/ksnp_platform.py` is the single answer to "can kSNP4 run here",
-shared by the GUI's readiness gate, the pipeline preflight, and
-`deploy/install.sh` (via a small CLI). It reads magic bytes — ELF vs Mach-O **and**
-the CPU field — because an OS-only check would have let the identical bug through
-on ARM Linux, where x86_64 ELF passes "is it ELF?" and then fails with no
-translation layer. `bin/lib/check.py` has the same logic behind a
-`binary_format_probes` spec key.
+- The install path is **baked in at generation time**, so it survives being moved to the
+  Dock, Desktop or `/Applications`. Re-run after moving or reinstalling.
+- The dashboard is started **detached**: quitting the launcher or Cmd-Q can never
+  interrupt a running analysis. Stopping stays with the browser's **Shut down**.
+- Every launch logs to `~/Library/Logs/bdtools/dashboard.log` (macOS) or
+  `~/.local/state/bdtools/dashboard.log`, and a dashboard that never answers raises a
+  dialog naming that log — silence is the one failure mode a double-click cannot afford.
+- Icons: `bin/make-icons.py` (needs Pillow — run it with a tool env python) draws one
+  master and emits `.icns` + sized PNGs + `.ico` into `templates/launcher/icons/`. The
+  derived files are **committed**, so no user machine needs Pillow.
+- `BDTOOLS_LAUNCHER_PLATFORM=macos` builds and tests the bundle off a Mac — a `.app` is
+  a directory, so there was no reason that path could not be tested.
 
-⚠️ **A repaired Mac has both archives unpacked in `vendor/`.** The post-unzip search
-for the kSNP4 dir is format-aware; before, "first `kSNP4` that `find` turns up" could
-re-link the payload just replaced. Wrong-OS files are left on disk (545 MB), and
-`install.sh` says so.
+## 3. Analysis package versions
 
-Full narrative: [docs/HANDOFF_2026-07-26.md](docs/HANDOFF_2026-07-26.md) §7a, §7h–§7j.
+The suite tracked its GUI repos and nothing else. The software that actually produces
+results — vsnp3, AMRFinderPlus, kraken2, mlst, IRMA, GenoFLU — is conda packages inside
+each env, and no version of it was recorded, displayed or checked. "Which vsnp3 wrote
+this report?" had no answer short of listing `conda-meta` by hand.
 
----
+- `tools.yml` gains `packages:` (exact pins) and `packages_held:` (a newer release exists
+  that this env cannot take — shown, never offered).
+- `bin/lib/packages.py` reads installed versions from `conda-meta` (a directory listing,
+  no solve) and the newest from `api.anaconda.org` (one request per package, cached 6 h).
+  It reads the env that would **actually run** the tool via `tool_launch.resolve` — not
+  always `<checkout>/env`.
+- Every installed card shows `vSNP3 v0.4.36 · vsnp3 3.35`, always — not only when an
+  update exists. `bdtools versions` prints the same in a terminal.
+- Newer packages appear in the update banner as their own items with their own button.
+- `bdtools update-packages <tool|all>` installs, **re-applies that tool's local patches**,
+  checks doctor, and bumps the pin. The re-apply is why this is a command and not a
+  documented `conda install`: vsnp_gui patches the packaged vsnp3 (the minus-strand
+  annotation fix), and a fresh package overwrites the patched files.
 
-## 2. Five bugs of one shape — read this before trusting a guard
+**The three update buttons run in a fixed order** and are laid out left to right,
+numbered, because the order matters:
 
-Each was a safety mechanism that protected the wrong thing and, when it fired,
-**silently did the wrong work instead of failing**. None reported an error.
+1. **Update bdtools** — `bdtools update <tool>` rewrites pins in `tools.yml`, and the
+   bdtools `git pull --ff-only` restores that file to get a clean tree, so tools-first
+   silently discards the pin record. A tool rebuild should also run under the *new*
+   install scripts.
+2. **Install tool updates** — each GUI's own release (tag + env rebuild).
+3. **Update conda packages** — the analysis software inside an env. Last, because a
+   bdtools pull can change the pins these work from.
 
-| # | guard | what it actually did |
+## 4. Cross-platform stability outranks version currency
+
+Your stated priority, now enforced in the tool.
+
+Every update solves locally **and** on `linux-64, osx-64, osx-arm64` before anything is
+installed. If any platform cannot take it, **nothing is applied anywhere**, the refusing
+platforms are named, and the version is recorded so it is not proposed again.
+`--local-only` is the deliberate override.
+
+Verified: `--to mlst=2.34.0` solves on Linux and is then refused with
+`cannot be installed on: osx-64 osx-arm64`.
+
+**`bdtools update-packages all --check-pins`** is the gate to run when changing a pin — a
+real dry-run solve per platform. Both pin mistakes made this session would have been
+caught by it.
+
+**Severity is split**, because a run that correctly works out an update cannot be applied
+is not a failure:
+
+| outcome | meaning | exit |
 |---|---|---|
-| 1 | `install`'s clean-tree check | Refused to advance a checkout past its first build (every install rewrites tracked `frontend/dist`), then **built old code while announcing the new pin**. Three shipped fixes appeared broken on one Mac for this reason alone. |
-| 2 | the stall watchdog | Both progress detectors returned **0 on every Mac** (`du -sb` is GNU-only, BSD du rejects it; `/proc` does not exist). The idle timer never reset, so **any step over 300 s was killed and retried** — long conda solves included. It killed a 1 GB download at 56%, twice. |
-| 3 | `[[ ! -s "$ZIP" ]]` | "Non-empty" is not "complete". A truncated 556 MB zip counted as downloaded, unzip failed, and **every retry failed identically, forever** — escapable only by deleting a file by hand. |
-| 4 | `pull --ff-only` clean-tree check | `bdtools update` writes pins into the git-tracked `tools.yml`, so updating any tool **made it impossible to update bdtools**. A standing deadlock, every release, every platform. |
-| 5 | dashboard port guard | Lived behind `if [[ mode != serve ]]`, so a plain `bdtools dashboard` skipped it and emitted a raw `[Errno 48]` **after** printing "Open this in your web browser". Reads as "started then broke"; it never started. |
+| **BLOCKED** | cannot be installed here or elsewhere; tools keep working | **0** |
+| **FAILED** | conda missing, install died after a good solve, patches did not re-apply | 1 |
 
-**The habit this earns:** when a shipped fix "doesn't work" on one machine, confirm
-the version actually running (`git -C <checkout> describe --tags`) *before*
-re-reading the fix. A pin is an intention; `describe --tags` is the fact. Three of
-this session's rounds would have been one.
+Conflating them printed "⚠ Update finished with errors" for a run in which nothing was
+wrong — which is how you teach people to ignore the word "error".
 
-**And:** three of these were caught only by *running* the thing, not by review —
-the SO_REUSEADDR/TIME_WAIT interaction, the stale React closure, and the porcelain
-column shift below. Platform-specific silent failures do not show up in a diff.
+**Two facts worth keeping:**
 
-⚠️ Traps that bit me while fixing the above, all now guarded:
+- **noarch does not mean portable.** `mlst 2.34.0`/`2.35.0` are noarch and depend on
+  `libxcrypt1`, which has no macOS build. **2.33.1** is the newest mlst that solves on
+  both, so that is the pin. Confirmed from bioconda file metadata *and* a foreign-platform
+  solve.
+- **Foreign-platform solves need `CONDA_OVERRIDE_OSX`** or they fail on a missing `__osx`
+  virtual package — which reads exactly like a real dependency conflict and cost me one
+  wrong conclusion.
 
-- **`SO_REUSEADDR`** must be set in the port bind-test, because uvicorn sets it. Without
-  it the test is *stricter* than the bind it predicts, and a `TIME_WAIT` socket
-  (normal for a moment after a stop) reports a free port as busy.
-- **Async shutdown** means `--stop && dashboard` loses a race with the process it
-  just stopped; hence a 5 s grace period.
-- **`git status --porcelain` is `.strip()`ed for display**, which eats the leading
-  space of the first line and shifts every column — `ln[3:]` read `"ools.yml"`. Parse
-  the paths, don't slice.
+## 5. One env per analysis tool
 
----
+**Rule:** a tool that needs another tool's software invokes it from **that tool's env** —
+`<env>/bin/<prog>` with `<env>/bin` first on `PATH`, so the callee's own dependencies
+(perl, blast, any2fasta) resolve there. Not `conda run` (startup cost per call, and it
+can interleave stdout).
 
-## 3. What changed in the GUIs
+`tool_launch` now exports **`BDTOOLS_SIBLING_ENV_<TOOL>`** for every installed sibling
+(plus a `BDTOOLS_SIBLING_ENVS` map). Each path is resolved by asking `resolve()` about
+that tool — a shared sibling env or a personal conda env both win over
+`<checkout>/env`, so it cannot be guessed.
 
-### 3a. Citations — all 9 tools
+> `resolve()` builds that map by calling `resolve()` per sibling, which recurses;
+> `_SCANNING_SIBLINGS` guards it. `resolve()` is on the dashboard's hot path, so
+> unguarded recursion would have exhausted the stack there. 0.01 s per call with the map.
 
-`Citations.jsx` / `Citations.css`, vendored byte-identically (source of truth
-`amr_plus_gui`) and covered by `bin/check-shared-frontend.sh` via a `SHARED_ALL`
-set — **shared with `vsnp_gui` too**, unlike the Results pane: every class is
-`cite-` prefixed and the sheet uses only variables both `App.css` and `styles.css`
-define.
+**Why it matters (amr_plus_gui v0.3.3):** a duplicated `mlst` pulled
+`perl-bioperl → perl-bio-samtools`, holding perl and zlib down, which pinned
+`ncbi-amrfinderplus` at **3.12.8** — a version that **cannot read the deployed AMRFinder
+database**. The 4.x layout renamed `AMRProt` → `AMRProt.fa`, so 3.12.8 reports
+*"the BLAST database for AMRProt was not found"*, and its own default DB path points into
+a conda build directory that does not exist. The older version was the broken one.
 
-References: vSNP3 (Hicks 2024), AMRFinderPlus (Feldgarden 2021) + mlst/PubMLST,
-IRMA (Shepard 2016), GenoFLU (Youk 2023 — no software paper exists; that is what
-its README asks for), mlst + PubMLST/BIGSdb (Jolley 2018), Kraken 2 (Wood 2019) +
-Krona (Ondov 2011) + Bracken (Lu 2017), kSNP4 (Hall & Nisbet 2023).
-`ncbi_submit_gui` and `mhc_gui` show the suite citation only.
+mlst left that spec; MLST corroboration runs from mlst_gui's env. AMRFinderPlus 4.2.7 +
+kraken2 2.17.1 pass `--check-pins` on all three platforms.
 
-⚠️ **Do not add a reference from memory.** A wrong volume in a footer propagates into
-other people's bibliographies — which is exactly how the 545/548 error survived.
-That one is resolved: PMID 38822271 is page **545**, and `DOCUMENTATION_INDEX.md`
-had also credited the wrong first author (Hicks, not Stuber).
+> **An existing env still physically contains mlst**, so it keeps its old versions until
+> rebuilt (`bdtools install amr_plus_gui --rebuild`). Reported as blocked, not an error.
+> **AMR gene calls will change** — validate with `bdtools test amr_plus_gui` before users see it.
 
-### 3b. Results pane — run date/time, clickable rows
+## 6. conda builds survive a strict shell
 
-`Run date` was `run_date.slice(0, 10)`, discarding the time, so several runs of one
-set on one day were indistinguishable. Now `2026-07-27_10-45-27` — deliberately the
-shape the pipelines already stamp into run labels and filenames, so a row maps to a
-folder by eye. New opt-in `onRowSelect` / `selectedKey`; row clicks ignore clicks
-landing on a control, and rows are tabbable.
+A macOS env build failed twice and gave up, on a bug the code already knew about:
 
-⚠️ **Two date bugs found doing this.** A date-only value parsed as UTC midnight and
-rendered as **the previous day** west of Greenwich. And `isoDay` used
-`toISOString()` — the UTC day — so the date filters binned by UTC while the table
-shows local time. Display and filtering now share one helper.
-
-### 3c. kSNP GUI (v0.5.0)
-
-- **Which kSNP4 ran this** — Settings block (paths / version / payload arch / host,
-  from `/api/readiness`'s new `toolchain`), the first lines of every run log, and a
-  `toolchain` block in `run_manifest.json`. Previously the version lived only in the
-  manifest and the **path was recorded nowhere**, so two installs claiming one
-  version were indistinguishable. `version_from_path` lives in `ksnp_platform` beside
-  `describe_payload` so the three can't disagree.
-- **Layout** — Sample Metadata and Genomes-selected span the full page width with
-  their own Hide buttons; Projects sizes to Inputs instead of stretching to three
-  stacked panels. The Sample Metadata column divider is draggable (arrow keys, Home,
-  double-click reset, clamped 15–85%, persisted per browser).
-- **Results order** — the table and the detail pane were *both* titled "Results",
-  detail above table. Table first now, detail below it as "Selected run", and
-  clicking a row opens that run there — same destination as the Projects **View**
-  button.
-
-Done with **no `App.css` change**: `.layout` is already a flex column, so a panel
-placed directly in it is full width. `App.css` is copied verbatim across the suite
-and marked do-not-restyle — fixing it in CSS would have restyled all nine tools.
-
-⚠️ **Stale-closure trap:** the first column-resize keyboard handler read state from
-its closure, so three presses in one tick moved 2% instead of 6%. All writes go
-through one ref-backed function. Any future relative-adjustment control wants that
-shape.
-
-### 3d. mlst_gui (v0.3.3) — XLSX export was dead
-
-`bdtools lint`'s one ✗ (openpyxl undeclared) was real, and fixing it exposed a
-second defect in the same endpoint: `Response` was missing from the
-`fastapi.responses` import, so even with openpyxl installed the return would raise
-`NameError`. The endpoint's own `HTTPException(501, "Excel export needs openpyxl…")`
-masked it — a friendly fallback message hiding the bug behind it. **`bdtools lint`
-is now clean across all 9 tools.**
-
----
-
-## 4. How updates reach other machines
-
-Two halves, and **both are needed**:
-
-1. **`bdtools`** → `git pull --ff-only` on the umbrella
-2. **each tool** → `bdtools update <tool>`, which reads the highest `v*` **tag** off
-   that tool's remote
-
-Umbrella-level fixes (doctor, the launcher, the watchdog, the port guard) live in
-bdtools, so a machine that updates only its tools gets new tools driving old
-infrastructure. **Update bdtools first.**
-
-**For anyone not comfortable at a shell the whole route is in the browser:**
-Updates panel → update `bdtools` → update the tools → **Restart**. This is the
-*supported* path, and note it was never affected by the stale-checkout bug (§2.1) —
-`bdtools install` on the command line was the broken one.
-
-After updating, **`bdtools dashboard --restart`**: the running dashboard and tool
-servers keep serving old code until restarted.
-
-**The OOD server does not use `bdtools update`** (it refuses external checkouts by
-design). wgs3 goes through `bdtools install --server <tool> --site-conf …`, which
-checks out the `tools.yml` pin — so the pin bump is what carries a release there.
-Use `--dry-run` first.
-
-⚠️ **Known limitation, pre-existing:** there is one `dashboard-state.json`, so it
-describes only the most recently started dashboard. Run two on different ports and
-the first becomes unrecorded — `--stop` then correctly refuses it and tells you to
-kill it by PID.
-
----
-
-## 5. Still open
-
-Carried forward from the archived handoff — none of it was touched this session
-except where noted.
-
-1. **AMRFinderPlus database version mismatch — needs your decision.** The shared DB
-   is format 4.2.0; the installed binary is amrfinder 3.12.8, which reads only 3.x.
-   **No AMR run on wgs3 will produce calls until one side moves.** The cleaner fix
-   keeps the database: `conda install -n amr_plus 'ncbi-amrfinderplus>=4'`.
-   See archived §3b.
-2. **No Kraken training module.** `docs/TRAINING.md` covers 6 tools in 7 modules;
-   Kraken appears only as a supporting actor. Archived §5.1 has the specifics,
-   including two real gaps (`GET /api/kraken-dbs` is never called by the frontend;
-   `setup-databases.sh` only fetches `k2_standard_08gb` while amr's docs call for
-   PlusPF).
-3. **No `docs/NCBI_SUBMISSION.md`.** The tool is more complete than its label
-   suggests; what is missing is the page. Archived §5.3.
-4. **MHC not tested or documented.** Its `CLAUDE.md` is still a verbatim
-   `amr_plus_gui` copy documenting `amrfinder`. Archived §5.4.
-5. **Hard-coded paths** — `bin/lib/site_paths.py` establishes the pattern; it is
-   mostly not applied yet. Archived §4.
-6. **Nothing this session was exercised on Linux or wgs3.** The watchdog change
-   (§2.2) touches every tool's build path, so a `bdtools doctor` there after pulling
-   is worth the minute.
-7. **Unconfirmed:** kSNP4 prints "the output directory is missing some expected
-   files" on the 3-genome golden set on macOS. The output dir is complete and a
-   16-genome run is clean, so it reads as a small-N artifact — but it has not been
-   compared against a Linux run of those same 3 genomes.
-8. `/srv/kapurlab/tools/<tool>` still sit on the divergent
-   `add-noncommercial-license` branch; `main` has no LICENSE. Deliberately untouched
-   — pending PSU OTM review.
-
----
-
-## 6. Operational notes
-
-- **Dark mode is live in all 9 tools.** Sharing one theme choice across tools
-  requires the **single-port proxy** dashboard (same origin); the legacy fallback
-  gives each tool its own port, so the theme is per-tool there.
-- **The `?t=…` URL is not a bug.** `_dashboard_wants_token()` exempts macOS and WSL
-  and defaults **on** everywhere else. Override with `BDTOOLS_DASHBOARD_AUTH=0|1`.
-- **Managed checkouts are shallow with a pinned fetch refspec**, so a plain
-  `git fetch origin` updates nothing. Use
-  `git fetch origin 'refs/heads/main:refs/remotes/origin/main' --tags` when working
-  in a checkout by hand.
-- **`ksnp_gui` on macOS downloads ~1.0 GB** (the Mac package). Warn users on a
-  metered connection.
-- **Dashboard identity is a marker, not the title.** `dashboard.py` decided "is this
-  our dashboard on this port?" by matching the display title in the first 400 bytes,
-  so the retitle would have silently broken dashboard reuse. Both templates now
-  carry `<meta name="bdtools-dashboard">` and the check matches that. **If you
-  rename the dashboard again, nothing needs to change here — that is the point.**
-- **Shared frontend files are copied, not packaged.** Run
-  `bin/check-shared-frontend.sh` before tagging; it names the exact `cp` on drift.
-  Editing a shared file in one tool is the one reliable way to create drift.
-- **vite 8 needs Node ≥20.19.** Without it `npm run build` fails and you silently
-  ship a stale `dist/`.
-
----
-
-## 7. Verify after pulling elsewhere
-
-```bash
-bin/bdtools update all          # or: Updates panel in the dashboard
-bin/check-shared-frontend.sh    # shared copies identical
-bin/bdtools lint                # dependency drift (clean as of this handoff)
-bin/bdtools doctor              # all 9 ready
-bin/bdtools test all            # golden results; tier-2 tools SKIP without their DB
-bin/bdtools dashboard --restart
+```
+deactivate_clangxx_osx-arm64.sh: CONDA_BACKUP_CLANGXX: unbound variable
+LinkError: post-link script failed for package spades-4.3.0
 ```
 
-Expected on this Mac: `doctor` green on all 9, `lint` clean, `ksnp_gui` PASS
-(snps_all 44309, core_snps 34713), tier-2 SRA tests SKIP without sra-tools.
+`harden_conda_hooks` was powerless because **it can only patch hooks that already
+exist**. The env was being *created*: nothing to harden, the transaction installed the
+hook, a post-link script sourced it and died under `set -u`, and the rollback **deleted
+the hook** — so the retry began with nothing to harden and failed identically.
+
+`_conda_step` now runs conda with `SHELLOPTS`/`BASHOPTS` scrubbed and every
+`CONDA_BACKUP_<VAR>` defined. Verified both halves: with `SHELLOPTS` exported a child bash
+inherits `nounset` and the hook dies with that exact message; scrubbed, it runs clean.
+
+Also: hooks are hardened **after** a step as well as before (a transaction can install
+the hooks that break the next one), and a retried create **clears a partial prefix**
+first — conda's rollback leaves untracked `__pycache__` behind, which is the
+`ClobberError` storm. Guarded to absolute + env-shaped + no `bin/python`; verified it
+refuses `""`, `/`, a home directory and any built env.
+
+## 7. IGV — vsnp_gui v0.4.37
+
+A new user on a Mac got `IGV failed to load: Error accessing resource … status: 400` and
+an empty viewer. `serve_project_file` resolved the requested path but compared it against
+roots **not resolved into the same namespace** — which only matters when a reference root
+is a *directory of symlinks*, and `install-local` builds exactly that whenever there is
+**no shared reference set**. With `/srv` present the root is one symlink to the whole
+collection, so it always worked here.
+
+Fixed by comparing both sides in both as-given and resolved form (as-given normalized
+first, so `..` cannot escape). That also closed two latent holes: `startswith` without a
+path boundary accepted a sibling sharing a name prefix, and an empty root accepted
+everything.
+
+Two frontend consequences of the same class:
+
+- the annotation track loads **after** `createBrowser`, so one unreachable GFF no longer
+  costs the reads and the calls too;
+- clicks arriving during the initial load are **queued** with their locus, instead of
+  dropped behind a sticky "IGV not ready yet" over a fully loaded viewer.
+
+## 8. Four bugs of mine, and what stops each recurring
+
+Read this before trusting a claim of "verified".
+
+1. **The dashboard went blank, twice.** I wrote a JS string as `'a tool\'s env'`. `PAGE`
+   is a Python `"""…"""` literal, so Python collapsed `\'` to a bare `'` **before it was
+   served** — the script block failed to parse, so `load()`, `loadInfo()` and
+   `pollUpdates()` never ran. My check extracted the script from the `.py` source and
+   *unescaped it* before `node --check` — I tested a copy in which the bug did not exist.
+   **Now:** `tests/test_page_js.py` takes `PAGE` **as evaluated** and parses every script
+   block, then executes `renderUpdates()` for each update-kind combination.
+   `bin/lint.sh` runs it first. Confirmed it catches that exact bug.
+   **Rule: never validate `PAGE` by reading the file. Use double-quoted JS strings for
+   text with apostrophes.**
+2. **I wrote pins that could not be satisfied.** `ncbi-amrfinderplus=4.2.7 +
+   kraken2=2.17.1 + mlst=2.35.0` is unsatisfiable together; `mlst=2.35.0` is impossible on
+   macOS. I picked the newest of each independently and never solved the set.
+   **Now:** `--check-pins`, plus an offline guard rejecting versions verified unavailable.
+3. **`update-packages` rewrote the pin to match local reality** on every run — it silently
+   reverted my own new pin while I was testing it. Since the right version differs per
+   platform, two machines would have fought over `tools.yml` forever. **Now:** drift is
+   reported; a pin only moves when a package is actually installed by that command.
+4. **Two tests read the real `$BDTOOLS_HOME` cache**, so they passed or failed by local
+   history. **Now** hermetic; verified identical with the cache empty and populated.
+
+## 9. Still open
+
+1. **The amr_plus assembler diverges by platform — needs your decision.** Both platforms
+   agree on AMRFinderPlus 4.2.7, kraken2 2.17.1, samtools 1.24, blast 2.17.0. The
+   assembler does not: **shovill 1.4.2 + spades 3.15.5** on linux-64 versus **shovill
+   0.9.0 + spades 4.3.0** on osx-64. The chain is closed — shovill 1.4.2 needs
+   `spades >=3.14,<4`, spades 3.x needs `libzlib <1.3`, and AMRFinderPlus 4.2.7 needs
+   `libzlib >=1.3.1`. So the same reads would assemble differently per platform, and the
+   macOS pairing (shovill 0.9.0 with spades 4.x) may not even work at runtime.
+   Under the stability-first priority the fix is to **drop shovill and use one pinned
+   spades everywhere** — `amr_pipeline.py` already has that fallback path. It changes
+   assemblies and therefore AMR calls, so it is not done.
+2. **The macOS `kraken_id_parse_gui` build needs re-testing** after §6. The mechanism and
+   the guard were proved on Linux; there is no Mac here, so the arm64 build was not
+   reproduced. If it still fails, the log will differ — send it plus
+   `bdtools doctor kraken_id_parse_gui`, and check whether anything in the shell profile
+   exports `SHELLOPTS`.
+3. **AMRFinderPlus 4.2.7 needs validating** against a known sample before users see it
+   (`bdtools test amr_plus_gui`), and existing envs need
+   `bdtools install amr_plus_gui --rebuild` to gain it.
+4. **The one-env-per-tool rule is not in `docs/BUILDING_A_TOOL.md`** yet — it lives in
+   code comments and commit messages, so a new tool will not be steered by it.
+5. **`/srv/kapurlab/tools/amr_plus_gui` is at v0.2.7**, well behind the v0.3.3 pin. I
+   restored it untouched after mistakenly committing onto its detached HEAD — do the
+   deploy deliberately. Other `/srv` checkouts likely lag too.
+6. **This dev box has mlst 2.35.0 with the pin at 2.33.1.** Drift is reported on every
+   run. Converge with `bdtools update-packages mlst_gui --to mlst=2.33.1`.
+
+## 10. Verify after pulling elsewhere
+
+```bash
+git pull
+bin/lint.sh                                   # includes the dashboard-page JS check
+python3 -m unittest discover -s tests -p "test_*.py"   # 126 tests
+bin/bdtools versions                          # what each tool actually runs
+bin/bdtools update-packages all --check-pins  # only when changing a pin (minutes)
+bin/bdtools doctor
+```
+
+The dashboard needs **Restart dashboard** to pick up new page code. If it comes back
+blank, that is §8.1 — the page script failed to parse; check the browser console and run
+`python3 -m unittest tests.test_page_js`.

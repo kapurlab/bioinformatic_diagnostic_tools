@@ -313,6 +313,12 @@ def report(tools=None, use_network=True):
             tried = unsat.get(f"{tool}/{name}") or {}
             blocked_version = tried.get("version", "")
             newer = is_newer(latest, inst) if inst else False
+            # Why it is held, and what (if anything) would change that. Carried on
+            # the record rather than left in the CLI's log, because the dashboard
+            # goes quiet about a held package — and a badge that says "held" with
+            # no reachable reason is how a deliberate decision turns into a mystery.
+            held_reason = ""
+            held_fix = ""
             if not env:
                 status = "not installed"
             elif not inst:
@@ -322,15 +328,32 @@ def report(tools=None, use_network=True):
                           f"cannot be installed)")
                 newer = False
                 is_held = True
+                why = (tried.get("reason") or "").strip()
+                held_reason = (f"{latest} was tried on this machine and could not be "
+                               f"installed" + (f": {why}" if why else "."))
+                # An env conflict is fixable by rebuilding the env from its spec —
+                # which is precisely the amr_plus case tools.yml documents. A version
+                # that does not exist for a platform is not, so do not send anyone on
+                # a long rebuild that cannot help.
+                if pinned == blocked_version and not why.startswith("not installable on"):
+                    held_fix = f"bdtools install {tool} --rebuild"
             elif newer and is_held:
                 status = f"held at {inst} (newer: {latest}; this env cannot take it)"
                 newer = False
+                held_reason = (f"{latest} exists, but this environment cannot take it. "
+                               f"Held deliberately in tools.yml.")
             elif newer:
                 status = f"↑ {latest} available"
             elif not latest:
                 status = "up to date (channel not checked)"
             else:
                 status = "up to date"
+            # `held` reports that something is being held BACK, so it cannot outlive
+            # the newer version it refers to. A manifest hold is by name and forever;
+            # this env may already have caught up (or overshot — an install built
+            # before the pin), and reporting "held" there put a badge on a card and a
+            # line in the "up to date" summary with no newer version behind either.
+            is_held = bool(is_held and inst and is_newer(latest, inst))
             out.append({
                 "tool": tool,
                 "package": name,
@@ -340,6 +363,8 @@ def report(tools=None, use_network=True):
                 "latest": latest,
                 "update_available": bool(newer),
                 "held": is_held,
+                "held_reason": held_reason,
+                "held_fix": held_fix,
                 "env": env,
                 "status": status,
                 # A pin that does not match what is installed means this env was
@@ -380,6 +405,10 @@ def main(argv):
                 "%s (%s)" % (rec["package"], rec["channel"]),
                 rec["installed"] or "—", rec["latest"] or "?",
                 rec["status"], drift))
+            # A held package is not offered anywhere, so this is the only place the
+            # way out of it is written down.
+            if rec.get("held_fix"):
+                print("        to take it: %s" % rec["held_fix"])
     return 0
 
 

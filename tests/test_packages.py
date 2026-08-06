@@ -211,6 +211,31 @@ class ReportTests(unittest.TestCase):
         # ...but not offered, or the banner nags forever and the update always fails.
         self.assertFalse(rec["update_available"])
         self.assertIn("held", rec["status"])
+        # The reason has to travel on the record: once nothing offers the package,
+        # the card badge and the CLI line are the only places left to explain it.
+        self.assertIn("3.36", rec["held_reason"])
+        self.assertIn("tools.yml", rec["held_reason"])
+
+    def test_a_hold_expires_when_the_env_catches_up(self):
+        # A manifest hold is by NAME and forever; the env is not. Once the installed
+        # version has reached the channel's newest, nothing is being held back — and
+        # reporting "held" there badged a card and padded the dashboard's "N held"
+        # summary with a package that had nothing newer behind it.
+        with tempfile.TemporaryDirectory() as tmp:
+            meta = Path(tmp) / "conda-meta"
+            meta.mkdir()
+            (meta / "vsnp3-3.36-hdfd78af_0.json").touch()
+            with mock.patch.object(PKG, "env_dir_for", return_value=tmp), \
+                 mock.patch.object(PKG, "latest_version", return_value="3.36"), \
+                 mock.patch.object(PKG, "unsatisfiable_here", return_value={}), \
+                 mock.patch.object(PKG, "held",
+                                   return_value={"vsnp_gui": {"vsnp3"}}), \
+                 mock.patch.object(PKG, "_save_cache", lambda cache: None):
+                rec = next(r for r in PKG.report(["vsnp_gui"], use_network=True)
+                           if r["package"] == "vsnp3")
+        self.assertFalse(rec["held"])
+        self.assertFalse(rec["update_available"])
+        self.assertEqual(rec["status"], "up to date")
 
 
 class UnsatisfiableRecordTests(unittest.TestCase):
@@ -231,6 +256,7 @@ class UnsatisfiableRecordTests(unittest.TestCase):
             with mock.patch.object(PKG, "env_dir_for", return_value=tmp), \
                  mock.patch.object(PKG, "latest_version", return_value="2.35.0"), \
                  mock.patch.object(PKG, "_save_cache", lambda cache: None), \
+                 mock.patch.object(PKG, "held", return_value={}), \
                  mock.patch.object(PKG, "unsatisfiable_here", return_value={
                      "mlst_gui/mlst": {"version": "2.35.0",
                                        "reason": "nothing provides libxcrypt1"}}):
@@ -241,10 +267,42 @@ class UnsatisfiableRecordTests(unittest.TestCase):
         self.assertTrue(rec["held"])
         self.assertFalse(rec["update_available"])
         self.assertIn("cannot be installed", rec["status"])
+        # The recorded solver reason, not a pointer to tools.yml — nothing was ever
+        # written there about this one, so sending anyone to look was a dead end.
+        self.assertIn("libxcrypt1", rec["held_reason"])
+
+    def test_a_hold_from_an_env_conflict_names_the_rebuild_that_would_lift_it(self):
+        # The amr_plus case: the pinned version is right and the EXISTING env cannot
+        # take it, so rebuilding from the spec is the way out and belongs on the
+        # record. A version that does not exist for this OS must NOT get that advice.
+        with tempfile.TemporaryDirectory() as tmp:
+            meta = Path(tmp) / "conda-meta"
+            meta.mkdir()
+            (meta / "ncbi-amrfinderplus-3.12.8-h1234_0.json").touch()
+            def rec_for(reason):
+                with mock.patch.object(PKG, "env_dir_for", return_value=tmp), \
+                     mock.patch.object(PKG, "latest_version", return_value="4.2.7"), \
+                     mock.patch.object(PKG, "_save_cache", lambda cache: None), \
+                     mock.patch.object(PKG, "unsatisfiable_here", return_value={
+                         "amr_plus_gui/ncbi-amrfinderplus": {
+                             "version": "4.2.7", "reason": reason}}):
+                    return next(r for r in PKG.report(["amr_plus_gui"],
+                                                      use_network=True)
+                                if r["package"] == "ncbi-amrfinderplus")
+            conflict = rec_for("requires perl >=5.32.1, but none of the providers "
+                               "can be installed")
+            elsewhere = rec_for("not installable on osx-64 osx-arm64")
+        self.assertEqual(conflict["held_fix"],
+                         "bdtools install amr_plus_gui --rebuild")
+        self.assertEqual(elsewhere["held_fix"], "",
+                         "a rebuild cannot conjure a build that does not exist")
 
     def test_a_record_for_a_different_version_does_not_hold_the_new_one(self):
         # Keyed by version so a NEWER release is tried again — the record suppresses
         # one known-bad answer, it does not abandon the package.
+        # `held` is stubbed out because this is about the RECORD: mlst also carries a
+        # manifest hold (tools.yml: mlst 2.34+ can never install on macOS), which
+        # would suppress the new version for a different and permanent reason.
         with tempfile.TemporaryDirectory() as tmp:
             meta = Path(tmp) / "conda-meta"
             meta.mkdir()
@@ -252,6 +310,7 @@ class UnsatisfiableRecordTests(unittest.TestCase):
             with mock.patch.object(PKG, "env_dir_for", return_value=tmp), \
                  mock.patch.object(PKG, "latest_version", return_value="2.36.0"), \
                  mock.patch.object(PKG, "_save_cache", lambda cache: None), \
+                 mock.patch.object(PKG, "held", return_value={}), \
                  mock.patch.object(PKG, "unsatisfiable_here", return_value={
                      "mlst_gui/mlst": {"version": "2.35.0", "reason": "x"}}):
                 rec = next(r for r in PKG.report(["mlst_gui"], use_network=True)

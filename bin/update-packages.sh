@@ -155,15 +155,19 @@ CHANGED=0
 # Everything packages.py already knows: which env actually runs this tool, what is
 # installed in it, and what the channel has. Asking it (rather than re-deriving)
 # keeps the CLI and the dashboard from ever disagreeing about what needs updating.
-records_for() {  # records_for <tool>  -> TSV: pkg channel installed latest pinned env held
+records_for() {  # records_for <tool> -> TSV: pkg channel installed latest pinned env held reason
   "${PYBIN}" - "${PKG_PY}" "$1" <<'PY'
 import importlib.util, sys
 spec = importlib.util.spec_from_file_location("bdtools_packages", sys.argv[1])
 mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
 for rec in mod.report([sys.argv[2]]):
+    # The reason travels with the record so the CLI and the dashboard badge give
+    # the same answer. Whitespace-collapsed because it is a TSV field and conda's
+    # headline can carry newlines.
+    reason = " ".join((rec.get("held_reason") or "").split())
     print("\t".join([rec["package"], rec["channel"], rec["installed"],
                      rec["latest"], rec["pinned"], rec["env"],
-                     "held" if rec.get("held") else ""]))
+                     "held" if rec.get("held") else "", reason]))
 PY
 }
 
@@ -248,8 +252,8 @@ update_one_tool() {
   # transaction. Per-package transactions cannot work in a coupled bioinformatics
   # env: each solve sees the others at their OLD versions, so a set that is only
   # jointly satisfiable is rejected one member at a time.
-  local hold
-  while IFS=$'\t' read -r pkg channel installed latest pinned env hold; do
+  local hold reason
+  while IFS=$'\t' read -r pkg channel installed latest pinned env hold reason; do
     [[ -n "${pkg}" ]] || continue
     any=1
     [[ -n "${env}" ]] && envdir="${env}"
@@ -258,10 +262,14 @@ update_one_tool() {
       [[ "${TO%%=*}" == "${pkg}" ]] || continue
       want="${TO#*=}"
     elif [[ "${hold}" == "held" ]]; then
-      # Held in the manifest: a newer release exists but this env cannot take it,
-      # and the reason is recorded next to the pin. Say so once rather than run a
-      # solve that is known to fail. --to overrides, to try a version by hand.
-      ok "${tool}/${pkg} held at ${installed} (newer: ${latest:-?} — this env cannot take it; see tools.yml)"
+      # Held: a newer release exists but this env cannot take it — either declared
+      # in tools.yml, or established by a solve that was tried on this machine and
+      # refused. Say so once rather than run a solve that is known to fail; the
+      # recorded reason distinguishes the two, so this no longer sends someone to
+      # tools.yml to look for an explanation that was never written there.
+      # --to overrides, to try a version by hand.
+      ok "${tool}/${pkg} held at ${installed} (newer: ${latest:-?})"
+      info "    ${reason:-this env cannot take it; see tools.yml}"
       continue
     fi
     if [[ -z "${env}" ]]; then

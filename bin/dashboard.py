@@ -116,7 +116,9 @@ class Suite:
                 "packages": [
                     {"name": p["package"], "installed": p["installed"],
                      "latest": p["latest"], "update_available": p["update_available"],
-                     "held": p.get("held", False)}
+                     "held": p.get("held", False),
+                     "held_reason": p.get("held_reason", ""),
+                     "held_fix": p.get("held_fix", "")}
                     for p in (pkgs.get(name, []) if installed else [])
                 ],
                 # ready is None when readiness is unknown (doctor unavailable or
@@ -569,12 +571,17 @@ addEventListener('storage',e=>{if(e.key===THEME_KEY)applyTheme(preferredTheme(),
  .updates li.ugroup{margin-top:6px;font-weight:650}
  .updates li.ugroup ul{font-weight:400;margin-top:2px}
  .updates li{margin:2px 0}
+ .updates .uheldnote{border-bottom:1px dotted currentColor;cursor:help}
  .updates .uactions{display:flex;gap:8px;flex-wrap:wrap}
  .updates button.u{background:var(--accent)}
  .updates button.link{background:transparent;color:var(--accent);padding:4px 6px;font-weight:600}
  .ulog{margin-top:10px;background:#2c2a26;color:#eee;border-radius:8px;padding:8px 10px;
    font:12px/1.45 ui-monospace,Menlo,Consolas,monospace;max-height:220px;overflow:auto;white-space:pre-wrap}
  .udone{margin-top:8px;font-weight:600}
+ .urun{margin:8px 24px 0;font-size:13px;color:var(--ink);background:var(--soft);
+   border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+ .urun .uclose{background:transparent;color:var(--accent);padding:2px 6px;font-weight:600}
+ .urun .uhead{display:flex;align-items:center;justify-content:space-between;gap:12px}
  .hbar{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap}
  .head-actions{display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap;justify-content:flex-end}
  .theme-switch{display:inline-flex;gap:2px;padding:3px;background:var(--soft);border:1px solid var(--line);
@@ -633,6 +640,12 @@ addEventListener('storage',e=>{if(e.key===THEME_KEY)applyTheme(preferredTheme(),
   <h2 id="otitle"></h2><p id="omsg"></p>
 </div></div>
 <div id="updates" class="updates"></div>
+<!-- The run panel lives OUTSIDE #updates on purpose. An update run ends by
+     re-checking, which repaints #updates — and when the log lived in there, the
+     repaint would have thrown away the record of what just happened. Separating
+     them is what lets the banner go quiet the moment a run finishes while the
+     log stays on screen until it is dismissed. -->
+<div id="urun" class="urun" style="display:none"></div>
 <div id="grid" class="grid"></div>
 <p class="recheck" id="recheck" style="display:none"><button onclick="recheck(this)">↻ Re-check readiness</button></p>
 <p class="note" id="note"></p>
@@ -670,6 +683,13 @@ function devBlock(t){
   if(!t.caveat) return '';
   return `<div class="dev"><b>⚠ Development status:</b> ${esc(t.caveat)}</div>`;
 }
+function heldTitle(p){
+  // Reason first, remedy second, and never a remedy that cannot help: a package
+  // held because no build exists for this OS is not fixed by rebuilding anything.
+  const why = p.held_reason
+    || (p.latest + " exists, but this environment cannot take it.");
+  return p.held_fix ? why + "\\nTo take it, rebuild the environment: " + p.held_fix : why;
+}
 function versionBlock(t){
   // What is actually running: the GUI release, then the analysis packages that
   // produce the results. Shown on every installed card, always — not only when an
@@ -681,13 +701,17 @@ function versionBlock(t){
   if(t.version) bits.push(`<span class="vtool">${esc(t.version)}</span>`);
   for(const p of (t.packages||[])){
     if(!p.installed) continue;
-    // Held: a newer release exists but this env cannot take it (tools.yml records
-    // why). Shown as held rather than as an available update — a badge offering an
-    // upgrade that always fails is worse than no badge.
+    // Held: a newer release exists but this env cannot take it. Shown as held
+    // rather than as an available update — a badge offering an upgrade that always
+    // fails is worse than no badge. This badge is where the reason lands once the
+    // banner goes quiet, so it names the newer version and carries the recorded
+    // reason (and the remedy, when there is one) rather than pointing vaguely at
+    // tools.yml — which was the wrong answer whenever the hold came from a solve
+    // that was tried on this machine.
     const up = p.update_available
       ? ` <span class="vnew" title="newest on the channel: ${esc(p.latest)}">↑${esc(p.latest)}</span>`
       : (p.held && p.latest && p.latest !== p.installed
-          ? ` <span class="vheld" title="${esc(p.latest)} exists but this environment cannot take it — see tools.yml">held</span>`
+          ? ` <span class="vheld" title="${esc(heldTitle(p))}">held (${esc(p.latest)})</span>`
           : '');
     bits.push(`${esc(p.name)} ${esc(p.installed)}${up}`);
   }
@@ -760,7 +784,12 @@ let updatePolling = false;
 let updatesPoll = null;
 function renderUpdates(d){
   const box = document.getElementById('updates');
-  if(!d || !d.checked){
+  // `checked` stays true across a re-check, because the cache still holds the
+  // PREVIOUS answer while the new one is computed. Rendering that during a
+  // re-check redisplays the list the user has just acted on, which is exactly the
+  // "the update did nothing" impression this is meant to end. While a check is in
+  // flight the honest thing to show is that a check is in flight.
+  if(!d || !d.checked || d.checking){
     // Non-blocking: a tiny muted note (or nothing) — never a gate.
     box.className='updates checking';
     box.textContent = d && d.checking ? '↻ checking for updates in the background…' : '';
@@ -768,9 +797,22 @@ function renderUpdates(d){
   }
   const items = d.items || [];
   const avail = items.filter(i=>i.update_available);
+  // Held: a newer release exists that this machine has established it cannot
+  // install (tools.yml, or a solve that was tried here and refused). Never a
+  // banner — it cannot be acted on — but counted here, because "✓ Up to date"
+  // on its own would be claiming the newest version is installed when it is not.
+  // This one line is what makes a quiet dashboard honest rather than forgetful.
+  const held = items.filter(i=>i.held && !i.update_available);
   if(!avail.length){
     box.className='updates current';
-    box.innerHTML = `✓ Up to date. <a href="#" onclick="checkUpdates(true);return false" style="color:inherit">Re-check</a>`;
+    const note = held.length
+      ? ` <span class="uheldnote" title="${esc(held.map(i=>i.label+": staying on "+i.installed+" (newer: "+i.latest+")").join("\\n"))}">`
+        + `${held.length} analysis package${held.length>1?"s are":" is"} held</span>`
+        + ` at the installed version — a newer release exists that ${held.length>1?"these environments":"this environment"} `
+        + `cannot take. The tool card says which, and why.`
+      : '';
+    box.innerHTML = `✓ Up to date.${note} `
+      + `<a href="#" onclick="checkUpdates(true);return false" style="color:inherit">Re-check</a>`;
     return;
   }
   box.className='updates avail';
@@ -830,9 +872,26 @@ function renderUpdates(d){
     + `<br>Installing rebuilds environments and can take a few minutes; idle tool `
     + `servers are stopped first. Use <b>Restart dashboard</b> after each one to load `
     + `the new code.`
-    + `</div>`
-    + `<div id="ulog" class="ulog" style="display:none"></div>`
-    + `<div id="udone" class="udone"></div>`;
+    + `</div>`;
+}
+// The run panel: the log and the outcome of an update, kept outside the banner so
+// re-checking (which repaints the banner) cannot erase it. Dismissed by the user,
+// never by a refresh.
+function runPanel(){
+  // Rebuilt on every run: it is only ever opened when one starts, and carrying the
+  // previous run's outcome line into the next one would be worse than empty.
+  const p = document.getElementById('urun');
+  p.style.display='';
+  p.innerHTML = `<div class="uhead"><b id="utitle2">Update running…</b>`
+    + `<button class="uclose" onclick="closeRun()">Hide</button></div>`
+    + `<div id="ulog" class="ulog"></div><div id="udone" class="udone"></div>`;
+  return p;
+}
+function runTitle(text){
+  const t=document.getElementById('utitle2'); if(t) t.textContent=text;
+}
+function closeRun(){
+  const p=document.getElementById('urun'); p.style.display='none'; p.innerHTML='';
 }
 // Poll the cached result without blocking; keep polling only until it's ready.
 async function pollUpdates(){
@@ -840,7 +899,10 @@ async function pollUpdates(){
     const r = await fetch('./api/updates');
     const d = await r.json();
     renderUpdates(d);
-    if(!d.checked){
+    // Keep polling while a check is in flight, including a re-check over an
+    // existing answer (checked stays true then, so `!d.checked` alone would stop
+    // polling and freeze the page on "↻ checking…").
+    if(!d.checked || d.checking){
       clearTimeout(updatesPoll);
       updatesPoll = setTimeout(pollUpdates, 2500);
     }
@@ -857,11 +919,13 @@ async function applyUpdates(target,btn){
       ? 'Update bdtools (the suite + this dashboard) now?'
       : 'Install tool updates now? This rebuilds environments and may take several minutes.')) return;
   document.querySelectorAll('.updates button').forEach(b=>b.disabled=true);
-  const log=document.getElementById('ulog'); if(log){ log.style.display='block'; log.textContent='Starting…\\n'; }
+  runPanel();
+  const log=document.getElementById('ulog'); if(log){ log.textContent='Starting…\\n'; }
   try{
     const r=await controlFetch('./api/apply-updates?target='+encodeURIComponent(target),{method:'POST'});
     const j=await r.json();
     if(!j.started){
+      runTitle('Update not started');
       if(log) log.textContent += describeBlock(j)+'\\n';
       document.querySelectorAll('.updates button').forEach(b=>b.disabled=false);
       return;
@@ -878,6 +942,7 @@ async function pollUpdate(){
       if(log){ log.textContent=(s.log||[]).join('\\n'); log.scrollTop=log.scrollHeight; }
       if(s.done){
         updatePolling=false;
+        runTitle(s.ok ? 'Update finished' : 'Update finished with a problem');
         if(done) done.innerHTML = s.ok
           // Neutral on purpose: a run can finish correctly having installed
           // nothing, because it worked out that an update cannot be applied here.
@@ -885,6 +950,12 @@ async function pollUpdate(){
           ? '✅ Finished — see the log above. If anything was installed, use '
             + '<b>Restart dashboard</b> to load it.'
           : '⚠ Something went wrong — see the log above.';
+        // Re-check, and repaint the banner from the ANSWER rather than leaving the
+        // list the user just acted on sitting there. Without this the banner still
+        // offered the three packages the run had just established cannot be
+        // installed, so every visit looked like the update had never been done —
+        // and the way to make that stop was to run it again, forever.
+        checkUpdates(true);
         return;
       }
     }catch(e){}

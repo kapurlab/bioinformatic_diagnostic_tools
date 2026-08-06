@@ -113,6 +113,16 @@ tools:
     dev_apps: [mlst_gui_dev]
     env: mlst
     packages: [bioconda::mlst=2.33.1]
+    # 2.34.0 and 2.35.0 exist and are noarch, and can never be installed on macOS:
+    # they depend on libxcrypt1, which has no macOS build. Declared held so the
+    # suite says so straight away instead of offering the upgrade, spending minutes
+    # on a solve, and refusing it — on every machine, once per machine. The version
+    # is still read and displayed; held is not hidden.
+    # Revisit when an mlst newer than 2.33.1 builds on macOS: the hold is by NAME,
+    # so it suppresses every future release until it is removed. `bdtools versions`
+    # keeps showing the newest one on the channel, and
+    # `update-packages mlst_gui --to mlst=<ver>` overrides the hold by hand.
+    packages_held: [mlst]
 
   - name: kraken_id_parse_gui
     repo: https://github.com/kapurlab/kraken_id_parse_gui.git

@@ -263,6 +263,13 @@ def package_update_records():
             "installed": rec["installed"] or "—",
             "latest": rec["latest"] or "—",
             "update_available": rec["update_available"],
+            # Carried even though the banner never offers a held package: the
+            # "up to date" line counts them, so a run that could correctly install
+            # nothing still leaves visible evidence of why. Without it the banner
+            # can only choose between nagging forever and saying nothing.
+            "held": rec.get("held", False),
+            "held_reason": rec.get("held_reason", ""),
+            "held_fix": rec.get("held_fix", ""),
             "kind": "package",
             "tool": rec["tool"],
             "package": rec["package"],

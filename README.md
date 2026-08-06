@@ -536,6 +536,20 @@ recorded so it is not offered again until a newer release appears, and the comma
 **exits 0**. Only real breakage (an install that dies after a successful solve,
 patches that fail to re-apply) is reported as a failure.
 
+**And the dashboard goes quiet about it.** When a run finishes, the banner is
+re-checked and repainted from the answer, so a package that has just been
+established as uninstallable here stops being offered — instead of the banner still
+listing it, which made every visit look as though the update had never been run. It
+does not disappear, either: the "✓ Up to date" line says how many packages are
+**held**, and the tool's card carries the reason and the way out
+(`ncbi-amrfinderplus 3.12.8 · held (4.2.7)`, hover for the solver's reason and, when
+a rebuild would lift it, the exact command). `bdtools versions` prints the same.
+A package can be held two ways: declared in `tools.yml` (`packages_held:`, for a
+version that can never be installed on a platform the lab deploys to — mlst 2.34+ on
+macOS), or recorded per platform after a solve that was tried here and refused. Both
+are keyed so a *newer* release is tried again; a manifest hold is by name and lasts
+until it is removed.
+
 `update-packages` installs the newest version, then **re-applies that tool's local
 patches** and bumps the pin. The re-apply is why this is a command and not a
 hand-run `conda install`: vsnp_gui carries Kapur Lab patches over the packaged

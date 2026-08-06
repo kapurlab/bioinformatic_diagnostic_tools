@@ -83,6 +83,9 @@ class BannerRenderTests(unittest.TestCase):
     """
 
     def render(self, items):
+        return self.render_state(f"{{checked:true,items:{items}}}")
+
+    def render_state(self, payload):
         page = load_page()
         main = re.findall(r"<script>(.*?)</script>", page, re.S)[-1]
         body = main[main.index("function renderUpdates"):
@@ -93,8 +96,8 @@ class BannerRenderTests(unittest.TestCase):
             "const _el={className:'',innerHTML:'',textContent:''};\n"
             "document={getElementById:()=>_el};\n"
             + body +
-            f"\nrenderUpdates({{checked:true,items:{items}}});\n"
-            "console.log(_el.innerHTML);\n"
+            f"\nrenderUpdates({payload});\n"
+            "console.log(_el.className+'|'+(_el.innerHTML||_el.textContent));\n"
         )
         with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as fh:
             fh.write(harness)
@@ -134,11 +137,101 @@ class BannerRenderTests(unittest.TestCase):
         self.assertIn("vSNP3 — vsnp3", html)
         self.assertIn("conda package", html)
 
+    HELD = ("{name:'amr_plus_gui:kraken2',label:'AMRFinderPlus — kraken2',"
+            "installed:'2.1.3',latest:'2.17.1',update_available:false,held:true,"
+            "held_reason:'2.17.1 was tried on this machine and could not be installed',"
+            "held_fix:'bdtools install amr_plus_gui --rebuild',kind:'package'}")
+
     def test_up_to_date_renders_without_buttons(self):
         html = self.render(f"[{self.TOOL.replace('update_available:true',
                                                  'update_available:false')}]")
         self.assertIn("Up to date", html)
         self.assertNotIn("Install tool updates", html)
+
+    def test_a_held_package_is_not_offered_but_is_counted(self):
+        # The whole point: a package that cannot be installed here must not put the
+        # banner back up — and must not vanish without trace either, or a dashboard
+        # claiming "up to date" is claiming the newest version is installed.
+        html = self.render(f"[{self.HELD}]")
+        self.assertIn("Up to date", html)
+        self.assertNotIn("Update conda packages", html)
+        self.assertNotIn("Updates available", html)
+        self.assertIn("1 analysis package is held", html)
+
+    def test_held_packages_are_pluralised_and_do_not_inflate_the_count(self):
+        second = self.HELD.replace("kraken2", "ncbi-amrfinderplus")
+        html = self.render(f"[{self.HELD},{second},{self.PKG}]")
+        # One real update -> the banner is up, and the two held ones are not in it.
+        self.assertIn("Updates available (1)", html)
+        self.assertIn("Update conda packages (1)", html)
+
+    def test_a_recheck_does_not_redisplay_the_previous_answer(self):
+        # `checked` stays true while a re-check runs (the cache still holds the old
+        # answer), and the re-check that follows an update is exactly when the old
+        # answer is wrong. Showing it there is what made an update look like it had
+        # done nothing, every single time.
+        out = self.render_state(f"{{checked:true,checking:true,items:[{self.PKG}]}}")
+        self.assertIn("checking for updates", out)
+        self.assertNotIn("Update conda packages", out)
+
+    def test_the_run_log_is_not_part_of_the_banner(self):
+        # The log lives in #urun so that repainting the banner cannot erase the
+        # record of the run that just finished.
+        html = self.render(f"[{self.PKG}]")
+        self.assertNotIn('id="ulog"', html)
+        self.assertNotIn('id="udone"', html)
+
+
+@unittest.skipUnless(NODE, "node is required to render the version block")
+class CardVersionTests(unittest.TestCase):
+    """The card footer is where a held package's reason has to be reachable.
+
+    Once the banner stops offering it (which is the fix), the card is the only
+    place left that can answer "why is this env still on 2.1.3?".
+    """
+
+    def render(self, tool):
+        page = load_page()
+        main = re.findall(r"<script>(.*?)</script>", page, re.S)[-1]
+        body = main[main.index("function heldTitle"):
+                    main.index("// tool -> launch-time warning")]
+        harness = (
+            "function esc(s){return String(s).replace(/[&<>]/g,"
+            "c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}\n"
+            + body + f"\nconsole.log(versionBlock({tool}));\n"
+        )
+        with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as fh:
+            fh.write(harness)
+            path = fh.name
+        proc = subprocess.run([NODE, path], capture_output=True, text=True, timeout=60)
+        Path(path).unlink(missing_ok=True)
+        self.assertEqual(proc.returncode, 0, f"versionBlock threw:\n{proc.stderr}")
+        return proc.stdout
+
+    def test_a_held_package_shows_the_recorded_reason_and_the_way_out(self):
+        html = self.render(
+            "{installed:true,version:'v0.3.3',packages:[{name:'kraken2',"
+            "installed:'2.1.3',latest:'2.17.1',update_available:false,held:true,"
+            "held_reason:'2.17.1 was tried on this machine and could not be installed',"
+            "held_fix:'bdtools install amr_plus_gui --rebuild'}]}")
+        self.assertIn("held (2.17.1)", html)
+        self.assertIn("was tried on this machine", html)
+        self.assertIn("bdtools install amr_plus_gui --rebuild", html)
+        # Never an upgrade arrow: that is the badge for something you can act on.
+        self.assertNotIn("↑2.17.1", html)
+
+    def test_a_held_package_with_no_recorded_reason_still_says_something(self):
+        html = self.render(
+            "{installed:true,version:'v0.3.3',packages:[{name:'mlst',"
+            "installed:'2.33.1',latest:'2.35.0',update_available:false,held:true}]}")
+        self.assertIn("held (2.35.0)", html)
+        self.assertIn("cannot take it", html)
+
+    def test_an_available_update_still_shows_the_arrow(self):
+        html = self.render(
+            "{installed:true,version:'v0.4.36',packages:[{name:'vsnp3',"
+            "installed:'3.35',latest:'3.36',update_available:true,held:false}]}")
+        self.assertIn("↑3.36", html)
 
 
 if __name__ == "__main__":

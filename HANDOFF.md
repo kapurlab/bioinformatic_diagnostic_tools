@@ -41,6 +41,11 @@ including one that blanked the dashboard twice. What prevents each recurrence is
 
 **Still open — §9.** The amr_plus assembler divergence needs a decision from you.
 
+**§10 is a follow-up fix**: the update banner kept offering packages a completed run
+had just established cannot be installed here, so the dashboard looked as though the
+update had never happened. It now goes quiet, and the held versions are reported on
+the cards instead.
+
 ---
 
 ## 1. The Restart hang
@@ -292,12 +297,55 @@ Read this before trusting a claim of "verified".
 6. **This dev box has mlst 2.35.0 with the pin at 2.33.1.** Drift is reported on every
    run. Converge with `bdtools update-packages mlst_gui --to mlst=2.33.1`.
 
-## 10. Verify after pulling elsewhere
+## 10. Follow-up — the update banner would not go quiet
+
+Reported after §3 shipped: run **Update conda packages**, get a green ✅, reopen the
+dashboard, and the same three packages are offered again. Nothing was wrong with the
+update — the run correctly established that all three are uninstallable here — but
+nothing on screen ever reflected that, so the only visible remedy was to run it
+again.
+
+Three separate causes, all now closed:
+
+1. **The page never repainted the banner.** `pollUpdate()` wrote "✅ Finished" and
+   stopped. The backend *had* refreshed its cache (`check_async(force=True)`), and
+   the answer was correct — the page just kept displaying the list the user had
+   acted on. It now re-checks and repaints on completion.
+2. **A re-check redisplayed the stale answer.** `checked` stays true while a
+   re-check runs, because the cache still holds the previous result — so
+   `renderUpdates` rendered the old list mid-check, which is exactly the moment it
+   is wrong. It now shows "↻ checking…" whenever a check is in flight (and
+   `pollUpdates` keeps polling through it, or the page would freeze on that line).
+3. **`mlst` was offered on every fresh machine.** `tools.yml` pins 2.33.1 and
+   explains at length that 2.34+ can never install on macOS — but never declared it
+   `packages_held`, so every install offered 2.35.0, spent minutes on a solve, and
+   refused it. Now declared. The hold is by name: remove it when an mlst above
+   2.33.1 builds on macOS.
+
+The run log moved **out of** the banner (`#urun`), because a repaint would otherwise
+destroy the record of the run that just finished. It stays until dismissed.
+
+Where the information went, now that the banner is silent about it:
+
+- `✓ Up to date. 2 analysis packages are held at the installed version …` — the
+  count is on the quiet line, hover for the list. "Up to date" alone would have been
+  claiming the newest version is installed when it is not.
+- The card: `ncbi-amrfinderplus 3.12.8 · held (4.2.7)`, whose tooltip carries the
+  **recorded** reason and, where one exists, the remedy
+  (`bdtools install amr_plus_gui --rebuild`). The old badge said "see tools.yml" for
+  every hold — a dead end for the ones that came from a solve tried on this machine,
+  which is most of them. `held_reason`/`held_fix` are on the record now, so the CLI
+  (`bdtools versions`, `update-packages`) and the dashboard cannot disagree.
+- A hold now expires when the env catches up: `held` means something is being held
+  *back*, so it is false once the installed version has reached the channel's
+  newest. A manifest hold is by name and forever; the env is not.
+
+## 11. Verify after pulling elsewhere
 
 ```bash
 git pull
 bin/lint.sh                                   # includes the dashboard-page JS check
-python3 -m unittest discover -s tests -p "test_*.py"   # 126 tests
+python3 -m unittest discover -s tests -p "test_*.py"   # 135 tests
 bin/bdtools versions                          # what each tool actually runs
 bin/bdtools update-packages all --check-pins  # only when changing a pin (minutes)
 bin/bdtools doctor

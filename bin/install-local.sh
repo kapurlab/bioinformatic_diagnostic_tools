@@ -425,6 +425,15 @@ ensure_conda_subdir() {
     fi
     export CONDA_SUBDIR="${existing}"
     ok "env platform: ${existing} (pinned from the existing env, not the host)"
+    # Damage already done by an earlier mixed-platform update: packages from
+    # another architecture are linked into this prefix. Pinning stops it getting
+    # worse, but those binaries still cannot run — only a rebuild clears them.
+    local foreign; foreign="$(env_foreign_subdirs "${envdir}")"
+    if [[ -n "${foreign}" ]]; then
+      warn "${envdir} is a MIXED-architecture env: $(printf '%s' "${foreign}" | tr '\n' ';') package(s) are not ${existing}."
+      info "  Those binaries cannot run in an ${existing} prefix, and updating cannot remove them."
+      info "  Rebuild it:  rm -rf ${envdir} && bin/bdtools install ${TOOL}"
+    fi
     # An env from another machine/arch cannot run here at all. Say so now, at
     # install time, instead of leaving "Bad CPU type"/missing-symbol errors to
     # surface mid-analysis. osx-64 on Apple Silicon is the one expected mismatch

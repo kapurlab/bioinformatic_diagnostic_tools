@@ -201,18 +201,39 @@ host_conda_subdir() {
 # architectures inside one prefix: if you are lucky it fails in a post-link
 # script, if you are not it fails at run time in a diagnostic pipeline.
 # Callers pin CONDA_SUBDIR to this value before any conda op on an existing env.
+#
+# The trailing `|| true`s matter throughout: every grep here returns 1 on
+# "nothing matched" (a noarch-only env), and callers run under `set -euo
+# pipefail`, where that would abort the install instead of reporting "no
+# architecture recorded".
+_env_subdirs() {   # ENVDIR — one platform per installed package, noarch excluded
+  local envdir="$1"
+  { grep -ho '"subdir":[[:space:]]*"[^"]*"' "${envdir}"/conda-meta/*.json 2>/dev/null || true; } \
+    | sed 's/.*"\([^"]*\)"[[:space:]]*$/\1/' | grep -v '^noarch$' || true
+}
+
 env_conda_subdir() {
   local envdir="${1:-}" out
   [[ -n "${envdir}" && -d "${envdir}/conda-meta" ]] || return 0
-  # Majority vote: a rolled-back or hand-patched env can carry a stray record
-  # from another platform, and the env's real architecture is whatever the bulk
-  # of it was built for. The trailing `|| true` matters — every grep in here
-  # returns 1 on "nothing matched" (a noarch-only env), and callers run under
-  # `set -euo pipefail`, where that would abort the install instead of reporting
-  # "no architecture recorded".
-  out="$( { grep -ho '"subdir":[[:space:]]*"[^"]*"' "${envdir}"/conda-meta/*.json 2>/dev/null || true; } \
-    | sed 's/.*"\([^"]*\)"[[:space:]]*$/\1/' \
-    | grep -v '^noarch$' | sort | uniq -c | sort -rn | awk 'NR==1{print $2}' || true )"
+  # Majority vote: a partially-applied update can leave a few records from
+  # another platform (that is exactly the bug above, seen in the wild as 4
+  # osx-arm64 packages inside a 240-package osx-64 env), and the env's real
+  # architecture is whatever the bulk of it was built for.
+  out="$( _env_subdirs "${envdir}" | sort | uniq -c | sort -rn | awk 'NR==1{print $2}' || true )"
+  printf '%s' "${out}"
+}
+
+# env_foreign_subdirs ENVDIR — "<count> <platform>" for each platform in the env
+# that is NOT its majority one; empty when the env is coherent. A non-empty
+# result means binaries that cannot run in this prefix were linked into it, which
+# no further update can repair — the env has to be rebuilt.
+env_foreign_subdirs() {
+  local envdir="${1:-}" main out
+  [[ -n "${envdir}" && -d "${envdir}/conda-meta" ]] || return 0
+  main="$(env_conda_subdir "${envdir}")"
+  [[ -n "${main}" ]] || return 0
+  out="$( _env_subdirs "${envdir}" | grep -vxF "${main}" | sort | uniq -c \
+          | awk '{print $1" "$2}' || true )"
   printf '%s' "${out}"
 }
 

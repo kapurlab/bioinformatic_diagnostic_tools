@@ -56,7 +56,18 @@ while read -r name; do
   else
     "${PYBIN}" "${KT_BIN_DIR}/lib/check.py" --tool "$name" --dir "${dir}" \
             --python "${py}" --scope "${SCOPE}" || issues=$((issues + 1))
-    # An env can pass every check above and still be the WRONG env: if the last
+    # An env can pass every check above — modules import, programs resolve — and
+    # still contain packages built for another architecture, linked in by an
+    # update that solved for the wrong platform. They fail only when the analysis
+    # actually calls them, so name them here.
+    envdir="${py%/bin/python}"
+    foreign="$([[ -n "${py}" ]] && env_foreign_subdirs "${envdir}" || true)"
+    if [[ -n "${foreign}" ]]; then
+      warn "${name}: mixed-architecture env — $(printf '%s' "${foreign}" | tr '\n' ';') package(s) are not $(env_conda_subdir "${envdir}")."
+      info "  FIX: rm -rf ${envdir} && bin/bdtools install ${name}   (an update cannot remove them)"
+      issues=$((issues + 1))
+    fi
+    # An env can also pass every check and still be the WRONG env: if the last
     # build didn't finish, this code is newer than the environment running it
     # (conda rolls a failed transaction back, so the previous env survives
     # intact — and silently). Say so here, where users look when something is off.

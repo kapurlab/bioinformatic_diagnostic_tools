@@ -75,6 +75,27 @@ class EnvPlatformTests(unittest.TestCase):
                 ("spades", "osx-arm64")]
         self.assertEqual(self.subdir_of(recs), "osx-64")
 
+    def test_foreign_packages_are_reported(self):
+        # The real shape from a Mac: an osx-64 env with a handful of osx-arm64
+        # packages linked in by an update that solved for the wrong platform.
+        with tempfile.TemporaryDirectory() as td:
+            envdir = Path(td) / "env"
+            meta(envdir, [("python", "osx-64"), ("openssl", "osx-64"), ("samtools", "osx-64"),
+                          ("spades", "osx-arm64"), ("picard", "osx-arm64"), ("zstd", "noarch")])
+            r = sh(f'env_foreign_subdirs "{envdir}"')
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertEqual(r.stdout.strip(), "2 osx-arm64")
+
+    def test_coherent_env_reports_no_foreign_packages(self):
+        with tempfile.TemporaryDirectory() as td:
+            envdir = Path(td) / "env"
+            meta(envdir, [("python", "linux-64"), ("pyyaml", "noarch")])
+            r = sh(f'env_foreign_subdirs "{envdir}"')
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertEqual(r.stdout.strip(), "")
+            # and a missing env is not an error
+            self.assertEqual(sh(f'env_foreign_subdirs "{td}/nope"').returncode, 0)
+
     def test_missing_env_is_empty_not_an_error(self):
         with tempfile.TemporaryDirectory() as td:
             r = sh(f'env_conda_subdir "{td}/nope"')
@@ -384,6 +405,25 @@ class DoctorReportsUnfinishedBuildTests(unittest.TestCase):
             failed, out2 = self.run_doctor(home, manifest, "toolx")
             self.assertIn("the last environment build did not finish", out2)
             self.assertEqual(failed.returncode, 1, out2)
+
+    def test_mixed_architecture_env_is_surfaced(self):
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td) / "home"
+            envdir = home / "checkouts/toolx/env"
+            write(envdir / "bin/python", "#!/bin/sh\n", mode=0o755)
+            manifest = write(Path(td) / "tools.yml", """\
+                suite_version: test-1
+                tools:
+                  - name: toolx
+                    repo: file:///dev/null
+                    version: v0.1.0
+                    env: toolx
+                """)
+            meta(envdir, [("python", "osx-64"), ("samtools", "osx-64"), ("spades", "osx-arm64")])
+            p, out = self.run_doctor(home, manifest, "toolx")
+            self.assertIn("mixed-architecture env", out)
+            self.assertIn("1 osx-arm64", out)
+            self.assertEqual(p.returncode, 1, out)
 
 
 if __name__ == "__main__":

@@ -521,6 +521,14 @@ mlst=2.35.0` is unsatisfiable together, and `mlst 2.34+` is *noarch* yet cannot 
 installed on macOS at all because it depends on `libxcrypt1`, which has no macOS
 build. **noarch does not mean portable.**
 
+**Cross-platform consistency outranks being current.** A package is only moved to a
+version installable on *every* platform the lab deploys to. An update that lands on
+Linux and cannot land on macOS does not make the lab more current — it makes two
+machines disagree about what produced a result, and one lab-wide older version is a
+better position than the newest version in half the building. Every update therefore
+solves locally *and* on `linux-64, osx-64, osx-arm64` before it is applied;
+`--local-only` overrides for a machine-specific experiment.
+
 **"Cannot be updated" is not an error.** When a newer version exists but cannot be
 installed here — wrong platform, or it conflicts with the environment — the tools
 keep working on what they have, the reason is printed in one line, the version is

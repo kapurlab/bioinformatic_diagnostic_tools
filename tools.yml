@@ -34,6 +34,10 @@
 # installed-vs-newest per tool. Bump one deliberately (and re-run the install for
 # that tool) rather than letting a rebuild drift.
 #
+# CROSS-PLATFORM CONSISTENCY OUTRANKS VERSION CURRENCY. Pin the newest version that
+# is installable everywhere the lab deploys, not the newest that exists. Two machines
+# disagreeing about what produced a result is worse than both being a release behind.
+#
 # A pin must also EXIST on every platform the lab deploys to. mlst is the cautionary
 # case: 2.34.0 and 2.35.0 are noarch, and still cannot be installed on macOS, because
 # they depend on libxcrypt1 — which has no macOS build. Pinning 2.35.0 made every Mac

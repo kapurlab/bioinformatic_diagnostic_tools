@@ -298,6 +298,49 @@ class PinStabilityTests(unittest.TestCase):
         self.assertIn("_bump_pin", script)
 
 
+class CrossPlatformGateTests(unittest.TestCase):
+    """Cross-platform consistency outranks being current.
+
+    A version that installs on Linux and cannot install on macOS must not be applied
+    anywhere: it does not make the lab more current, it makes two machines disagree
+    about what produced a result. A lab running one older version everywhere is in a
+    better position than one running the newest version in half the building.
+    """
+
+    def setUp(self):
+        self.script = (ROOT / "bin/update-packages.sh").read_text(encoding="utf-8")
+
+    def test_the_gate_runs_before_any_install(self):
+        gate = self.script.index("_unavailable_platforms")
+        install = self.script.index("_conda_install_set")
+        self.assertLess(gate, install, "the platform gate must precede the install")
+
+    def test_every_deployed_platform_is_checked_by_default(self):
+        default = self.script.split('PLATFORMS="', 1)[1].split('"', 1)[0]
+        for plat in ("linux-64", "osx-64", "osx-arm64"):
+            self.assertIn(plat, default)
+
+    def test_a_blocked_platform_is_not_an_error(self):
+        body = self.script[self.script.index("badplats"):
+                           self.script.index("installable on ${PLATFORMS}")]
+        self.assertIn("BLOCKED+=", body)
+        self.assertNotIn("FAILED+=", body)
+
+    def test_the_override_exists_and_is_off_by_default(self):
+        self.assertIn("--local-only", self.script)
+        self.assertIn("LOCAL_ONLY=0", self.script)
+        # Gated unless explicitly overridden — not the other way round.
+        self.assertIn("if [[ ${LOCAL_ONLY} -eq 0 ]]", self.script)
+
+    def test_foreign_platform_solves_set_the_osx_override(self):
+        # Without CONDA_OVERRIDE_OSX a foreign solve fails on a missing __osx virtual
+        # package, which would make every macOS check a false negative and block
+        # every update.
+        helper = self.script[self.script.index("_unavailable_platforms() {"):
+                             self.script.index("_tool_pyver()")]
+        self.assertIn("CONDA_OVERRIDE_OSX", helper)
+
+
 class PinPlatformTests(unittest.TestCase):
     """Versions verified NOT to exist on every deployed platform.
 

@@ -5,6 +5,12 @@
 #   bdtools update-packages <tool|all> [--dry-run] [--to NAME=VERSION] [--yes]
 #   bdtools update-packages <tool|all> --check-pins [--platform L1,L2]
 #
+# A package is only moved to a version installable on EVERY platform the lab deploys
+# to (default linux-64, osx-64, osx-arm64). Cross-platform consistency outranks being
+# current: an update that lands on Linux and cannot land on macOS does not make the
+# lab more current, it makes two machines disagree about what produced a result.
+# --local-only overrides, for a machine-specific experiment.
+#
 # --check-pins verifies that the versions pinned in tools.yml can actually be
 # installed on every platform the lab deploys to (default linux-64, osx-64,
 # osx-arm64). Run it whenever you change a pin: a pin can be jointly unsatisfiable,
@@ -36,6 +42,8 @@ TARGET=""
 TO=""
 ASSUME_YES=0
 CHECK_PINS=0
+LOCAL_ONLY=0
+CONDA_BIN=""
 # The platforms the lab deploys to. A pin has to be installable on all of them.
 PLATFORMS="linux-64,osx-64,osx-arm64"
 while [[ $# -gt 0 ]]; do
@@ -45,6 +53,7 @@ while [[ $# -gt 0 ]]; do
     --to=*)    TO="${1#--to=}"; shift;;
     --yes|-y)  ASSUME_YES=1; shift;;
     --check-pins) CHECK_PINS=1; shift;;
+    --local-only) LOCAL_ONLY=1; shift;;
     --platform)   PLATFORMS="${2:?--platform needs a comma-separated list}"; shift 2;;
     --platform=*) PLATFORMS="${1#--platform=}"; shift;;
     -h|--help) sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
@@ -76,6 +85,7 @@ PKG_PY="${KT_BIN_DIR}/lib/packages.py"
 # dependency conflict and sends you after the wrong thing.
 check_pins() {
   local conda; conda="$(detect_conda)" || die "conda/mamba not found."
+  CONDA_BIN="${conda}"
   local failures=0 checked=0
   local tool specs plat spec pkg ver pyver
   for tool in $(targets); do
@@ -198,6 +208,37 @@ _solve_is_unavailable() {
   grep -qE 'nothing provides|does not exist \(perhaps a missing channel\)|not available from current channels|PackagesNotFoundError' "$1" 2>/dev/null
 }
 
+# Can this exact spec set be installed on EVERY platform the lab deploys to?
+# Echoes the platforms that failed. Empty output means "installable everywhere".
+#
+# This is the gate that makes cross-platform stability outrank version currency: an
+# update that lands on Linux and cannot land on macOS does not make the lab more
+# current, it makes two machines disagree about what produced a result. A lab running
+# one older version everywhere is in a better position than one running the newest
+# version in half the building.
+_unavailable_platforms() {  # _unavailable_platforms <tool> <pyver> <spec>...
+  local tool="$1" pyver="$2"; shift 2
+  local plat bad=() logf
+  for plat in ${PLATFORMS//,/ }; do
+    logf="${BDTOOLS_HOME}/logs/${tool}-gate-${plat}.log"
+    mkdir -p "$(dirname "${logf}")"
+    local -a pre=()
+    [[ "${plat}" == osx-* ]] && pre=(env CONDA_OVERRIDE_OSX=13.0)
+    if ! "${pre[@]}" "${CONDA_BIN}" create --dry-run -y -n "bdtools-gate-$$" \
+          --platform "${plat}" -c conda-forge -c bioconda "${pyver}" "$@" \
+          > "${logf}" 2>&1; then
+      bad+=("${plat}")
+    fi
+  done
+  printf '%s' "${bad[*]}"
+}
+
+_tool_pyver() {
+  local v
+  v="$(grep -m1 -oE 'python=3\.[0-9]+' "$(tool_dir "$1")/conda_setup/environment.yml" 2>/dev/null || true)"
+  printf '%s' "${v:-python=3.10}"
+}
+
 update_one_tool() {
   local tool="$1" pkg channel installed latest pinned env
   local dir; dir="$(tool_dir "${tool}")"
@@ -259,6 +300,7 @@ update_one_tool() {
   info "  env: ${envdir}"
 
   local conda; conda="$(detect_conda)" || { FAILED+=("${tool}: conda not found"); return 0; }
+  CONDA_BIN="${conda}"
 
   # Solve before installing. An unsatisfiable set is the normal outcome for an
   # older env — a newer package can need a newer libcurl/zlib/perl than something
@@ -311,7 +353,32 @@ PYREC
     info "    ${solvelog}"
     return 0
   fi
-  ok "  the set solves"
+  ok "  the set solves here"
+
+  # ...and must solve everywhere else too, or it does not get applied. --local-only
+  # is the deliberate escape hatch for a machine-specific experiment.
+  if [[ ${LOCAL_ONLY} -eq 0 ]]; then
+    info "  checking the same set on ${PLATFORMS}…"
+    local badplats; badplats="$(_unavailable_platforms "${tool}" "$(_tool_pyver "${tool}")" "${specs[@]}")"
+    if [[ -n "${badplats}" ]]; then
+      for p in "${plan[@]}"; do
+        IFS='|' read -r pkg channel installed want <<< "${p}"
+        BLOCKED+=("${tool}/${pkg}: staying on ${installed} — ${want} is not installable on ${badplats}")
+        "${PYBIN}" - "${PKG_PY}" "${tool}" "${pkg}" "${want}" "not installable on ${badplats}" <<'PYREC'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("bdtools_packages", sys.argv[1])
+mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+mod.record_unsatisfiable(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5])
+PYREC
+      done
+      ok "${tool}: not applied — ${specs[*]} cannot be installed on: ${badplats}"
+      info "  Cross-platform consistency outranks being current: applying this here"
+      info "  would leave this machine running something the rest of the lab cannot."
+      info "  Override for a local experiment only:  --local-only"
+      return 0
+    fi
+    ok "  installable on ${PLATFORMS}"
+  fi
 
   if [[ "${DRY_RUN}" -eq 1 ]]; then
     for p in "${plan[@]}"; do

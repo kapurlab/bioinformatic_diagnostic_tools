@@ -32,6 +32,7 @@ CLI:
 """
 import json
 import os
+import platform
 import re
 import sys
 import time
@@ -58,6 +59,57 @@ def _bdtools_home():
 
 def _cache_path():
     return os.path.join(_bdtools_home(), "cache", "package-versions.json")
+
+
+def _unsat_path():
+    return os.path.join(_bdtools_home(), "cache", "unsatisfiable.json")
+
+
+def _platform_key():
+    """This machine's identity for the unsatisfiable record.
+
+    Keyed per platform because BDTOOLS_HOME can be shared (a group install on a
+    cluster), and "this cannot be installed" is very often a platform fact rather
+    than a universal one: mlst 2.34+ is noarch but depends on libxcrypt1, which has
+    no macOS build, so it installs on Linux and can never install on a Mac.
+    """
+    return f"{platform.system()}-{platform.machine()}".lower()
+
+
+def record_unsatisfiable(tool, package, version, reason=""):
+    """Remember that <package>=<version> could not be installed for <tool> here.
+
+    Written after a solve says no, so the dashboard stops offering an update that
+    cannot succeed on this machine. Keyed by the exact version: when a newer one is
+    released the key no longer matches and it is tried again — the record suppresses
+    a known-bad answer, it does not give up on the package.
+    """
+    path = _unsat_path()
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        data = {}
+    data.setdefault(_platform_key(), {})[f"{tool}/{package}"] = {
+        "version": version, "reason": reason, "at": int(time.time()),
+    }
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = f"{path}.{os.getpid()}.tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, indent=2)
+        os.replace(tmp, path)
+    except OSError:
+        pass
+
+
+def unsatisfiable_here():
+    """{"tool/package": {"version","reason","at"}} recorded on this platform."""
+    try:
+        with open(_unsat_path(), encoding="utf-8") as fh:
+            return json.load(fh).get(_platform_key(), {})
+    except (OSError, ValueError, AttributeError):
+        return {}
 
 
 # ----- the manifest side ---------------------------------------------------
@@ -239,6 +291,7 @@ def report(tools=None, use_network=True):
     wanted = set(tools) if tools else None
     specs = declared(tool_records)
     holds = held(tool_records)
+    unsat = unsatisfiable_here()
     cache = _load_cache()
     out = []
     for rec in tool_records:
@@ -254,11 +307,21 @@ def report(tools=None, use_network=True):
             latest = latest_version(channel, name, cache=cache,
                                     use_network=use_network)
             is_held = name in holds.get(tool, set())
+            # A version this machine has already PROVEN it cannot install counts as
+            # held too, without needing a manifest edit — that record is per
+            # platform, which a shared manifest cannot be.
+            tried = unsat.get(f"{tool}/{name}") or {}
+            blocked_version = tried.get("version", "")
             newer = is_newer(latest, inst) if inst else False
             if not env:
                 status = "not installed"
             elif not inst:
                 status = "declared but missing from the env"
+            elif newer and latest and latest == blocked_version:
+                status = (f"held at {inst} (newer: {latest} was tried here and "
+                          f"cannot be installed)")
+                newer = False
+                is_held = True
             elif newer and is_held:
                 status = f"held at {inst} (newer: {latest}; this env cannot take it)"
                 newer = False

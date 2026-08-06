@@ -210,6 +210,104 @@ class ReportTests(unittest.TestCase):
         self.assertIn("held", rec["status"])
 
 
+class UnsatisfiableRecordTests(unittest.TestCase):
+    """A version this machine has PROVEN it cannot install must stop being offered.
+
+    The live case: mlst 2.34+ is noarch, so it looks installable everywhere, but it
+    depends on libxcrypt1 — which has no macOS build. A Mac therefore sees "2.35.0
+    available", fails the solve, and is offered it again on every check. The record
+    is per platform because a shared manifest cannot be: the same version installs
+    fine on Linux.
+    """
+
+    def test_a_recorded_version_is_held_not_offered(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            meta = Path(tmp) / "conda-meta"
+            meta.mkdir()
+            (meta / "mlst-2.33.1-hdfd78af_0.json").touch()
+            with mock.patch.object(PKG, "env_dir_for", return_value=tmp), \
+                 mock.patch.object(PKG, "latest_version", return_value="2.35.0"), \
+                 mock.patch.object(PKG, "_save_cache", lambda cache: None), \
+                 mock.patch.object(PKG, "unsatisfiable_here", return_value={
+                     "mlst_gui/mlst": {"version": "2.35.0",
+                                       "reason": "nothing provides libxcrypt1"}}):
+                rec = next(r for r in PKG.report(["mlst_gui"], use_network=True)
+                           if r["package"] == "mlst")
+        self.assertEqual(rec["installed"], "2.33.1")
+        self.assertEqual(rec["latest"], "2.35.0")   # still reported, not hidden
+        self.assertTrue(rec["held"])
+        self.assertFalse(rec["update_available"])
+        self.assertIn("cannot be installed", rec["status"])
+
+    def test_a_record_for_a_different_version_does_not_hold_the_new_one(self):
+        # Keyed by version so a NEWER release is tried again — the record suppresses
+        # one known-bad answer, it does not abandon the package.
+        with tempfile.TemporaryDirectory() as tmp:
+            meta = Path(tmp) / "conda-meta"
+            meta.mkdir()
+            (meta / "mlst-2.33.1-hdfd78af_0.json").touch()
+            with mock.patch.object(PKG, "env_dir_for", return_value=tmp), \
+                 mock.patch.object(PKG, "latest_version", return_value="2.36.0"), \
+                 mock.patch.object(PKG, "_save_cache", lambda cache: None), \
+                 mock.patch.object(PKG, "unsatisfiable_here", return_value={
+                     "mlst_gui/mlst": {"version": "2.35.0", "reason": "x"}}):
+                rec = next(r for r in PKG.report(["mlst_gui"], use_network=True)
+                           if r["package"] == "mlst")
+        self.assertTrue(rec["update_available"])
+        self.assertFalse(rec["held"])
+
+    def test_record_round_trips_and_is_keyed_by_platform(self):
+        with tempfile.TemporaryDirectory() as home:
+            with mock.patch.dict(os.environ, {"BDTOOLS_HOME": home}, clear=False):
+                PKG.record_unsatisfiable("mlst_gui", "mlst", "2.35.0", "no libxcrypt1")
+                got = PKG.unsatisfiable_here()
+                self.assertEqual(got["mlst_gui/mlst"]["version"], "2.35.0")
+                self.assertIn("libxcrypt1", got["mlst_gui/mlst"]["reason"])
+                raw = json.load(open(Path(home) / "cache/unsatisfiable.json"))
+                self.assertEqual(list(raw), [PKG._platform_key()])
+                # Another platform's record must not leak into this one.
+                raw["some-other-arch"] = {"mlst_gui/mlst": {"version": "9.9"}}
+                json.dump(raw, open(Path(home) / "cache/unsatisfiable.json", "w"))
+                self.assertEqual(PKG.unsatisfiable_here()["mlst_gui/mlst"]["version"],
+                                 "2.35.0")
+
+    def test_a_missing_or_corrupt_record_is_not_an_error(self):
+        with tempfile.TemporaryDirectory() as home:
+            with mock.patch.dict(os.environ, {"BDTOOLS_HOME": home}, clear=False):
+                self.assertEqual(PKG.unsatisfiable_here(), {})
+                cache = Path(home) / "cache"
+                cache.mkdir(parents=True)
+                (cache / "unsatisfiable.json").write_text("{not json")
+                self.assertEqual(PKG.unsatisfiable_here(), {})
+
+
+class PinStabilityTests(unittest.TestCase):
+    def test_update_packages_does_not_mirror_local_versions_into_the_pin(self):
+        # A pin is a cross-platform decision. Rewriting it to match whatever is
+        # installed here made `update-packages` overwrite it on every run — and since
+        # the right answer differs per platform (mlst 2.35.0 installs on Linux and
+        # cannot exist on macOS), two machines would fight over tools.yml forever.
+        script = (ROOT / "bin/update-packages.sh").read_text(encoding="utf-8")
+        already = script.split("is already ${installed}", 1)[1].split("continue", 1)[0]
+        self.assertNotIn("_bump_pin", already,
+                         "the 'already at this version' path must not rewrite the pin")
+        # A pin still moves when a package is genuinely installed by this command.
+        self.assertIn("_bump_pin", script)
+
+
+class PinPlatformTests(unittest.TestCase):
+    def test_pinned_mlst_is_the_version_that_exists_on_macos_too(self):
+        # mlst 2.34.0 and 2.35.0 are noarch yet depend on libxcrypt1, which has no
+        # macOS build, so pinning them breaks every Mac install. 2.33.1 is the newest
+        # that solves on both (verified with a --platform osx-64 dry-run solve).
+        for tool, specs in PKG.declared().items():
+            for _channel, name, version in specs:
+                if name == "mlst":
+                    self.assertEqual(
+                        version, "2.33.1",
+                        f"{tool}: mlst {version} is not installable on macOS")
+
+
 class BannerOrderTests(unittest.TestCase):
     """The three update kinds must be offered in the order they have to be run.
 

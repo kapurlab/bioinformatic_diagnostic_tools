@@ -72,10 +72,43 @@ PY
 
 # The one-line reason a solve failed, out of conda's ~200-line dependency tree.
 # The tree is worth keeping in a log; it is not worth being the whole answer.
+#
+# Several shapes have to be recognised, and the FIRST version of this matched only
+# one of them — so a Mac user got "these versions cannot coexist" with no reason
+# printed at all, which is worse than the tree:
+#   • "requires X, but none of the providers can be installed"   (env conflict)
+#   • "nothing provides X needed by Y"                           (missing build)
+#   • "does not exist (perhaps a missing channel)"               (missing build)
+#   • "PackagesNotFoundError" / "not available from current channels"
+# Falls back to the first line under conda's own summary header, so something
+# useful is always printed.
 _solve_headline() {
-  grep -m1 -E 'requires .*, but none of the providers can be installed' "$1" 2>/dev/null \
-    | sed 's/^[[:space:]]*-[[:space:]]*//' \
-    || true
+  local out
+  out="$(grep -m1 -E 'requires .*, but none of the providers can be installed|nothing provides .* needed by|does not exist \(perhaps a missing channel\)|not available from current channels|PackagesNotFoundError' "$1" 2>/dev/null || true)"
+  if [[ -z "${out}" ]]; then
+    out="$(sed -n '/Encountered problems while solving/,$p' "$1" 2>/dev/null \
+           | sed -n '2p' || true)"
+  fi
+  [[ -z "${out}" ]] && out="$(grep -m1 -E '[Ee]rror|[Ff]ailed' "$1" 2>/dev/null || true)"
+  out="$(printf '%s' "${out}" | sed 's/^[[:space:]]*-[[:space:]]*//;s/^[[:space:]]*//')"
+  # "…not available from current channels:" names the package on the NEXT line, so
+  # the headline alone would say nothing about WHICH package. Pull it in.
+  if [[ "${out}" == *: ]]; then
+    local nxt
+    nxt="$(grep -A3 -m1 -F "${out}" "$1" 2>/dev/null | sed -n '2,4p' \
+           | grep -m1 -E '^[[:space:]]*-' | sed 's/^[[:space:]]*-[[:space:]]*//' || true)"
+    [[ -n "${nxt}" ]] && out="${out} ${nxt}"
+  fi
+  printf '%s' "${out}"
+}
+
+# Is the failure "this build does not exist here" rather than "it conflicts with
+# what is in the env"? The remedy is completely different: rebuilding the env
+# cannot conjure a macOS build of a Linux-only package, so suggesting it there sends
+# someone on a long, futile rebuild. mlst 2.34+ is the live example — noarch, but it
+# depends on libxcrypt1, which has no macOS build at all.
+_solve_is_unavailable() {
+  grep -qE 'nothing provides|does not exist \(perhaps a missing channel\)|not available from current channels|PackagesNotFoundError' "$1" 2>/dev/null
 }
 
 update_one_tool() {
@@ -113,7 +146,15 @@ update_one_tool() {
     fi
     if [[ "${want}" == "${installed}" ]]; then
       ok "${tool}/${pkg} is already ${installed}"
-      [[ "${pinned}" != "${installed}" ]] && _bump_pin "${tool}" "${pkg}" "${channel}" "${installed}"
+      # Deliberately NOT rewriting the pin to match what happens to be installed.
+      # A pin is a cross-platform decision; mirroring local reality made this
+      # command overwrite it on every run, and since the answer differs per platform
+      # (mlst 2.35.0 installs on Linux and cannot exist on macOS) two machines would
+      # fight over tools.yml indefinitely. Drift is REPORTED instead —
+      # `bdtools versions` flags it — and a pin only moves when a package is
+      # actually installed here, below.
+      [[ "${pinned}" != "${installed}" ]] && info \
+        "    note: tools.yml pins ${pkg}=${pinned} (installed here: ${installed})"
       continue
     fi
     specs+=("${pkg}=${want}")
@@ -143,14 +184,38 @@ update_one_tool() {
         -c conda-forge -c bioconda "${specs[@]}" > "${solvelog}" 2>&1; then
     local why; why="$(_solve_headline "${solvelog}")"
     FAILED+=("${tool}: ${specs[*]} cannot be installed into this env")
-    warn "${tool}: these versions cannot coexist in the existing env."
-    [[ -n "${why}" ]] && info "  conda: ${why}"
-    info "  This is a property of the env, not a failed download. Options:"
-    info "    • rebuild the env from its spec, which re-solves everything together:"
-    info "        bin/bdtools install ${tool}   (add --rebuild to refresh in place)"
-    info "    • update one package only:  bin/bdtools update-packages ${tool} --to <pkg>=<ver>"
-    info "    • leave it: the env keeps working on the versions it has."
-    info "  Full solver output: ${solvelog}"
+    # Remember it, so the dashboard stops offering an update this machine has
+    # already proven it cannot apply. Keyed by version: a newer release is tried
+    # again. --to always overrides.
+    for p in "${plan[@]}"; do
+      IFS='|' read -r pkg channel installed want <<< "${p}"
+      "${PYBIN}" - "${PKG_PY}" "${tool}" "${pkg}" "${want}" "${why}" <<'PYREC'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("bdtools_packages", sys.argv[1])
+mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+mod.record_unsatisfiable(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5])
+PYREC
+    done
+    if _solve_is_unavailable "${solvelog}"; then
+      warn "${tool}: those versions are not available for this platform ($(uname -s) $(uname -m))."
+      [[ -n "${why}" ]] && info "  conda: ${why}"
+      info "  Nothing local can fix this — the build does not exist for this OS."
+      info "  (A noarch package can still be unusable here: mlst 2.34+ needs"
+      info "   libxcrypt1, which has no macOS build.) Options:"
+      info "    • stay on what you have — it is the newest that exists for this OS"
+      info "    • if the manifest pins the unavailable version, pin one that exists"
+      info "      everywhere you deploy:  bin/bdtools versions ${tool}"
+    else
+      warn "${tool}: these versions cannot coexist in the existing env."
+      [[ -n "${why}" ]] && info "  conda: ${why}"
+      info "  This is a property of the env, not a failed download. Options:"
+      info "    • rebuild the env from its spec, which re-solves everything together:"
+      info "        bin/bdtools install ${tool}   (add --rebuild to refresh in place)"
+      info "    • update one package only:  bin/bdtools update-packages ${tool} --to <pkg>=<ver>"
+      info "    • leave it: the env keeps working on the versions it has."
+    fi
+    info "  Not offered again until a newer version appears. Full solver output:"
+    info "    ${solvelog}"
     return 0
   fi
   ok "  the set solves"

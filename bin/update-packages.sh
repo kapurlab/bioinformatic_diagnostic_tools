@@ -43,6 +43,7 @@ TO=""
 ASSUME_YES=0
 CHECK_PINS=0
 LOCAL_ONLY=0
+ALLOW_REPORT_ONLY=0
 CONDA_BIN=""
 # The platforms the lab deploys to. A pin has to be installable on all of them.
 PLATFORMS="linux-64,osx-64,osx-arm64"
@@ -54,6 +55,7 @@ while [[ $# -gt 0 ]]; do
     --yes|-y)  ASSUME_YES=1; shift;;
     --check-pins) CHECK_PINS=1; shift;;
     --local-only) LOCAL_ONLY=1; shift;;
+    --allow-report-only) ALLOW_REPORT_ONLY=1; shift;;
     --platform)   PLATFORMS="${2:?--platform needs a comma-separated list}"; shift 2;;
     --platform=*) PLATFORMS="${1#--platform=}"; shift;;
     -h|--help) sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
@@ -150,6 +152,7 @@ targets() {
 # "⚠ Update finished with errors", which teaches people to ignore real errors.
 FAILED=()
 BLOCKED=()
+REPORT_ONLY=()
 CHANGED=0
 
 # Everything packages.py already knows: which env actually runs this tool, what is
@@ -245,6 +248,15 @@ _tool_pyver() {
 
 update_one_tool() {
   local tool="$1" pkg channel installed latest pinned env
+  # Same gate as `bdtools update`: conda installing into a live env is smaller than
+  # a rebuild, but it is still a change to the software that produces results, and
+  # `all` reaches every tool. tools.yml decides; --allow-report-only overrides for
+  # one named tool.
+  if ! require_updatable "${tool}" "${ALLOW_REPORT_ONLY}" update-packages \
+        "$([[ "${TARGET}" == "all" ]] && echo 0 || echo 1)"; then
+    REPORT_ONLY+=("${tool}")
+    return 0
+  fi
   local dir; dir="$(tool_dir "${tool}")"
   local any=0 envdir="" specs=() plan=()
 
@@ -464,6 +476,10 @@ for tool in $(targets); do
 done
 
 echo
+if [[ ${#REPORT_ONLY[@]} -gt 0 ]]; then
+  ok "left alone (report-only in tools.yml): ${REPORT_ONLY[*]}"
+  info "  Their package versions are still reported by 'bdtools versions'."
+fi
 if [[ ${#BLOCKED[@]} -gt 0 ]]; then
   ok "${#BLOCKED[@]} package(s) cannot be updated on this machine — left as they are:"
   for b in "${BLOCKED[@]}"; do info "  • ${b}"; done
@@ -479,7 +495,7 @@ fi
 if [[ ${CHANGED} -eq 1 ]]; then
   ok "package updates complete. Restart the dashboard to pick them up."
   info "  tools.yml now pins what is installed — commit it to share this set."
-elif [[ ${#BLOCKED[@]} -eq 0 ]]; then
+elif [[ ${#BLOCKED[@]} -eq 0 && ${#REPORT_ONLY[@]} -eq 0 ]]; then
   ok "nothing to install: every declared package is at its newest version, or held."
   info "  Held packages are listed above with the newer version they cannot take."
 fi

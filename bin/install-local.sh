@@ -189,15 +189,25 @@ with_progress() {
     # __pycache__ files conda did not track are left behind, and the retry then dies
     # in a storm of "ClobberError: path already exists in the target prefix ... may
     # have been created by another package manager". Clear a PARTIAL prefix first so
-    # attempt 2 starts clean. Guarded to a partial env: it must be an absolute
-    # env-shaped path with no working python, which a built env always has.
+    # attempt 2 starts clean.
+    #
+    # ONLY a prefix THIS STEP CREATED. The old guard was "no working python", which
+    # is exactly the state a rolled-back update of an EXISTING env leaves behind —
+    # so a rebuild that hit an upstream post-link bug deleted a working install and
+    # then failed identically on every retry, with nothing left to fall back to.
+    # That cost a working kraken_id_parse_gui on macOS. An env that was here before
+    # the step is never ours to delete, however broken it now looks: it can be
+    # restored from the snapshot (see restore_env_hint), and it may still run.
     if [[ "${1:-}" == "_conda_step" ]]; then
       local _envdir="${2:-}"
       if [[ -n "${_envdir}" && "${_envdir}" == /* && -d "${_envdir}" \
+            && "${_ENV_PREEXISTING:-0}" -eq 0 \
             && ! -x "${_envdir}/bin/python" \
             && ( "${_envdir}" == */env || "${_envdir}" == */envs/* ) ]]; then
         warn "  removing the partially-created env before retrying: ${_envdir}"
         rm -rf "${_envdir}"
+      elif [[ -n "${_envdir}" && "${_ENV_PREEXISTING:-0}" -eq 1 ]]; then
+        info "  keeping the existing env as it is: ${_envdir}"
       fi
     fi
     warn "${label} — failed/stalled (exit ${rc}); retrying in 5s…"
@@ -340,6 +350,15 @@ ensure_env_java() {
 # hook the failed attempt left behind, so the retry can actually succeed.
 _conda_step() {
   local envdir="$1"; shift
+  # Was there a working env here BEFORE this step? Two things depend on the answer:
+  # whether a failed attempt may delete the prefix (it may not), and whether there
+  # is anything worth snapshotting. Exported so with_progress's retry can see it.
+  if [[ -x "${envdir}/bin/python" ]]; then
+    _ENV_PREEXISTING=1
+    snapshot_env "${TOOL:-env}" "${envdir}"
+  else
+    _ENV_PREEXISTING=0
+  fi
   harden_conda_hooks "${envdir}"
   # Scrub the strict-shell options and pre-define the CONDA_BACKUP_* names before
   # handing control to conda. Both are needed, and neither is covered by
@@ -363,6 +382,8 @@ _conda_step() {
   # that reads one now finds it set, whether or not it was ever patched, whether or
   # not the transaction rolled back, on every platform.
   local -a pre=(env -u SHELLOPTS -u BASHOPTS)
+  # Preserve any BASH_ENV the user already had; the prelude below chains to it.
+  [[ -n "${BASH_ENV:-}" ]] && pre+=("_BDTOOLS_PREV_BASH_ENV=${BASH_ENV}")
   local v
   for v in ${_CONDA_BACKUP_VARS}; do
     # Mirror the current value when the variable is set, empty when it is not.
@@ -371,7 +392,41 @@ _conda_step() {
     # the flags into the command conda was supposed to be.
     if [[ -n "${!v+x}" ]]; then pre+=("CONDA_BACKUP_${v}=${!v}")
     else pre+=("CONDA_BACKUP_${v}="); fi
+    # ...and define the PLAIN variable too, which is the half that was missing.
+    # The toolchain's ACTIVATE hook only records a backup when the plain variable
+    # is defined:
+    #     if [ ! -z "${AR+x}" ]; then export CONDA_BACKUP_AR="$AR"; fi
+    # With AR undefined it stores nothing, the matching deactivate hook then reads
+    # an unset CONDA_BACKUP_AR, and under `set -u` that is the failure that has
+    # been killing macOS env builds:
+    #     deactivate_cctools_osx-64.sh: line 63: CONDA_BACKUP_AR: unbound variable
+    #     LinkError: post-link script failed for package ...::spades-4.3.0...
+    # Defining it EMPTY satisfies the `+x` test and cannot point a compiler
+    # anywhere: conda's activate hook overwrites it with the env's real path a line
+    # later.
+    [[ -n "${!v+x}" ]] || pre+=("${v}=")
   done
+  # BASH_ENV: the belt that does not depend on any hook's shape.
+  #
+  # Read conda/utils.py:wrap_subprocess_call — for a package with a post-link
+  # script conda writes a temp shell script that does, in order:
+  #     conda activate <prefix>
+  #     . "<pkg>-post-link.sh"          <-- SOURCED, not executed
+  #     . "<prefix>/etc/conda/deactivate.d/<each>.sh"
+  # and runs it as `bash <script>`. Because the post-link script is SOURCED, a
+  # `set -u` inside it (bioconda's spades has one) stays set for the deactivate
+  # hooks sourced afterwards. That is the whole mechanism, and it means scrubbing
+  # SHELLOPTS from conda's environment — which is what we shipped first — could
+  # never have fixed it: the `set -u` does not come from an ancestor shell, it
+  # comes from the package's own script two lines earlier.
+  #
+  # bash sources $BASH_ENV at the top of a non-interactive script, which is that
+  # wrapper. A prelude that defines every name those hooks read makes the unguarded
+  # reads legal no matter what set -u is in force and no matter which hook variant
+  # the package ships. It only ever defines variables, so it is safe to apply to
+  # every script conda runs during the transaction.
+  local prelude; prelude="$(_conda_prelude_file)"
+  [[ -n "${prelude}" ]] && pre+=("BASH_ENV=${prelude}")
   local rc=0
   "${pre[@]}" "$@" || rc=$?
   # Harden again on the way out: this transaction may have just installed the very
@@ -384,6 +439,33 @@ _conda_step() {
 # The toolchain variables whose conda deactivate hooks read $CONDA_BACKUP_<VAR> with
 # no default. Over-inclusive on purpose: an unused placeholder costs nothing, while a
 # missing one is a rolled-back transaction that cannot self-heal.
+# Write (once per run) the BASH_ENV prelude every shell conda starts will source.
+# Echoes its path, or nothing if it could not be written — in which case the
+# environment-variable belt above still applies.
+_conda_prelude_file() {
+  local f="${BDTOOLS_HOME}/state/conda-prelude.sh" v
+  [[ -s "${f}" && -n "${_CONDA_PRELUDE_WRITTEN:-}" ]] && { printf '%s' "${f}"; return 0; }
+  mkdir -p "$(dirname "${f}")" 2>/dev/null || return 0
+  {
+    echo '# Generated by bdtools (install-local.sh). Sourced via BASH_ENV by every'
+    echo '# non-interactive shell conda starts during a transaction, so that the'
+    echo '# toolchain activate/deactivate hooks cannot die on an unbound variable'
+    echo '# under a `set -u` that a package post-link script turned on.'
+    # Chain, never replace: a user with their own BASH_ENV keeps it.
+    echo 'if [ -n "${_BDTOOLS_PREV_BASH_ENV:-}" ] && [ -r "${_BDTOOLS_PREV_BASH_ENV}" ]; then'
+    echo '  . "${_BDTOOLS_PREV_BASH_ENV}"'
+    echo 'fi'
+    for v in ${_CONDA_BACKUP_VARS}; do
+      # `:=` defines it (possibly empty) without disturbing a real value.
+      printf ': "${%s:=}"; export %s\n' "${v}" "${v}"
+      printf ': "${CONDA_BACKUP_%s:=}"; export CONDA_BACKUP_%s\n' "${v}" "${v}"
+    done
+  } > "${f}.tmp" 2>/dev/null || { rm -f "${f}.tmp"; return 0; }
+  mv -f "${f}.tmp" "${f}" 2>/dev/null || return 0
+  _CONDA_PRELUDE_WRITTEN=1
+  printf '%s' "${f}"
+}
+
 _CONDA_BACKUP_VARS="CC CXX CPP FC F77 F90 GCC GXX GFORTRAN CLANG CLANGXX
   AR AS RANLIB LD LD_GOLD NM STRIP OBJDUMP OBJCOPY READELF SIZE STRINGS ADDR2LINE
   CFLAGS CXXFLAGS CPPFLAGS FFLAGS LDFLAGS DEBUG_CFLAGS DEBUG_CXXFLAGS DEBUG_FFLAGS
@@ -975,6 +1057,13 @@ if [[ ${DO_BUILD} -eq 1 ]]; then
     [[ ${rc} -eq 0 || ${rc} -eq 3 ]] && return 0
     build_state_fail "${TOOL}" "${BUILD_REF}" "install-local.sh --build exit ${rc}"
     warn "${TOOL}: build did not finish (exit ${rc}) — recorded, so 'bdtools update ${TOOL}' will retry it rather than skip it."
+    # The moment the snapshot is worth something. A failed transaction is rolled
+    # back, not restored, so say plainly that the env was left alone and how to
+    # put it back to what it was.
+    if [[ -x "${DIR}/env/bin/python" ]]; then
+      info "  The existing env was NOT deleted — the tool may still run: bin/bdtools doctor ${TOOL}"
+    fi
+    restore_env_hint "${TOOL}"
   }
   trap _record_build_exit EXIT
   build

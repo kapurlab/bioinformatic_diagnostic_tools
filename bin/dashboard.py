@@ -683,6 +683,10 @@ function devBlock(t){
   if(!t.caveat) return '';
   return `<div class="dev"><b>⚠ Development status:</b> ${esc(t.caveat)}</div>`;
 }
+// name -> {latest, newer, offered}, filled from the update check. Kept here rather
+// than served with /api/tools because working it out needs a `git ls-remote` per
+// tool: the card grid must stay instant, so it picks this up on its next redraw.
+const releaseInfo = {};
 function heldTitle(p){
   // Reason first, remedy second, and never a remedy that cannot help: a package
   // held because no build exists for this OS is not fixed by rebuilding anything.
@@ -698,7 +702,21 @@ function versionBlock(t){
   // conda-meta by hand.
   if(!t.installed) return '';
   const bits = [];
-  if(t.version) bits.push(`<span class="vtool">${esc(t.version)}</span>`);
+  if(t.version){
+    // The GUI release, and — when one exists that we are deliberately not
+    // installing — the newer tag, stated plainly. "I want to see when there is a
+    // newer version available" is a separate need from being offered a button,
+    // and the card is where it belongs.
+    const rel = releaseInfo[t.name];
+    const newer = (rel && rel.newer && rel.latest)
+      ? ` <span class="vheld" title="${esc(rel.offered
+          ? "A newer release is available; the update banner offers it."
+          : "tools.yml keeps this tool at the version you validated (updates: report). "
+            + "To move it deliberately:\\n    bin/bdtools update " + t.name
+            + " --allow-report-only")}">${esc(rel.latest)} available</span>`
+      : '';
+    bits.push(`<span class="vtool">${esc(t.version)}</span>${newer}`);
+  }
   for(const p of (t.packages||[])){
     if(!p.installed) continue;
     // Held: a newer release exists but this env cannot take it. Shown as held
@@ -796,6 +814,10 @@ function renderUpdates(d){
     return;
   }
   const items = d.items || [];
+  for(const i of items){
+    if(i.kind === 'tool') releaseInfo[i.name] = {
+      latest: i.latest, newer: !!i.newer_exists, offered: !!i.update_available };
+  }
   const avail = items.filter(i=>i.update_available);
   // Held: a newer release exists that this machine has established it cannot
   // install (tools.yml, or a solve that was tried here and refused). Never a
@@ -803,6 +825,10 @@ function renderUpdates(d){
   // on its own would be claiming the newest version is installed when it is not.
   // This one line is what makes a quiet dashboard honest rather than forgetful.
   const held = items.filter(i=>i.held && !i.update_available);
+  // Report-only: a newer version exists and tools.yml does not let bdtools install
+  // it. Same treatment as held — named, never offered — because the CLI would
+  // refuse it too, and a button that leads to a refusal is worse than no button.
+  const kept = items.filter(i=>i.report_only && i.newer_exists);
   if(!avail.length){
     box.className='updates current';
     const note = held.length
@@ -811,7 +837,12 @@ function renderUpdates(d){
         + ` at the installed version — a newer release exists that ${held.length>1?"these environments":"this environment"} `
         + `cannot take. The tool card says which, and why.`
       : '';
-    box.innerHTML = `✓ Up to date.${note} `
+    const keptNote = kept.length
+      ? ` <span class="uheldnote" title="${esc(kept.map(i=>i.label+": "+i.installed+" -> "+i.latest).join("\\n"))}">`
+        + `${kept.length} newer version${kept.length>1?"s are":" is"} available and not offered</span>`
+        + ` — updating is opt-in per tool in tools.yml, so nothing is rebuilt behind your back.`
+      : '';
+    box.innerHTML = `✓ Up to date.${note}${keptNote} `
       + `<a href="#" onclick="checkUpdates(true);return false" style="color:inherit">Re-check</a>`;
     return;
   }

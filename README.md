@@ -477,6 +477,27 @@ bin/bdtools versions               # what you are running, per tool
 bin/bdtools update-packages <tool> # move its packages to the newest release
 ```
 
+**Updating a tool is opt-in, per tool.** `tools.yml` carries `updates: install`
+or `updates: report` on every entry, and today **only vSNP3 is opted in**. For
+everything else the suite reads and displays versions and changes nothing —
+`bdtools update`, `update-packages` and the dashboard buttons all skip them.
+
+Why: an env rebuild re-solves every dependency, and a conda transaction that dies
+part-way rolls back into an env that may no longer run the tool. That is not
+hypothetical. A dashboard "Install tool updates" run — which targets *all* —
+rebuilt `kraken_id_parse_gui` on macOS, hit an upstream `spades` post-link bug,
+and left a working install broken. Being a release behind cannot do that. A
+diagnostic lab keeps the version it validated until it decides otherwise.
+
+Do it deliberately for one named tool when you have a reason to:
+
+```bash
+bin/bdtools update kraken_id_parse_gui --allow-report-only
+```
+
+There is no dashboard path to that, and no bulk form of it. To opt a tool in
+permanently, change its `updates:` in `tools.yml` and say why.
+
 **Order matters, and it is the order above.** `bdtools update <tool>` rewrites the
 pins in `tools.yml`; the bdtools self-update is `git pull --ff-only`, which restores
 that file to get a clean tree — so doing tools first silently discards the pin
@@ -561,6 +582,48 @@ Pull the repo first, then `bin/bdtools update`, so any new install-script behavi
 is in effect when tools rebuild. On local (macOS/Linux) installs, launching a GUI
 after updating also self-heals its shared-tool links (e.g. vSNP3's link to Kraken
 ID Parse).
+
+### A failed build never costs you a working env
+
+Two rules, both learned from losing one:
+
+- **Nothing bdtools does deletes an env that was already there.** A prefix is
+  only cleared between retries when *this run created it* — a rolled-back
+  `conda create` leaves untracked `__pycache__` that makes attempt 2 die in
+  `ClobberError`s. The old rule was "no working python", which is exactly what a
+  rolled-back update of an existing env looks like, so the cleanup deleted the
+  user's env and every retry then failed with nothing to fall back on.
+- **Every env-changing operation records the env first.** `conda list --explicit`
+  goes to `$BDTOOLS_HOME/state/<tool>.env-explicit.txt` (plus one generation
+  back) before anything is installed. conda rolls a failed transaction back, but
+  a rollback is not a restore — it can leave an env that no longer imports what
+  the tool needs, and there was previously no record of what it had held.
+
+```bash
+bin/bdtools restore-env <tool>          # replay the snapshot: no solve, exact versions
+bin/bdtools restore-env <tool> --prev   # the generation before that
+```
+
+Not covered by a conda snapshot: pip-installed packages and the built frontend.
+Finish with `bin/bdtools install <tool>` if `doctor` still reports missing python
+modules.
+
+**A package's own post-link script can no longer take a build down.** conda
+*sources* a post-link script into the wrapper shell and then sources the env's
+`deactivate.d` hooks (see `conda/utils.py:wrap_subprocess_call`), so a `set -u`
+inside the package's script — bioconda's `spades` has one — is still in force
+when the conda-forge toolchain hooks read `$CONDA_BACKUP_AR` with no default:
+
+```
+deactivate_cctools_osx-64.sh: line 63: CONDA_BACKUP_AR: unbound variable
+LinkError: post-link script failed for package defaults::spades-4.3.0
+```
+
+The `set -u` comes from the package, two lines earlier — not from an ancestor
+shell — which is why scrubbing `SHELLOPTS` did not fix it. Every conda call now
+runs with the plain toolchain variables defined (so the *activate* hook records a
+backup) **and** with `BASH_ENV` pointing at a generated prelude that binds every
+name those hooks read, whatever variant a package ships.
 
 `update all` updates every tool even if one of them fails, lists the failures at
 the end, and exits non-zero. A tool whose build did not finish is recorded as

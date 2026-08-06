@@ -719,6 +719,31 @@ EOF
   "${KT_BIN_DIR}/check-updates.sh" --apply "$@"
 }
 
+# Put a tool's conda env back to the exact set of packages recorded before the
+# last change to it. The snapshot is written by every operation that touches an
+# env (see common.sh:snapshot_env), which is the point: a rollback is not a
+# restore, and after a failed transaction there was previously no record at all
+# of what the env used to contain.
+cmd_restore_env() {
+  if [[ $# -lt 1 || "${1}" == "-h" || "${1}" == "--help" ]]; then
+    cat <<'EOF'
+usage: bdtools restore-env <tool> [--prev] [--dry-run]
+
+Reinstall exactly the packages recorded in this tool's env snapshot, taken
+before the last operation that modified the env. No solve, no channel lookup:
+the snapshot is a resolved package list.
+
+--prev     use the generation before that (the snapshot has one backup)
+--dry-run  print the conda command, change nothing
+
+Afterwards, re-run `bdtools install <tool>` if the tool also needs its pip
+requirements or frontend rebuilt — those are not part of a conda snapshot.
+EOF
+    return 0
+  fi
+  "${KT_BIN_DIR}/restore-env.sh" "$@"
+}
+
 cmd_site_init() { "${KT_BIN_DIR}/site-init.sh" "$@"; }
 
 cmd_setup_databases() { "${KT_BIN_DIR}/setup-databases.sh" "$@"; }
@@ -748,6 +773,7 @@ main() {
     versions)           cmd_versions "$@";;
     update-packages)    cmd_update_packages "$@";;
     update)             cmd_update "$@";;
+    restore-env)        cmd_restore_env "$@";;
     site-init)          cmd_site_init "$@";;
     setup-databases)    cmd_setup_databases "$@";;
     doctor)             cmd_doctor "$@";;

@@ -5,6 +5,13 @@
 #   check-updates.sh --apply <tool|all>    move the checkout to the newest ref
 #                                          and rebuild (bumps the manifest pin)
 #   check-updates.sh --apply --force ...   rebuild even if already up to date
+#   ... --allow-report-only                also act on a tool tools.yml marks
+#                                          report-only (name it explicitly)
+#
+# --apply only touches tools whose tools.yml entry says `updates: install`.
+# Everything else is reported and left exactly as it is — a rebuild re-solves the
+# whole env, and a transaction that dies part-way can cost a working tool. See the
+# header of tools.yml.
 #
 # --apply skips any tool already sitting on the target ref with a built env
 # (the rebuild would re-solve/re-download for no change). Pass --force to
@@ -24,13 +31,18 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
 
 APPLY=0
 FORCE=0
+ALLOW_REPORT_ONLY=0
 NOT_INSTALLED=()   # tools named in an --apply run that aren't checked out yet
+REPORT_ONLY=()     # tools tools.yml says bdtools must not change
 FAILED=()          # tools whose update/build did not finish (reported at the end)
 ARGS=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --apply)   APPLY=1; shift;;
     --force)   FORCE=1; shift;;
+    # Act on a tool tools.yml marks report-only. One named tool at a time, by
+    # hand — never from the dashboard, and never as part of `all`.
+    --allow-report-only) ALLOW_REPORT_ONLY=1; shift;;
     --dry-run) DRY_RUN=1; export DRY_RUN; shift;;
     # Without this, --help was taken as a TOOL NAME and reported
     # "manifest: no tool named '--help'".
@@ -67,6 +79,11 @@ report_one() {
 
 apply_one() {
   local name="$1" dir repo pinned latest target current dirty_path
+  # Before anything is fetched, checked out or built. `--apply all` reaches every
+  # tool in the manifest, which is exactly how one dashboard button rebuilt a tool
+  # nobody had asked to change and left it broken.
+  require_updatable "${name}" "${ALLOW_REPORT_ONLY}" update \
+    "$([[ "${TARGET}" == "all" ]] && echo 0 || echo 1)" || return 5
   dir="$(tool_dir "$name")"; repo="$(manifest_get "$name" repo)"; pinned="$(manifest_get "$name" version)"
   latest="$(latest_tag "$repo")"
   target="${latest:-$pinned}"   # newest tag, else stay on the pinned branch
@@ -178,9 +195,15 @@ if [[ ${APPLY} -eq 1 ]]; then
     case "${rc}" in
       0|3) ;;                            # updated, or code-only (no local env)
       4)   NOT_INSTALLED+=("$n");;
+      5)   REPORT_ONLY+=("$n");;         # not ours to change; not a failure
       *)   FAILED+=("$n"); warn "${n}: update failed (exit ${rc}) — continuing with the remaining tools.";;
     esac
   done < <(targets)
+  if [[ ${#REPORT_ONLY[@]} -gt 0 ]]; then
+    echo
+    ok "left alone (report-only in tools.yml): ${REPORT_ONLY[*]}"
+    info "  Their versions are still reported; nothing about them was changed."
+  fi
   if [[ ${#NOT_INSTALLED[@]} -gt 0 ]]; then
     echo
     warn "not installed (skipped): ${NOT_INSTALLED[*]}"

@@ -46,6 +46,12 @@ had just established cannot be installed here, so the dashboard looked as though
 update had never happened. It now goes quiet, and the held versions are reported on
 the cards instead.
 
+**§11 changes the update policy.** Updating is now **opt-in per tool** and only
+vSNP3 is opted in — an "Install tool updates" run rebuilt a tool nobody had asked to
+change and left it broken. A failed build can also no longer delete an env, envs are
+snapshotted before every change (`bdtools restore-env`), and the post-link bug that
+caused it is fixed for real (§11.3 — my earlier diagnosis of it was wrong).
+
 ---
 
 ## 1. The Restart hang
@@ -340,12 +346,76 @@ Where the information went, now that the banner is silent about it:
   *back*, so it is false once the installed version has reached the channel's
   newest. A manifest hold is by name and forever; the env is not.
 
-## 11. Verify after pulling elsewhere
+## 11. Updating is now opt-in per tool, and a failed build cannot cost you an env
+
+A dashboard **Install tool updates** run (which targets `all`) rebuilt
+`kraken_id_parse_gui` on macOS, died on an upstream `spades` post-link script, and
+left a working install broken — then failed identically on every retry, because our
+own retry cleanup had deleted the env. Three separate faults, all closed.
+
+### 11.1 `updates:` in tools.yml — only vSNP3 may be changed
+
+Every entry now declares `updates: install` or `updates: report`. **vsnp_gui is the
+only one opted in.** Report-only means versions are read and displayed and *nothing*
+is installed, rebuilt or moved: `bdtools update`, `bdtools update-packages` and the
+dashboard buttons all skip them. `--allow-report-only`, on one explicitly named
+tool, is the deliberate override; there is no dashboard path to it and no bulk form.
+
+One gate (`common.sh:require_updatable`) sits in front of every path that would move
+a checkout or touch an env, and the dashboard reads the same field
+(`suite_common.tool_is_updatable`) — so the buttons on screen and what the CLI will
+actually do cannot drift apart. A sweep refuses **quietly** and summarises in one
+line; eight tools × a five-line explanation is how people learn to skip warnings.
+
+Being a release behind cannot break a validated tool. A rebuild can.
+
+### 11.2 A failed build no longer deletes an env
+
+`with_progress` cleared a retry's prefix when it had "no working python" — which is
+exactly what a rolled-back update of an **existing** env looks like. It now only
+clears a prefix *this run created* (`_ENV_PREEXISTING`), so an env that was there
+before is never ours to delete, however broken it now looks.
+
+And every env-changing operation snapshots first: `conda list --explicit` to
+`$BDTOOLS_HOME/state/<tool>.env-explicit.txt`, one generation kept, replayed by
+**`bdtools restore-env <tool>`** — no solve, exact versions. A rollback is not a
+restore, and there was previously no record at all of what an env had contained.
+
+### 11.3 The post-link failure itself — mechanism, from conda's source
+
+`conda/utils.py:wrap_subprocess_call` writes, for a package with a post-link script:
+
+```
+conda activate <prefix>
+. "<pkg>-post-link.sh"                      <-- SOURCED, not executed
+. "<prefix>/etc/conda/deactivate.d/<x>.sh"  <-- for each, after
+```
+
+Because the post-link is **sourced**, the `set -eu` inside bioconda's spades script
+is still in force when the toolchain deactivate hooks run — and those read
+`$CONDA_BACKUP_AR` with no default. So the `set -u` comes from the package two lines
+earlier, **not from an ancestor shell**, which is why §6's `SHELLOPTS` scrub could
+never have fixed this and why it kept failing after that shipped. I had the
+mechanism wrong; the source settles it.
+
+Two guards now, either sufficient:
+
+- the **plain** toolchain variables are defined (`AR=`, `CLANGXX=` …), so the
+  *activate* hook's `if [ ! -z "${AR+x}" ]` fires and records a backup;
+- **`BASH_ENV`** points at a generated prelude binding every one of those names,
+  which bash sources at the top of that wrapper whatever the hooks do. It chains to
+  any `BASH_ENV` the user already had.
+
+`tests/test_conda_postlink_guard.py` builds conda's exact wrapper shape, proves the
+failure reproduces without the guards, and proves the real generated prelude
+survives it.
+
+## 12. Verify after pulling elsewhere
 
 ```bash
 git pull
 bin/lint.sh                                   # includes the dashboard-page JS check
-python3 -m unittest discover -s tests -p "test_*.py"   # 135 tests
+python3 -m unittest discover -s tests -p "test_*.py"   # 155 tests
 bin/bdtools versions                          # what each tool actually runs
 bin/bdtools update-packages all --check-pins  # only when changing a pin (minutes)
 bin/bdtools doctor

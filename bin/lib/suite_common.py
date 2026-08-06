@@ -166,6 +166,25 @@ def readiness_map():
         return {}
 
 
+def tool_is_updatable(name):
+    """May bdtools change this tool? tools.yml `updates:`, default no.
+
+    One reader for the dashboard, so the buttons on screen and the gate in
+    common.sh:require_updatable cannot disagree about what is allowed. Defaults to
+    False on any error: the safe answer to "may I rebuild this?" is no.
+    """
+    try:
+        import manifest
+        _, tools = manifest.parse(
+            os.environ.get("BDTOOLS_MANIFEST", os.path.join(REPO_DIR, "tools.yml")))
+    except Exception:
+        return False
+    for rec in tools:
+        if rec.get("name") == name:
+            return rec.get("updates") == "install"
+    return False
+
+
 def _parse_update_line(line):
     """Parse one `check-updates` report line into an update record, or None.
 
@@ -190,12 +209,21 @@ def _parse_update_line(line):
     # tag isn't flagged.
     inst_tag = installed.split("-")[0] if installed and installed != "—" else ""
     available = bool(latest and latest != "—" and inst_tag and inst_tag != latest)
+    # tools.yml decides whether bdtools may CHANGE this tool. A report-only tool
+    # keeps `latest` — seeing that a release exists is the point — but is never
+    # offered, because the CLI would refuse it anyway and a button that leads to a
+    # refusal is worse than no button. It is also the only reliable guard: the
+    # dashboard's "Install tool updates" targets `all`, so without this one click
+    # reaches every tool in the manifest.
+    report_only = not tool_is_updatable(name)
     return {
         "name": name,
         "label": pretty(name),
         "installed": installed or "—",
         "latest": latest or "—",
-        "update_available": available,
+        "update_available": available and not report_only,
+        "newer_exists": available,
+        "report_only": report_only,
         # "tool" = this GUI's own release (a git tag + an env rebuild), as opposed
         # to "package" (conda software inside its env) or "suite" (bdtools itself).
         # The banner groups by this and orders the buttons by it.
@@ -252,6 +280,10 @@ def package_update_records():
     """
     recs = []
     for rec in package_report():
+        # Same gate as the tool records: `update-packages all` reaches every tool,
+        # and conda installing into a live env is still a change to the software
+        # that produces results.
+        report_only = not tool_is_updatable(rec["tool"])
         recs.append({
             "name": f"{rec['tool']}:{rec['package']}",
             # Tool first, then the package inside it: "vSNP3 — vsnp3". The old
@@ -262,7 +294,9 @@ def package_update_records():
             "tool_label": pretty(rec["tool"]),
             "installed": rec["installed"] or "—",
             "latest": rec["latest"] or "—",
-            "update_available": rec["update_available"],
+            "update_available": rec["update_available"] and not report_only,
+            "newer_exists": rec["update_available"],
+            "report_only": report_only,
             # Carried even though the banner never offers a held package: the
             # "up to date" line counts them, so a run that could correctly install
             # nothing still leaves visible evidence of why. Without it the banner

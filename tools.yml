@@ -22,6 +22,27 @@
 #   packages_held  packages that a newer release exists for but THIS env cannot
 #             take (another package in the same env holds perl/zlib/libcurl down).
 #             Still shown, never offered as an update.               (optional)
+#   updates   whether bdtools may CHANGE this tool:
+#               install — offered in the dashboard, and `bdtools update` /
+#                         `update-packages` will act on it
+#               report  — versions are read and displayed, and nothing is ever
+#                         installed, rebuilt or moved  (the DEFAULT when absent)
+#
+# WHY MOST TOOLS ARE report-ONLY. An env rebuild is not a small act: it re-solves
+# every dependency, and a conda transaction that fails part-way rolls back into an
+# env that may no longer run the tool. That is not theoretical — a dashboard
+# "Install tool updates" run rebuilt kraken_id_parse_gui on macOS, died on an
+# upstream spades post-link script, and left a working install broken through no
+# fault of the tool. A diagnostic lab needs the version it validated to keep
+# running; being a release behind costs nothing, and a rebuild that fails costs a
+# working tool. So updating is opt-in per tool, not the default, and today only
+# vSNP3 is opted in. Seeing that a newer version exists is unaffected — that is
+# read-only and always on.
+#
+# To act on a report-only tool deliberately (an admin recovering an install, or
+# after validating a release), name it and pass --allow-report-only:
+#     bin/bdtools update kraken_id_parse_gui --allow-report-only
+# There is no way to do it from the dashboard, and no bulk form of it.
 #
 # Why `packages` is pinned here and not left to each tool's environment.yml: those
 # floor-pin (`mlst>=2.23`) or leave the version open, so what you got depended on
@@ -60,6 +81,7 @@ tools:
   - name: vsnp_gui
     repo: https://github.com/kapurlab/vsnp_gui.git
     version: v0.4.37
+    updates: install
     ood_apps: [vsnp_gui]
     dev_apps: [vsnp_gui_dev]
     env: vsnp3
@@ -69,6 +91,7 @@ tools:
   - name: amr_plus_gui
     repo: https://github.com/kapurlab/amr_plus_gui.git
     version: v0.3.3
+    updates: report
     ood_apps: [amr_plus_gui]
     dev_apps: [amr_plus_gui_dev]
     env: amr_plus
@@ -93,6 +116,7 @@ tools:
   - name: irma_gui
     repo: https://github.com/kapurlab/irma_gui.git
     version: v0.3.2
+    updates: report
     ood_apps: [irma_gui]
     dev_apps: [irma_gui_dev]
     env: irma_gui
@@ -101,6 +125,7 @@ tools:
   - name: genoflu_gui
     repo: https://github.com/kapurlab/genoflu_gui.git
     version: v0.3.2
+    updates: report
     ood_apps: [genoflu_gui]
     dev_apps: [genoflu_gui_dev]
     env: genoflu_gui
@@ -109,6 +134,7 @@ tools:
   - name: mlst_gui
     repo: https://github.com/kapurlab/mlst_gui.git
     version: v0.3.3
+    updates: report
     ood_apps: [mlst_gui]
     dev_apps: [mlst_gui_dev]
     env: mlst
@@ -127,6 +153,7 @@ tools:
   - name: kraken_id_parse_gui
     repo: https://github.com/kapurlab/kraken_id_parse_gui.git
     version: v0.2.3
+    updates: report
     ood_apps: [kraken_id_parse_gui]
     dev_apps: [kraken_id_parse_gui_dev]
     env: kraken_id_parse
@@ -138,6 +165,7 @@ tools:
   - name: ksnp_gui
     repo: https://github.com/kapurlab/ksnp_gui.git
     version: v0.5.0
+    updates: report
     ood_apps: [ksnp_gui]
     dev_apps: [ksnp_gui_dev]
     env: ksnp
@@ -145,6 +173,7 @@ tools:
   - name: ncbi_submit_gui
     repo: https://github.com/kapurlab/ncbi_submit_gui.git
     version: v0.2.2
+    updates: report
     ood_apps: [ncbi_submit_gui]
     dev_apps: [ncbi_submit_gui_dev]
     env: ncbi_submit
@@ -157,6 +186,7 @@ tools:
   - name: mhc_gui
     repo: https://github.com/kapurlab/bovine_mhc_typer.git
     version: v0.2.2
+    updates: report
     ood_apps: [mhc_gui]
     dev_apps: [mhc_gui_dev]
     env: mhc_gui

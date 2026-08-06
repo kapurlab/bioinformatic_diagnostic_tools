@@ -72,6 +72,44 @@ manifest_get()           { _need_python; "${PYBIN}" "${MANIFEST_PY}" "${MANIFEST
 manifest_set()           { _need_python; "${PYBIN}" "${MANIFEST_PY}" "${MANIFEST}" set "$1" "$2" "$3"; }
 manifest_has() { manifest_names | grep -qxF "$1"; }
 
+# ---- what bdtools is allowed to CHANGE -------------------------------------
+# tools.yml's `updates:` field, defaulting to the safe answer. An env rebuild
+# re-solves every dependency and a conda transaction that fails part-way can
+# leave a tool that no longer runs — so changing a tool is opt-in per tool, and
+# only vsnp_gui is opted in today. Reading and displaying versions is unaffected.
+tool_updates_policy() {   # -> install | report
+  local p; p="$(manifest_get "$1" updates 2>/dev/null || true)"
+  [[ "${p}" == "install" ]] && { printf 'install'; return; }
+  printf 'report'
+}
+
+# Gate every code path that would move a checkout or touch an env. Deliberately
+# NOT overridable by an environment variable: the whole point is that no script,
+# no dashboard button and no `all` sweep can decide this on the user's behalf.
+# The override is an explicit flag on an explicitly named tool.
+#
+# `explain` is 0 for a sweep: eight tools × a five-line explanation is a wall of
+# warnings for a run in which nothing went wrong, and a wall of warnings is how
+# people learn to skip warnings. The caller lists them in one summary line
+# instead. When the user named the tool, they get the full reason.
+require_updatable() {   # require_updatable <tool> <allow_flag 0|1> <cmd> [explain 0|1]
+  local tool="$1" allowed="${2:-0}" cmd="${3:-update}" explain="${4:-1}"
+  [[ "$(tool_updates_policy "${tool}")" == "install" ]] && return 0
+  [[ "${allowed}" -eq 1 ]] && {
+    warn "${tool} is report-only in tools.yml — proceeding because --allow-report-only was given."
+    return 0
+  }
+  if [[ "${explain}" -eq 1 ]]; then
+    warn "${tool}: left unchanged — it is report-only in tools.yml."
+    info "  Changing a tool is opt-in per tool. A rebuild re-solves the whole env,"
+    info "  and a transaction that dies part-way can leave a working tool broken;"
+    info "  being a release behind cannot. Versions are still read and reported."
+    info "  To do it anyway, deliberately, one named tool at a time:"
+    info "      bin/bdtools ${cmd} ${tool} --allow-report-only"
+  fi
+  return 1
+}
+
 # Resolve a tool's checkout dir: explicit $BDTOOLS_TOOLSDIR wins (e.g. the
 # lab's existing /srv/kapurlab/tools tree), else the per-user home.
 # Dirty tracked paths in a tool checkout that are NOT regenerable build output —
@@ -287,6 +325,48 @@ harden_conda_hooks() {
   done
   [[ ${n} -gt 0 ]] && ok "guarded ${n} conda activation hook(s) in ${envdir} against \`set -u\` (upstream CONDA_BACKUP_* bug)"
   return 0
+}
+
+# ---- env snapshots ---------------------------------------------------------
+# Exactly what is installed in an env, written BEFORE anything changes it.
+#
+# conda rolls a failed transaction back, but a rollback is not a restore: it can
+# leave an env that no longer imports what the tool needs, and there is then no
+# record of what was in it. `conda list --explicit` is that record — a list of
+# package URLs, resolved and reproducible, needing no solve to replay. It is a
+# directory read of conda-meta, so it costs nothing to take on every change.
+#
+# Not covered: pip-installed packages (they are re-installed by the build's own
+# pip step) and any file a user hand-edited inside the env.
+_env_snapshot_file() { printf '%s' "${BDTOOLS_HOME}/state/${1}.env-explicit.txt"; }
+
+snapshot_env() {   # snapshot_env TOOL ENVDIR
+  local tool="$1" envdir="$2" f conda
+  [[ "${DRY_RUN:-0}" -eq 1 ]] && return 0
+  [[ -n "${tool}" && -x "${envdir}/bin/python" ]] || return 0
+  conda="$(detect_conda 2>/dev/null)" || return 0
+  f="$(_env_snapshot_file "${tool}")"
+  mkdir -p "$(dirname "${f}")" 2>/dev/null || return 0
+  # Keep one generation back: the most useful snapshot is sometimes the one from
+  # before the change you are now trying to undo.
+  [[ -f "${f}" ]] && cp -f "${f}" "${f}.prev" 2>/dev/null || true
+  if "${conda}" list --explicit -p "${envdir}" > "${f}.tmp" 2>/dev/null \
+     && grep -q '@EXPLICIT' "${f}.tmp"; then
+    mv -f "${f}.tmp" "${f}"
+  else
+    rm -f "${f}.tmp"
+  fi
+  return 0
+}
+
+# Print how to put an env back, if we have a snapshot for it. Called when a build
+# fails, because that is the moment the information is worth something.
+restore_env_hint() {   # restore_env_hint TOOL
+  local f; f="$(_env_snapshot_file "$1")"
+  [[ -f "${f}" ]] || return 0
+  info "  The env as it was before this run was recorded. To put it back exactly:"
+  info "      bin/bdtools restore-env $1"
+  info "    (snapshot: ${f})"
 }
 
 # ---- build state -----------------------------------------------------------

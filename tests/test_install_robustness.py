@@ -301,10 +301,12 @@ class UpdateResilienceTests(unittest.TestCase):
               - name: toolfail
                 repo: file://{self.sources['toolfail']}
                 version: v0.1.0
+                updates: install
                 env: toolfail
               - name: toolskip
                 repo: file://{self.sources['toolskip']}
                 version: v0.1.0
+                updates: install
                 env: toolskip
             """)
         (self.home / "checkouts/toolfail/FAIL").touch()   # make its build fail
@@ -495,10 +497,56 @@ class CondaStepGuardTests(unittest.TestCase):
                         'eval "echo $v=\\${CONDA_BACKUP_$v?MISSING}"; done\'')
         self.assertNotIn("MISSING", got.stdout + got.stderr, got.stderr)
 
-    def test_a_retry_clears_only_a_partial_env(self):
-        # A built env has bin/python; a rolled-back create does not. Removing the
-        # wrong one would destroy a working installation.
-        self.assertIn("rm -rf", self.progress)
-        for guard in ('== /*', '-x "${_envdir}/bin/python"', '*/env', '*/envs/*'):
-            self.assertIn(guard, self.progress,
-                          f"the partial-env cleanup is missing the {guard!r} guard")
+    # ---- what a FAILED build may and may not delete -------------------------
+    # Run for real rather than asserted against the source text: the old version
+    # of this test checked that the guards were present, and they were — they were
+    # just the wrong guards. "No working python" is exactly the state a rolled-back
+    # update of an EXISTING env leaves behind, so the cleanup deleted the user's
+    # env and every retry then failed with nothing to fall back on. That is what
+    # cost a working kraken_id_parse_gui on macOS.
+    def _retry_harness(self, envdir, extra=""):
+        src = (ROOT / "bin/install-local.sh").read_text(encoding="utf-8")
+        def chunk(start, end):
+            return src[src.index(start):src.index(end)]
+        body = (chunk("_tree_cpu_ticks() {", "_watched_bytes() {")
+                + chunk("_watched_bytes() {", "with_progress() {")
+                + chunk("with_progress() {", "_conda_step() {"))
+        script = (f'set -uo pipefail\nsource "{ROOT}/bin/lib/common.sh"\n'
+                  f'DIR="{envdir}/.."\nENV_NAME=test\nTOOL=testtool\n'
+                  f'BDTOOLS_BUILD_TRIES=2\nBDTOOLS_HEARTBEAT_SECS=1\n'
+                  f'{body}\n'
+                  # Stand in for _conda_step: with_progress keys its cleanup on the
+                  # payload being "_conda_step <envdir> ...", so the name matters.
+                  f'_conda_step() {{ _ENV_PREEXISTING=0; '
+                  f'[[ -x "$1/bin/python" ]] && _ENV_PREEXISTING=1; return 1; }}\n'
+                  f'{extra}\n'
+                  f'with_progress "build" _conda_step "{envdir}" || true\n')
+        return subprocess.run(["bash", "-c", script], capture_output=True, text=True,
+                              env={**os.environ, "DRY_RUN": "0"}, timeout=120)
+
+    def test_a_failed_build_never_deletes_an_env_that_was_already_there(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            env = Path(tmp) / "env"
+            (env / "bin").mkdir(parents=True)
+            py = env / "bin/python"
+            py.write_text("#!/bin/sh\n")
+            py.chmod(0o755)
+            (env / "conda-meta").mkdir()
+            keep = env / "conda-meta/vsnp3-3.35-h0.json"
+            keep.write_text("{}")
+            self._retry_harness(str(env))
+            self.assertTrue(py.exists(), "a failed build deleted a working env")
+            self.assertTrue(keep.exists(), "a failed build deleted installed packages")
+
+    def test_a_prefix_this_step_created_is_still_cleared_between_attempts(self):
+        # The original reason the cleanup exists: conda's rollback leaves untracked
+        # __pycache__ behind and attempt 2 dies in a ClobberError storm. A prefix
+        # that had no python when the step began was never the user's working env.
+        with tempfile.TemporaryDirectory() as tmp:
+            env = Path(tmp) / "env"
+            (env / "lib").mkdir(parents=True)
+            (env / "lib/__pycache__").mkdir()
+            self._retry_harness(str(env))
+            self.assertFalse(env.exists(),
+                             "a partially-created prefix should be cleared before "
+                             "the retry")

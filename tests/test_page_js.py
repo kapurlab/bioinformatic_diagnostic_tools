@@ -95,6 +95,8 @@ class BannerRenderTests(unittest.TestCase):
             "c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}\n"
             "const _el={className:'',innerHTML:'',textContent:''};\n"
             "document={getElementById:()=>_el};\n"
+            # Declared just above renderUpdates in PAGE, outside this slice.
+            "const releaseInfo={};\n"
             + body +
             f"\nrenderUpdates({payload});\n"
             "console.log(_el.className+'|'+(_el.innerHTML||_el.textContent));\n"
@@ -174,6 +176,29 @@ class BannerRenderTests(unittest.TestCase):
         self.assertIn("checking for updates", out)
         self.assertNotIn("Update conda packages", out)
 
+    KEPT = ("{name:'kraken_id_parse_gui',label:'Kraken ID / Parse',"
+            "installed:'v0.2.3',latest:'v0.2.4',update_available:false,"
+            "newer_exists:true,report_only:true,kind:'tool'}")
+
+    def test_a_report_only_tool_is_named_but_never_offered(self):
+        # tools.yml decides what bdtools may change. A button here would lead
+        # straight to the CLI refusing it — and one click on "Install tool updates"
+        # used to reach every tool in the manifest, which is how a rebuild nobody
+        # asked for broke a working install.
+        html = self.render(f"[{self.KEPT}]")
+        self.assertIn("Up to date", html)
+        self.assertNotIn("Install tool updates", html)
+        self.assertNotIn("Updates available", html)
+        self.assertIn("1 newer version is available and not offered", html)
+        self.assertIn("v0.2.4", html)      # still says WHICH version
+
+    def test_a_report_only_tool_does_not_join_the_offered_group(self):
+        html = self.render(f"[{self.TOOL},{self.KEPT}]")
+        self.assertIn("Updates available (1)", html)
+        self.assertIn("Install tool updates (1)", html)
+        self.assertIn("vSNP3", html)
+        self.assertNotIn("Kraken ID / Parse", html)
+
     def test_the_run_log_is_not_part_of_the_banner(self):
         # The log lives in #urun so that repainting the banner cannot erase the
         # record of the run that just finished.
@@ -193,7 +218,7 @@ class CardVersionTests(unittest.TestCase):
     def render(self, tool):
         page = load_page()
         main = re.findall(r"<script>(.*?)</script>", page, re.S)[-1]
-        body = main[main.index("function heldTitle"):
+        body = main[main.index("const releaseInfo"):
                     main.index("// tool -> launch-time warning")]
         harness = (
             "function esc(s){return String(s).replace(/[&<>]/g,"

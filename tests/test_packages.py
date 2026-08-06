@@ -210,6 +210,58 @@ class ReportTests(unittest.TestCase):
         self.assertIn("held", rec["status"])
 
 
+class BannerOrderTests(unittest.TestCase):
+    """The three update kinds must be offered in the order they have to be run.
+
+    bdtools first: `bdtools update <tool>` rewrites the pins in tools.yml, and the
+    later bdtools `git pull --ff-only` discards that drift to get a clean tree, so
+    tools-first silently loses the pin record — and a tool rebuild should run under
+    the new install scripts anyway. Conda packages last: a bdtools pull can change
+    the pins they work from. The banner encodes that order left to right, so a
+    reordering here is a behaviour change, not a cosmetic one.
+    """
+
+    def setUp(self):
+        page = (ROOT / "bin/dashboard.py").read_text(encoding="utf-8")
+        self.render = page.split("function renderUpdates", 1)[1].split(
+            "// Poll the cached result", 1)[0]
+
+    def test_groups_are_declared_suite_then_tool_then_package(self):
+        order = [self.render.index(f"key: '{k}'") for k in ("suite", "tool", "package")]
+        self.assertEqual(order, sorted(order),
+                         "update groups are no longer declared in run order")
+
+    def test_each_group_maps_to_its_own_apply_target(self):
+        for target in ("'bdtools'", "'all'", "'packages:all'"):
+            self.assertIn(f"target: {target}", self.render)
+
+    def test_steps_are_numbered_over_the_groups_present(self):
+        # Numbered 1..N over what is on screen, so left-to-right always reads as the
+        # run order with no gaps when only some kinds have updates.
+        self.assertIn("groups = [", self.render)
+        self.assertIn(".filter(g=>g.items.length)", self.render)
+        self.assertIn("const n = idx + 1", self.render)
+
+    def test_the_conda_button_says_conda(self):
+        # The question this answers: which button updates vsnp3 3.35 -> 3.36?
+        self.assertIn("'Update conda packages'", self.render)
+
+
+class PackageLabelTests(unittest.TestCase):
+    def test_a_package_item_names_its_tool_first(self):
+        with mock.patch.object(SC, "package_report", return_value=[{
+                "tool": "vsnp_gui", "package": "vsnp3", "channel": "bioconda",
+                "pinned": "3.35", "installed": "3.35", "latest": "3.36",
+                "update_available": True, "env": "/x", "status": "", "held": False}]):
+            rec = SC.package_update_records()[0]
+        # "vSNP3 — vsnp3", not "vsnp3 (in vSNP3)": which tool comes first, and the
+        # tool name is not repeated as though it were the package's container.
+        self.assertEqual(rec["label"], "vSNP3 — vsnp3")
+        self.assertEqual(rec["tool_label"], "vSNP3")
+        # "conda" belongs to the UI's kind tag, not the label — it was in both.
+        self.assertNotIn("conda", rec["label"])
+
+
 class UpdateScopeTests(unittest.TestCase):
     """A package update changes the env a running tool server executes from."""
 

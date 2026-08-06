@@ -559,6 +559,15 @@ addEventListener('storage',e=>{if(e.key===THEME_KEY)applyTheme(preferredTheme(),
  .updates .uhead{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
  .updates .utitle{font-weight:650}
  .updates ul{margin:8px 0 0;padding-left:18px}
+ .updates .ustep{display:inline-flex;align-items:center;justify-content:center;
+   min-width:16px;height:16px;margin-right:6px;padding:0 4px;border-radius:999px;
+   background:rgba(0,0,0,.18);font-size:11px;font-weight:700;line-height:1}
+ .updates .uarrow{margin:0 6px;opacity:.55;font-weight:700}
+ .updates .ukind{font-size:11px;opacity:.75;border:1px solid currentColor;
+   border-radius:999px;padding:0 5px;margin-left:4px;white-space:nowrap}
+ .updates ul.usteps{list-style:none;padding-left:0}
+ .updates li.ugroup{margin-top:6px;font-weight:650}
+ .updates li.ugroup ul{font-weight:400;margin-top:2px}
  .updates li{margin:2px 0}
  .updates .uactions{display:flex;gap:8px;flex-wrap:wrap}
  .updates button.u{background:var(--accent)}
@@ -765,26 +774,63 @@ function renderUpdates(d){
     return;
   }
   box.className='updates avail';
-  const bd = avail.find(i=>i.name==='bdtools');
-  // Three kinds of update, three buttons. A tool update moves the GUI checkout to
-  // a new release tag and rebuilds; a package update changes the analysis software
-  // inside an existing env (vsnp3, AMRFinderPlus, kraken2 …). Same banner, but they
-  // are not interchangeable, so they are never applied by the same button.
-  const pkgUps  = avail.filter(i=>i.kind==='package');
-  const toolUps = avail.filter(i=>i.name!=='bdtools' && i.kind!=='package');
-  const li = avail.map(i=>`<li><b>${esc(i.label)}</b>: ${esc(i.installed)} → <b>${esc(i.latest)}</b>`
-    + (i.kind==='package' ? ' <span style="opacity:.7">(conda package)</span>' : '')
-    + `</li>`).join('');
-  let actions = '';
-  if(toolUps.length) actions += `<button class="u" onclick="applyUpdates('all',this)">Install tool updates (${toolUps.length})</button>`;
-  if(pkgUps.length)  actions += `<button class="u" onclick="applyUpdates('packages:all',this)">Update analysis packages (${pkgUps.length})</button>`;
-  if(bd) actions += `<button class="u" onclick="applyUpdates('bdtools',this)">Update bdtools</button>`;
-  actions += `<button class="link" onclick="checkUpdates(true)">Re-check</button>`;
+  // THREE kinds of update, and the order they are run in matters — so they are laid
+  // out left to right in that order and numbered.
+  //
+  //   1 bdtools  — this checkout: the CLI, the manifest, the install scripts, this
+  //                dashboard. `git pull --ff-only`. First, because `bdtools update`
+  //                rewrites the pins in tools.yml and a later bdtools pull discards
+  //                that drift to get a clean tree, and because a tool rebuild should
+  //                run under the new install scripts, not the old ones.
+  //   2 tools    — each GUI's own release: move the checkout to its newest tag and
+  //                rebuild its environment.
+  //   3 packages — the conda analysis software INSIDE a tool's environment (vsnp3,
+  //                AMRFinderPlus, kraken2 …). Last, because a bdtools pull can
+  //                change the pins these work from.
+  const groups = [
+    { key: 'suite',   items: avail.filter(i=>i.kind==='suite' || i.name==='bdtools'),
+      label: 'Update bdtools', target: 'bdtools', count: false,
+      what: 'the suite, manifest, install scripts and this dashboard (git pull)' },
+    { key: 'tool',    items: avail.filter(i=>i.kind!=='suite' && i.kind!=='package' && i.name!=='bdtools'),
+      label: 'Install tool updates', target: 'all', count: true,
+      what: "each GUI's own release — new tag + environment rebuild" },
+    { key: 'package', items: avail.filter(i=>i.kind==='package'),
+      label: 'Update conda packages', target: 'packages:all', count: true,
+      what: 'the conda analysis software inside a tool\'s environment (vsnp3, AMRFinderPlus, kraken2 …)' },
+  ].filter(g=>g.items.length);
+  // Numbered 1..N over the groups PRESENT, so left-to-right always reads as the
+  // run order with no gaps when only some kinds have updates.
+  const actions = groups.map((g,idx)=>{
+    const n = idx + 1;
+    const label = g.count ? `${g.label} (${g.items.length})` : g.label;
+    const title = `Step ${n} of ${groups.length}: ${g.what}`;
+    return `<button class="u" title="${esc(title)}" onclick="applyUpdates('${g.target}',this)">`
+      + `<span class="ustep">${n}</span>${esc(label)}</button>`;
+  }).join('<span class="uarrow">→</span>')
+    + `<button class="link" onclick="checkUpdates(true)">Re-check</button>`;
+  // Items listed in the same order, grouped under their step, each naming the tool
+  // it belongs to and WHAT is moving (app release vs conda package).
+  const li = groups.map((g,idx)=>{
+    const rows = g.items.map(i=>{
+      const kind = g.key==='package' ? ' <span class="ukind">conda package</span>'
+                 : g.key==='tool'    ? ' <span class="ukind">app release</span>' : '';
+      return `<li><b>${esc(i.label)}</b>${kind}: ${esc(i.installed)} → <b>${esc(i.latest)}</b></li>`;
+    }).join('');
+    return `<li class="ugroup"><span class="ustep">${idx+1}</span> ${esc(g.label)}<ul>${rows}</ul></li>`;
+  }).join('');
   box.innerHTML = `<div class="uhead"><span class="utitle">↑ Updates available (${avail.length})</span>`
     + `<span class="uactions">${actions}</span></div>`
-    + `<ul>${li}</ul>`
-    + `<div class="udesc" style="margin-top:6px;color:#7a5a1e">Installing rebuilds the tool's environment and can take a few minutes. `
-    + `Idle tool servers are stopped first. When it finishes, use <b>Restart dashboard</b> to load the new version.</div>`
+    + `<ul class="usteps">${li}</ul>`
+    + `<div class="udesc" style="margin-top:6px">`
+    // Explain only the kinds actually on screen. Naming all three when one is
+    // offered is noise, and the "left to right" instruction is meaningless then.
+    + (groups.length > 1
+        ? `<b>Run these left to right</b> — the numbered order matters. ` : '')
+    + groups.map(g=>`<b>${esc(g.label)}</b>: ${esc(g.what)}`).join('<br>')
+    + `<br>Installing rebuilds environments and can take a few minutes; idle tool `
+    + `servers are stopped first. Use <b>Restart dashboard</b> after each one to load `
+    + `the new code.`
+    + `</div>`
     + `<div id="ulog" class="ulog" style="display:none"></div>`
     + `<div id="udone" class="udone"></div>`;
 }

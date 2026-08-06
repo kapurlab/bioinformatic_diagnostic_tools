@@ -196,6 +196,10 @@ def _parse_update_line(line):
         "installed": installed or "—",
         "latest": latest or "—",
         "update_available": available,
+        # "tool" = this GUI's own release (a git tag + an env rebuild), as opposed
+        # to "package" (conda software inside its env) or "suite" (bdtools itself).
+        # The banner groups by this and orders the buttons by it.
+        "kind": "tool",
     }
 
 
@@ -250,7 +254,12 @@ def package_update_records():
     for rec in package_report():
         recs.append({
             "name": f"{rec['tool']}:{rec['package']}",
-            "label": f"{rec['package']} (in {pretty(rec['tool'])})",
+            # Tool first, then the package inside it: "vSNP3 — vsnp3". The old
+            # "vsnp3 (in vSNP3)" stuttered for tools named after their own package.
+            # The kind ("conda package") is a separate tag in the UI, so it is not
+            # repeated here.
+            "label": f"{pretty(rec['tool'])} — {rec['package']}",
+            "tool_label": pretty(rec["tool"]),
             "installed": rec["installed"] or "—",
             "latest": rec["latest"] or "—",
             "update_available": rec["update_available"],
@@ -314,6 +323,7 @@ def check_bdtools_update():
         "installed": current or "—",
         "latest": f"{n} new commit(s)" if n else current or "—",
         "update_available": n > 0,
+        "kind": "suite",
     }
 
 

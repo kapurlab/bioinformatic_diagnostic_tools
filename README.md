@@ -477,11 +477,20 @@ bin/bdtools versions               # what you are running, per tool
 bin/bdtools update-packages <tool> # move its packages to the newest release
 ```
 
+**Order matters, and it is the order above.** `bdtools update <tool>` rewrites the
+pins in `tools.yml`; the bdtools self-update is `git pull --ff-only`, which restores
+that file to get a clean tree — so doing tools first silently discards the pin
+record. A tool rebuild should also run under the *new* install scripts, and step 3
+works from pins that step 1 can change.
+
 The dashboard does all three for you: every installed card shows the versions in
 use (`vSNP3 v0.4.36 · vsnp3 3.35`), and when something newer exists the banner
-offers **Install tool updates**, **Update analysis packages** and **Update
-bdtools** as separate buttons — they are different acts with different risk, so
-they are never the same button.
+offers them as separate numbered buttons, laid out left to right in the order to
+run them — **1 Update bdtools** → **2 Install tool updates** → **3 Update conda
+packages**. They are different acts with different risk, so they are never the same
+button. Each listed item names the tool it belongs to and what is moving, e.g.
+`vSNP3 — vsnp3 [conda package]: 3.35 → 3.36` versus `vSNP3 [app release]: v0.4.36 →
+v0.4.37`. Restart the dashboard after each step to load the new code.
 
 ### Analysis package versions
 

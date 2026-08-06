@@ -19,6 +19,9 @@
 #   databases named reference-DB requirements the installer stages (optional)
 #   packages  the ANALYSIS packages whose version a diagnostic user needs to know,
 #             pinned exactly:  [<channel>::<name>=<version>, ...]      (optional)
+#   packages_held  packages that a newer release exists for but THIS env cannot
+#             take (another package in the same env holds perl/zlib/libcurl down).
+#             Still shown, never offered as an update.               (optional)
 #
 # Why `packages` is pinned here and not left to each tool's environment.yml: those
 # floor-pin (`mlst>=2.23`) or leave the version open, so what you got depended on
@@ -30,6 +33,12 @@
 # The installer enforces these pins after building the env; the dashboard shows
 # installed-vs-newest per tool. Bump one deliberately (and re-run the install for
 # that tool) rather than letting a rebuild drift.
+#
+# A pin set must be JOINTLY SOLVABLE — verify before committing one:
+#     bin/bdtools update-packages <tool> --dry-run     (solves, installs nothing)
+# Pinning each package to the newest on its channel independently does NOT work in
+# a coupled env, and produced exactly that failure here: ncbi-amrfinderplus=4.2.7
+# with kraken2=2.17.1 and mlst=2.35.0 is unsatisfiable at any version of anything.
 #
 # All tools carry a baseline tag (vsnp_gui v0.2.0; the rest v0.1.0, cut
 # 2026-06-16). Bump a pin with `bdtools update <tool>` once newer tags exist.
@@ -53,7 +62,16 @@ tools:
     dev_apps: [amr_plus_gui_dev]
     env: amr_plus
     databases: [amrfinder_db]
-    packages: [bioconda::ncbi-amrfinderplus=4.2.7, bioconda::kraken2=2.17.1, bioconda::mlst=2.35.0]
+    # These three are the joint solution of this env's spec, confirmed with a
+    # fresh dry-run solve — not the newest of each. `mlst` transitively requires
+    # perl-bioperl -> perl-bio-samtools, which holds perl and zlib down, and that
+    # caps ncbi-amrfinderplus at 3.12.8 and kraken2 at 2.1.3 HERE. Newer exists
+    # (4.2.7 / 2.17.1) and both are shown, but neither can be installed into this
+    # env, so they are held rather than offered forever.
+    #   Dropping mlst from amr_plus would free both (mlst_gui has its own env with
+    #   mlst 2.35.0) — a change to the amr_plus_gui spec, not something to pin around.
+    packages: [bioconda::ncbi-amrfinderplus=3.12.8, bioconda::kraken2=2.1.3, bioconda::mlst=2.35.0]
+    packages_held: [ncbi-amrfinderplus, kraken2]
 
   - name: irma_gui
     repo: https://github.com/kapurlab/irma_gui.git

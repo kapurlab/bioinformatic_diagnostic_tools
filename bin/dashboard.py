@@ -115,7 +115,8 @@ class Suite:
                 "version": tool_checkout_version(name) if installed else "",
                 "packages": [
                     {"name": p["package"], "installed": p["installed"],
-                     "latest": p["latest"], "update_available": p["update_available"]}
+                     "latest": p["latest"], "update_available": p["update_available"],
+                     "held": p.get("held", False)}
                     for p in (pkgs.get(name, []) if installed else [])
                 ],
                 # ready is None when readiness is unknown (doctor unavailable or
@@ -538,6 +539,8 @@ addEventListener('storage',e=>{if(e.key===THEME_KEY)applyTheme(preferredTheme(),
  .vers .vtool{font-weight:650;color:var(--ink);opacity:.75}
  .vers .vsep{opacity:.45}
  .vers .vnew{color:#7a5a1e;background:#fbf1dc;border-radius:999px;padding:0 6px;font-weight:650}
+ .vers .vheld{color:var(--muted);background:var(--soft);border-radius:999px;padding:0 6px;
+              border:1px solid var(--line)}
  html[data-theme="dark"] .vers .vnew{color:#f0cf95;background:#3a3115}
  .dev{background:var(--danger-bg);border:1px solid var(--danger-line);border-radius:8px;padding:8px 10px;
    font-size:12px;color:var(--danger-ink)}
@@ -669,9 +672,14 @@ function versionBlock(t){
   if(t.version) bits.push(`<span class="vtool">${esc(t.version)}</span>`);
   for(const p of (t.packages||[])){
     if(!p.installed) continue;
+    // Held: a newer release exists but this env cannot take it (tools.yml records
+    // why). Shown as held rather than as an available update — a badge offering an
+    // upgrade that always fails is worse than no badge.
     const up = p.update_available
       ? ` <span class="vnew" title="newest on the channel: ${esc(p.latest)}">↑${esc(p.latest)}</span>`
-      : '';
+      : (p.held && p.latest && p.latest !== p.installed
+          ? ` <span class="vheld" title="${esc(p.latest)} exists but this environment cannot take it — see tools.yml">held</span>`
+          : '');
     bits.push(`${esc(p.name)} ${esc(p.installed)}${up}`);
   }
   if(!bits.length) return '';

@@ -88,6 +88,28 @@ def declared(tool_records=None):
     return out
 
 
+def held(tool_records=None):
+    """{tool: {package, ...}} that must NOT be offered as updates.
+
+    A package is held when a newer release exists but THIS env cannot take it —
+    typically because another package in the same env pins an older
+    perl/zlib/libcurl. amr_plus is the live example: `mlst` transitively holds
+    perl and zlib down, which caps ncbi-amrfinderplus at 3.12.8 and kraken2 at
+    2.1.3 in that env. Offering those upgrades produced a banner that could never
+    be satisfied and an update that always failed, which trains people to ignore
+    both. The version is still read and displayed — being held is not being hidden.
+    """
+    if tool_records is None:
+        _, tool_records = manifest.parse(MANIFEST)
+    out = {}
+    for rec in tool_records:
+        names = rec.get("packages_held") or []
+        if isinstance(names, str):
+            names = [names] if names else []
+        out[rec.get("name", "")] = {n.strip() for n in names if n.strip()}
+    return out
+
+
 # ----- the installed side -------------------------------------------------
 def env_dir_for(tool):
     """The env whose packages would ACTUALLY run this tool, or ''.
@@ -216,6 +238,7 @@ def report(tools=None, use_network=True):
     _, tool_records = manifest.parse(MANIFEST)
     wanted = set(tools) if tools else None
     specs = declared(tool_records)
+    holds = held(tool_records)
     cache = _load_cache()
     out = []
     for rec in tool_records:
@@ -230,11 +253,15 @@ def report(tools=None, use_network=True):
             inst = have.get(name, "")
             latest = latest_version(channel, name, cache=cache,
                                     use_network=use_network)
+            is_held = name in holds.get(tool, set())
             newer = is_newer(latest, inst) if inst else False
             if not env:
                 status = "not installed"
             elif not inst:
                 status = "declared but missing from the env"
+            elif newer and is_held:
+                status = f"held at {inst} (newer: {latest}; this env cannot take it)"
+                newer = False
             elif newer:
                 status = f"↑ {latest} available"
             elif not latest:
@@ -249,6 +276,7 @@ def report(tools=None, use_network=True):
                 "installed": inst,
                 "latest": latest,
                 "update_available": bool(newer),
+                "held": is_held,
                 "env": env,
                 "status": status,
                 # A pin that does not match what is installed means this env was

@@ -180,6 +180,35 @@ class ReportTests(unittest.TestCase):
                 self.assertTrue(channel and name, f"{tool}: malformed spec")
                 self.assertTrue(version, f"{tool}/{name} is not pinned to a version")
 
+    def test_held_packages_are_declared_for_a_tool_that_declares_them(self):
+        # Every held name must also be a declared package, or the hold is a typo
+        # that silently does nothing — and the update it was meant to suppress
+        # comes back.
+        declared = PKG.declared()
+        for tool, names in PKG.held().items():
+            for name in names:
+                self.assertIn(name, {n for _c, n, _v in declared.get(tool, [])},
+                              f"{tool}: held package {name!r} is not declared")
+
+    def test_a_held_package_is_shown_but_not_offered(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            meta = Path(tmp) / "conda-meta"
+            meta.mkdir()
+            (meta / "ncbi-amrfinderplus-3.12.8-hf69ffd2_0.json").touch()
+            with mock.patch.object(PKG, "env_dir_for", return_value=tmp), \
+                 mock.patch.object(PKG, "latest_version", return_value="4.2.7"), \
+                 mock.patch.object(PKG, "_save_cache", lambda cache: None):
+                records = PKG.report(["amr_plus_gui"], use_network=True)
+        rec = next(r for r in records if r["package"] == "ncbi-amrfinderplus")
+        # The newer version is still reported — held is not hidden.
+        self.assertEqual(rec["latest"], "4.2.7")
+        self.assertEqual(rec["installed"], "3.12.8")
+        self.assertTrue(rec["held"])
+        # ...but it must not be offered, or the banner nags forever and the update
+        # fails every time it is clicked.
+        self.assertFalse(rec["update_available"])
+        self.assertIn("held", rec["status"])
+
 
 class UpdateScopeTests(unittest.TestCase):
     """A package update changes the env a running tool server executes from."""

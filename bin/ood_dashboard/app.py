@@ -222,7 +222,8 @@ class Suite:
                         "packages": [
                             {"name": p["package"], "installed": p["installed"],
                              "latest": p["latest"],
-                             "update_available": p["update_available"]}
+                             "update_available": p["update_available"],
+                             "held": p.get("held", False)}
                             for p in packages.get(name, [])
                         ] if installed else []})
         return out

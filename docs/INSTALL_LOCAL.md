@@ -80,11 +80,24 @@ of them.
 > you'd have to forward one port per tool and each tool then remembers its own
 > theme separately. Installing any tool pulls those three in.
 
-**Lifecycle / re-opening after a restart.** The dashboard runs while its window
-is open; restarting your computer stops it (normal). To bring it back, **macOS
-users can double-click `Open Dashboard.command`** in the repo folder (first time:
-right-click → Open to clear the one-time security prompt; drag it to the Dock for
-one-click access). Anyone can instead `cd` into the folder and run
+**Lifecycle / re-opening after a restart.** Restarting your computer stops the
+dashboard (normal). Give users a real launcher once, at the end of the install:
+
+```bash
+bin/bdtools make-launcher              # add --dest ~/Desktop on Linux for a desktop copy
+```
+
+macOS gets `Kapur Lab Dashboard.app` on the Desktop (icon, no Terminal window, no
+Gatekeeper prompt — it was generated locally, so it is not quarantined); Linux and
+WSL get an applications-menu entry. It can be moved anywhere, since the install
+path is baked in — re-run the command after moving or reinstalling the suite. The
+dashboard it starts is detached, so quitting the launcher cannot interrupt a run;
+users stop it with **Shut down** in the browser. Failures are logged to
+`~/Library/Logs/bdtools/dashboard.log` (macOS) or
+`~/.local/state/bdtools/dashboard.log`, and raise a dialog.
+
+`Open Dashboard.command` in the repo folder still works for macOS, with a Terminal
+window alongside. Anyone can instead `cd` into the folder and run
 `bin/bdtools dashboard` again. Running it when it's already up just re-opens the
 browser tab — it won't start a second copy.
 

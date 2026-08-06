@@ -32,6 +32,10 @@ on its own, so you can jump to the tool you need.
 
 Everything starts from the dashboard — a home page listing your installed tools.
 
+- **Desktop launcher (if one was made for you):** double-click
+  **Kapur Lab Dashboard** — on your Desktop (macOS) or in your applications menu
+  (Linux/WSL). No terminal window appears; your browser just opens. If you don't
+  have it yet, run `bin/bdtools make-launcher` once, **or**
 - **macOS:** double-click **`Open Dashboard.command`** in the
   `bioinformatic_diagnostic_tools` folder, **or**
 - **Any system (Terminal):**

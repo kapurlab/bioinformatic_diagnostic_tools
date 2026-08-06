@@ -63,8 +63,10 @@ bin/bdtools test all             # validate against known samples (PASS/FAIL/SKI
 > ✅ **When it finishes**, the installer prints where your tools live and opens
 > the **dashboard** in your browser automatically at **http://127.0.0.1:8080/** —
 > pick a tool and it opens in a tab. **Keep that window open while you work.**
-> Re-open it any time by double-clicking **`Open Dashboard.command`** in the repo
-> folder (macOS), or running `bin/bdtools dashboard`. To launch just one tool:
+> For a proper double-click launcher with an icon (and no terminal window at all),
+> run **`bin/bdtools make-launcher`** once — it puts *Kapur Lab Dashboard* on your
+> Desktop (macOS) or in your applications menu (Linux/WSL). Otherwise re-open the
+> dashboard with `bin/bdtools dashboard`. To launch just one tool:
 > `bin/bdtools local vsnp_gui --port 8080`, then open http://127.0.0.1:8080/.
 
 > 🩺 **If `install all` reports a problem** — computing environments differ, so
@@ -105,11 +107,25 @@ a tool and it opens in a new tab. That's it.
 Restarting your computer stops the dashboard — this is normal, nothing broke.
 To get it back, pick whichever is easiest:
 
-- **Easiest (macOS / double-click):** open the `bioinformatic_diagnostic_tools`
-  folder and double-click **`Open Dashboard.command`**. Your browser opens to the
-  dashboard again. *(The very first time on macOS, right-click the file → **Open**
-  → **Open** to get past a one-time security prompt. After that, double-click
-  works. Tip: drag it to your Dock or Desktop for one-click access.)*
+- **Easiest (double-click, recommended):** make yourself a real launcher once:
+
+  ```bash
+  bin/bdtools make-launcher
+  ```
+
+  On macOS that creates **Kapur Lab Dashboard.app** on your Desktop: double-click
+  it and your browser opens, with **no terminal window** and no security prompt.
+  On Linux/WSL it adds *Kapur Lab Dashboard* to your applications menu (add
+  `--dest ~/Desktop` for a desktop copy too). You can move it wherever you like —
+  Dock, Desktop, `/Applications` — because it remembers where the tools are
+  installed. Re-run the command if you ever move or reinstall the tools.
+
+  The dashboard it starts keeps running after the launcher exits, so quitting the
+  app can never interrupt an analysis. Stop it with **Shut down** in the browser.
+- **Or the plain script (macOS):** double-click **`Open Dashboard.command`** in
+  the repo folder. This still works, but it opens a Terminal window alongside the
+  dashboard, and the first time you must right-click → **Open** → **Open** to
+  clear a one-time security prompt.
 - **Or type one line** (Terminal on macOS/Linux, or your WSL window):
   ```bash
   cd ~/bioinformatic_diagnostic_tools   # the folder you installed into
@@ -594,7 +610,19 @@ v0.2.1+.
 
 **Nothing happens when I double-click `Open Dashboard.command` (macOS).** The
 first time, right-click it → **Open** → **Open** to clear the one-time security
-prompt; after that a normal double-click works.
+prompt; after that a normal double-click works. Or skip that file altogether and
+run `bin/bdtools make-launcher` — the app it generates is not quarantined, so it
+opens on the first double-click.
+
+**I copied `Open Dashboard.command` to my Desktop and now it does nothing.** That
+file only works from inside the repo folder: it starts the dashboard from whatever
+folder it is sitting in. `bin/bdtools make-launcher` builds a launcher that can be
+moved anywhere, because the install location is written into it.
+
+**The launcher app opens nothing and shows no error.** It logs every launch to
+`~/Library/Logs/bdtools/dashboard.log` (macOS) or
+`~/.local/state/bdtools/dashboard.log` (Linux/WSL); the reason is at the end of
+that file. It also raises a dialog when the dashboard fails to answer within 60s.
 
 ## How it relates to the tool repos
 

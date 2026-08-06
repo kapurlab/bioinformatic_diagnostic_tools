@@ -73,9 +73,10 @@ def _host_allowed(header):
 # (bin/ood_dashboard/app.py) so the two can never drift apart.
 sys.path.insert(0, str(BIN_DIR / "lib"))
 from suite_common import (  # noqa: E402
-    BLURB, CAVEAT, pretty, free_port, port_open, list_tools,
+    BLURB, CAVEAT, pretty, free_port, port_open, list_tools, update_scope,
     tool_python, readiness_map, check_tool_updates, check_bdtools_update,
     write_dashboard_state, remove_dashboard_state, suite_update_command,
+    tool_checkout_version, package_map, package_update_records,
 )
 
 
@@ -98,6 +99,7 @@ class Suite:
 
     def refresh(self):
         ready = readiness_map()
+        pkgs = package_map(use_network=False)
         tools = []
         for name in list_tools():
             installed = tool_python(name) is not None
@@ -108,6 +110,14 @@ class Suite:
                 "blurb": BLURB.get(name, ""),
                 "caveat": CAVEAT.get(name, ""),
                 "installed": installed,
+                # The versions actually in use: GUI release + analysis packages.
+                # Filesystem-only (git describe + conda-meta), no network.
+                "version": tool_checkout_version(name) if installed else "",
+                "packages": [
+                    {"name": p["package"], "installed": p["installed"],
+                     "latest": p["latest"], "update_available": p["update_available"]}
+                    for p in (pkgs.get(name, []) if installed else [])
+                ],
                 # ready is None when readiness is unknown (doctor unavailable or
                 # tool has no spec); the UI only badges an explicit False.
                 "ready": (r["ok"] if r else None) if installed else None,
@@ -291,13 +301,13 @@ class Suite:
     def prepare_update(self, target):
         if target == "bdtools":
             return {"safe": True, "active": [], "errors": []}
-        names = set(self.running) if target == "all" else {target}
+        names, marks = update_scope(target, self.running)
         snapshot = self.begin_quiesce(names)
         if not snapshot["safe"]:
             return snapshot
         self.stop_backends(names)
         with self.lock:
-            self.updating = {"*"} if target == "all" else {target}
+            self.updating = marks
             self.quiescing = False
         return snapshot
 
@@ -317,6 +327,10 @@ class Suite:
             if bd:
                 items.append(bd)
             items.extend(check_tool_updates())
+            # Analysis packages too (see suite_common.package_update_records): a
+            # new bioconda release does not move any git tag, so the tool checks
+            # above cannot see it.
+            items.extend(package_update_records())
             cache = {
                 "checked": True,
                 "items": items,
@@ -372,6 +386,15 @@ class Suite:
             # Shared with the proxy dashboard's UpdateManager so the two update
             # paths can never disagree about refusing a dirty checkout.
             cmd = suite_update_command(self._log)
+        elif target.startswith("packages:"):
+            # The analysis packages inside an env, not the GUI checkout. See
+            # bin/update-packages.sh: it re-applies local patches afterwards, which
+            # a plain conda install would silently drop.
+            scope = target.split(":", 1)[1]
+            cmd = [BDTOOLS, "update-packages", scope]
+            self._log(f"$ bdtools update-packages {scope}")
+            self._log("Installing into the tool's conda env — the solve can take "
+                      "several minutes…")
         else:
             cmd = [BDTOOLS, "update", target]
             self._log(f"$ bdtools update {target}")
@@ -510,6 +533,12 @@ addEventListener('storage',e=>{if(e.key===THEME_KEY)applyTheme(preferredTheme(),
    font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;
    user-select:all;word-break:break-all}
  .plat{font-size:12px;color:var(--muted);font-style:italic}
+ .vers{font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums;
+       display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin-top:2px}
+ .vers .vtool{font-weight:650;color:var(--ink);opacity:.75}
+ .vers .vsep{opacity:.45}
+ .vers .vnew{color:#7a5a1e;background:#fbf1dc;border-radius:999px;padding:0 6px;font-weight:650}
+ html[data-theme="dark"] .vers .vnew{color:#f0cf95;background:#3a3115}
  .dev{background:var(--danger-bg);border:1px solid var(--danger-line);border-radius:8px;padding:8px 10px;
    font-size:12px;color:var(--danger-ink)}
  .dev b{color:var(--danger-ink)}
@@ -629,6 +658,25 @@ function devBlock(t){
   if(!t.caveat) return '';
   return `<div class="dev"><b>⚠ Development status:</b> ${esc(t.caveat)}</div>`;
 }
+function versionBlock(t){
+  // What is actually running: the GUI release, then the analysis packages that
+  // produce the results. Shown on every installed card, always — not only when an
+  // update exists. "Which vsnp3 wrote this report?" is a question a diagnostic user
+  // has to be able to answer from the tool itself, and it used to require listing
+  // conda-meta by hand.
+  if(!t.installed) return '';
+  const bits = [];
+  if(t.version) bits.push(`<span class="vtool">${esc(t.version)}</span>`);
+  for(const p of (t.packages||[])){
+    if(!p.installed) continue;
+    const up = p.update_available
+      ? ` <span class="vnew" title="newest on the channel: ${esc(p.latest)}">↑${esc(p.latest)}</span>`
+      : '';
+    bits.push(`${esc(p.name)} ${esc(p.installed)}${up}`);
+  }
+  if(!bits.length) return '';
+  return `<div class="vers">${bits.join('<span class="vsep">·</span>')}</div>`;
+}
 // tool -> launch-time warning. Kept OUTSIDE load() so it survives the 5s
 // re-render: a missing vendored dependency only bites once an analysis runs, so a
 // message that flashes and vanishes is worse than none.
@@ -652,6 +700,7 @@ async function load(){
       ${devBlock(t)}
       ${setupBlock(t)}
       ${noteBlock(t)}
+      ${versionBlock(t)}
       <div class="row">
         ${pill}
         <button ${(t.installed&&!t.updating)?'':'disabled'} data-tool="${t.name}" class="${t.running?'open':''}">
@@ -709,10 +758,18 @@ function renderUpdates(d){
   }
   box.className='updates avail';
   const bd = avail.find(i=>i.name==='bdtools');
-  const toolUps = avail.filter(i=>i.name!=='bdtools');
-  const li = avail.map(i=>`<li><b>${esc(i.label)}</b>: ${esc(i.installed)} → <b>${esc(i.latest)}</b></li>`).join('');
+  // Three kinds of update, three buttons. A tool update moves the GUI checkout to
+  // a new release tag and rebuilds; a package update changes the analysis software
+  // inside an existing env (vsnp3, AMRFinderPlus, kraken2 …). Same banner, but they
+  // are not interchangeable, so they are never applied by the same button.
+  const pkgUps  = avail.filter(i=>i.kind==='package');
+  const toolUps = avail.filter(i=>i.name!=='bdtools' && i.kind!=='package');
+  const li = avail.map(i=>`<li><b>${esc(i.label)}</b>: ${esc(i.installed)} → <b>${esc(i.latest)}</b>`
+    + (i.kind==='package' ? ' <span style="opacity:.7">(conda package)</span>' : '')
+    + `</li>`).join('');
   let actions = '';
   if(toolUps.length) actions += `<button class="u" onclick="applyUpdates('all',this)">Install tool updates (${toolUps.length})</button>`;
+  if(pkgUps.length)  actions += `<button class="u" onclick="applyUpdates('packages:all',this)">Update analysis packages (${pkgUps.length})</button>`;
   if(bd) actions += `<button class="u" onclick="applyUpdates('bdtools',this)">Update bdtools</button>`;
   actions += `<button class="link" onclick="checkUpdates(true)">Re-check</button>`;
   box.innerHTML = `<div class="uhead"><span class="utitle">↑ Updates available (${avail.length})</span>`
@@ -992,7 +1049,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/apply-updates":
             target = (parse_qs(parsed.query).get("target") or ["all"])[0]
-            valid = {"all", "bdtools"} | {t["name"] for t in SUITE.tools}
+            names = {t["name"] for t in SUITE.tools}
+            valid = ({"all", "bdtools", "packages:all"} | names
+                     | {f"packages:{n}" for n in names})
             if target not in valid:
                 self._send(400, json.dumps({"error": f"unknown update target: {target}"}))
                 return

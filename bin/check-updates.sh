@@ -197,4 +197,22 @@ if [[ ${APPLY} -eq 1 ]]; then
   fi
 else
   while read -r n; do [[ -n "$n" ]] && report_one "$n"; done < <(targets)
+  # The lines above compare each GUI CHECKOUT against its newest release tag. That
+  # says nothing about the analysis packages inside the envs — a new bioconda vsnp3
+  # does not move a vsnp_gui tag — so report those too, from the same command.
+  # Deliberately printed without a "pinned=" field: the dashboard's line parser
+  # keys on that, so these lines stay out of the tool-update list and are picked up
+  # via packages.py instead.
+  pkg_out="$("${PYBIN}" "${KT_BIN_DIR}/lib/packages.py" \
+             $([[ "${TARGET}" != "all" ]] && echo "${TARGET}") 2>/dev/null || true)"
+  if [[ -n "${pkg_out}" ]]; then
+    echo
+    echo "Analysis packages (conda; what actually produced your results):"
+    printf '%s\n' "${pkg_out}"
+    if printf '%s' "${pkg_out}" | grep -q '↑'; then
+      echo
+      info "Update the packages for one tool (re-applies local patches, bumps the pin):"
+      info "    bin/bdtools update-packages <tool>"
+    fi
+  fi
 fi

@@ -201,6 +201,11 @@ class Suite:
     def _discover(self):
         out = []
         _, tools = manifest.parse(_MANIFEST)
+        # Versions for the card footer: the GUI release and the analysis packages
+        # that actually produced a user's results. Read from the filesystem (git
+        # describe + conda-meta), no network, so this stays cheap enough to run on
+        # every discovery pass. The channel comparison is the update check's job.
+        packages = sc.package_map(use_network=False)
         for t in tools:
             name = t.get("name")
             if not name:
@@ -212,7 +217,14 @@ class Suite:
                 installed = False
             out.append({"name": name, "label": pretty(name),
                         "blurb": BLURB.get(name, ""), "caveat": CAVEAT.get(name, ""),
-                        "installed": installed})
+                        "installed": installed,
+                        "version": sc.tool_checkout_version(name) if installed else "",
+                        "packages": [
+                            {"name": p["package"], "installed": p["installed"],
+                             "latest": p["latest"],
+                             "update_available": p["update_available"]}
+                            for p in packages.get(name, [])
+                        ] if installed else []})
         return out
 
     async def _start_tool(self, name):
@@ -416,13 +428,13 @@ class Suite:
     async def prepare_update(self, target):
         if target == "bdtools":
             return {"safe": True, "active": [], "errors": []}
-        names = set(self.running) if target == "all" else {target}
+        names, marks = sc.update_scope(target, self.running)
         snapshot = await self.begin_quiesce(names)
         if not snapshot["safe"]:
             return snapshot
         await self.stop_backends(names)
         async with self.lock:
-            self.updating = {"*"} if target == "all" else {target}
+            self.updating = marks
             self.quiescing = False
         return snapshot
 
@@ -702,7 +714,9 @@ async def api_restart(request):
 
 # ----- updates + readiness (local mode only) -----
 def _valid_targets():
-    return {"all", "bdtools"} | {t["name"] for t in SUITE.tools}
+    tools = {t["name"] for t in SUITE.tools}
+    return ({"all", "bdtools", "packages:all"} | tools
+            | {f"packages:{t}" for t in tools})
 
 
 async def api_updates(request):

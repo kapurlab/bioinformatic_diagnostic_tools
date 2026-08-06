@@ -10,7 +10,7 @@ experience across environments.
 ```
 bioinformatic_diagnostic_tools/
 ├── tools.yml          the suite manifest — each tool repo + pinned version
-├── bin/bdtools     the CLI (install | local | status | check-updates | update)
+├── bin/bdtools     the CLI (install | local | status | versions | check-updates | update)
 ├── sites/             per-site config for OOD server installs (site.conf)
 ├── ood-core/          optional OOD-core bootstrap for bare-metal lab servers
 └── docs/              per-environment runbooks + sysadmin guide
@@ -456,7 +456,7 @@ brand-new lab server from bare metal, with no OOD yet? Start at
 
 ## Updating
 
-Two things update independently — run these from your
+Three things update independently — run these from your
 `bioinformatic_diagnostic_tools` checkout, in this order:
 
 ```bash
@@ -469,7 +469,41 @@ git pull
 # 2. The individual tools — each tool repo, moved to its newest tag:
 bin/bdtools check-updates          # report newer upstream versions (read-only)
 bin/bdtools update <tool|all>      # move to the newest tag + rebuild
+
+# 3. The ANALYSIS packages inside each tool's conda env — vsnp3, AMRFinderPlus,
+#    kraken2, mlst, IRMA, GenoFLU. A new bioconda release of these does NOT move
+#    any tool tag, so step 2 cannot see it:
+bin/bdtools versions               # what you are running, per tool
+bin/bdtools update-packages <tool> # move its packages to the newest release
 ```
+
+The dashboard does all three for you: every installed card shows the versions in
+use (`vSNP3 v0.4.36 · vsnp3 3.35`), and when something newer exists the banner
+offers **Install tool updates**, **Update analysis packages** and **Update
+bdtools** as separate buttons — they are different acts with different risk, so
+they are never the same button.
+
+### Analysis package versions
+
+`tools.yml` pins each analysis package exactly
+(`packages: [bioconda::vsnp3=3.35, …]`), and the installer enforces those pins
+after building an env. This matters because the tools' own `environment.yml`
+files floor-pin (`mlst>=2.23`) or leave the version open, so before pinning, the
+version you got depended on the day you built — the same suite release produced
+mlst 2.33.1 on one machine and 2.35.0 on another.
+
+`bdtools versions` reports installed-vs-newest per tool, reading the installed
+version from `conda-meta` (instant, no conda solve) and the newest from
+`api.anaconda.org` (one request per package, cached 6h, and reported as *unknown*
+rather than "up to date" when the network is unavailable). It reads the env that
+would **actually run** each tool, which is not always `<checkout>/env`.
+
+`update-packages` installs the newest version, then **re-applies that tool's local
+patches** and bumps the pin. The re-apply is why this is a command and not a
+hand-run `conda install`: vsnp_gui carries Kapur Lab patches over the packaged
+vsnp3 (the minus-strand annotation fix among them) and a fresh package overwrites
+the patched files. Losing that silently changes results. Commit the updated
+`tools.yml` to move the whole site to the version you just validated.
 
 Pull the repo first, then `bin/bdtools update`, so any new install-script behavior
 is in effect when tools rebuild. On local (macOS/Linux) installs, launching a GUI

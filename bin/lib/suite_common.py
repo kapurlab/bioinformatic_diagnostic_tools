@@ -199,6 +199,85 @@ def _parse_update_line(line):
     }
 
 
+def tool_checkout_version(name):
+    """`git describe` of a tool's checkout, or '' — the GUI version in use."""
+    try:
+        import tool_launch
+        directory = tool_launch.tool_dir(name)
+    except Exception:
+        return ""
+    if not os.path.isdir(os.path.join(directory, ".git")):
+        return ""
+    try:
+        out = subprocess.run(["git", "-C", directory, "describe", "--tags", "--always"],
+                             capture_output=True, text=True, timeout=10)
+        return out.stdout.strip() if out.returncode == 0 else ""
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def package_report(use_network=True, tools=None):
+    """Analysis-package versions per tool ([] if anything goes wrong).
+
+    Imported lazily and defensively: the version panel is nice to have, and a
+    dashboard that will not render because a version lookup raised would be a
+    strictly worse dashboard.
+    """
+    try:
+        import packages
+        return packages.report(tools=tools, use_network=use_network)
+    except Exception:
+        return []
+
+
+def package_map(use_network=True):
+    """{tool: [package record, ...]} for the card display."""
+    out = {}
+    for rec in package_report(use_network=use_network):
+        out.setdefault(rec["tool"], []).append(rec)
+    return out
+
+
+def package_update_records():
+    """Package updates in the same shape as the tool-update records.
+
+    The banner already knows how to render {name,label,installed,latest,
+    update_available}; giving package updates the same shape means one list, one
+    renderer, and no second notification mechanism to keep in step. `kind` and
+    `tool` let the apply path tell them apart.
+    """
+    recs = []
+    for rec in package_report():
+        recs.append({
+            "name": f"{rec['tool']}:{rec['package']}",
+            "label": f"{rec['package']} (in {pretty(rec['tool'])})",
+            "installed": rec["installed"] or "—",
+            "latest": rec["latest"] or "—",
+            "update_available": rec["update_available"],
+            "kind": "package",
+            "tool": rec["tool"],
+            "package": rec["package"],
+        })
+    return recs
+
+
+def update_scope(target, running):
+    """Which tool names an update target touches, and the label for the cards.
+
+    "packages:<tool>" changes the conda env a running tool server is executing
+    from, so that server must be stopped exactly like a tool update stops it —
+    treating the target as an unknown tool name (which is what a naive
+    `{target}` does) would leave it running against a half-swapped env.
+    """
+    if target.startswith("packages:"):
+        scope = target.split(":", 1)[1]
+    else:
+        scope = target
+    if scope == "all":
+        return set(running), {"*"}
+    return {scope}, {scope}
+
+
 def check_tool_updates():
     """Run `bdtools check-updates all`; return per-tool update records ([] on error)."""
     try:
@@ -374,6 +453,11 @@ class UpdateManager:
             if bd:
                 items.append(bd)
             items.extend(check_tool_updates())
+            # Analysis packages (vsnp3, AMRFinderPlus, kraken2, …) are checked in
+            # the same pass and reported in the same list. A new bioconda release
+            # used to be invisible here: the tool checks compare git tags, and a
+            # tool tag does not move when the science underneath it does.
+            items.extend(package_update_records())
             cache = {"checked": True, "items": items,
                      "any": any(i["update_available"] for i in items)}
         except Exception as exc:
@@ -400,7 +484,8 @@ class UpdateManager:
 
     # --- applying ----------------------------------------------------------
     def apply(self, target, valid_targets):
-        """Start a background update of `target` ('all', 'bdtools', or a tool)."""
+        """Start a background update of `target` ('all', 'bdtools', a tool, or
+        'packages:<tool|all>')."""
         if target not in valid_targets:
             return False, f"unknown update target: {target}"
         with self.lock:
@@ -423,6 +508,16 @@ class UpdateManager:
         cmd = None
         if target == "bdtools":
             cmd = suite_update_command(self._log)
+        elif target.startswith("packages:"):
+            # "packages:<tool>" or "packages:all" — update the analysis packages in
+            # a tool's env to the newest on their channel. A separate command, not
+            # `update <tool>`: that one moves the GUI checkout to a new tag and
+            # rebuilds, which is a different act with different risks.
+            scope = target.split(":", 1)[1]
+            cmd = [BDTOOLS, "update-packages", scope]
+            self._log(f"$ bdtools update-packages {scope}")
+            self._log("Installing into the tool's conda env — the solve can take "
+                      "several minutes…")
         else:
             cmd = [BDTOOLS, "update", target]
             self._log(f"$ bdtools update {target}")

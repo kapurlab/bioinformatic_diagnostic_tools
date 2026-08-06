@@ -13,7 +13,10 @@
 #                     [--restart|--stop] restart (after a pull) or stop it + tools
 #   bdtools make-launcher [--dest DIR]   double-clickable desktop launcher (icon,
 #                                        no terminal window) for the dashboard
+#   bdtools versions [tool ...]          show the analysis package versions in use
 #   bdtools check-updates [tool|all]    report newer upstream versions
+#   bdtools update-packages <tool|all>  move a tool's analysis packages (vsnp3,
+#                                       AMRFinderPlus, …) to the newest release
 #   bdtools update  <tool|all> [opts]   move a tool to its latest version
 #   bdtools site-init [opts]            one-time bare-metal site bootstrap
 #   bdtools setup-databases [opts]      download shared reference DBs + wire the GUIs
@@ -682,6 +685,13 @@ cmd_dashboard() {
 
 cmd_check_updates() { "${KT_BIN_DIR}/check-updates.sh" "${1:-all}"; }
 
+# Which analysis package versions are actually in use, per tool, and whether the
+# channel has newer ones. Separate from `status` (which reports GUI checkouts)
+# because "what produced this report?" is a question about the science packages.
+cmd_versions() { _need_python; "${PYBIN}" "${KT_BIN_DIR}/lib/packages.py" "$@"; }
+
+cmd_update_packages() { "${KT_BIN_DIR}/update-packages.sh" "$@"; }
+
 cmd_update() {
   # `update --help` used to reach the manifest lookup and report
   # "no tool named '--help'", which reads like the user's mistake rather than a
@@ -735,6 +745,8 @@ main() {
     dashboard)          cmd_dashboard "$@";;
     make-launcher)      cmd_make_launcher "$@";;
     check-updates)      cmd_check_updates "$@";;
+    versions)           cmd_versions "$@";;
+    update-packages)    cmd_update_packages "$@";;
     update)             cmd_update "$@";;
     site-init)          cmd_site_init "$@";;
     setup-databases)    cmd_setup_databases "$@";;

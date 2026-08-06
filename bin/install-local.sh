@@ -672,6 +672,59 @@ build() {
     info "  Run it on an OOD deployment: 'bdtools install --sandbox ${TOOL}' (user) or '--server' (admin)."
     exit 3
   fi
+  enforce_package_pins
+}
+
+# The manifest's `packages:` pins, applied to the env we just built.
+#
+# Every tool's own spec leaves these versions open (`mlst>=2.23`, plain `vsnp3`),
+# so what a build produced depended on the day it ran — this suite release has
+# already yielded mlst 2.33.1 on one machine and 2.35.0 on another. The manifest
+# pin is the site's answer, so enforce it here rather than hoping.
+#
+# Guarded by a comparison against conda-meta so the common case costs nothing: a
+# conda install that is already satisfied still runs a full solve, which would add
+# minutes to every build. Never fatal — a pin that cannot be met is worth a loud
+# warning, not a failed install of an otherwise working tool.
+enforce_package_pins() {
+  local specs; specs="$(manifest_get "${TOOL}" packages 2>/dev/null || true)"
+  [[ -n "${specs}" ]] || return 0
+  local envdir="${DIR}/env"
+  [[ -x "${envdir}/bin/python" ]] || return 0
+
+  local wanted=() spec pkg ver have
+  for spec in ${specs}; do
+    pkg="${spec##*::}"; ver="${pkg#*=}"; pkg="${pkg%%=*}"
+    [[ -n "${ver}" && "${ver}" != "${pkg}" ]] || continue
+    have="$(ls "${envdir}/conda-meta" 2>/dev/null \
+            | sed -n "s/^${pkg}-\([^-]*\)-[^-]*\.json$/\1/p" | head -1)"
+    if [[ "${have}" == "${ver}" ]]; then
+      ok "${TOOL}: ${pkg} ${ver} (pinned)"
+    else
+      wanted+=("${pkg}=${ver}")
+      [[ -n "${have}" ]] && info "  ${TOOL}: ${pkg} ${have} installed, manifest pins ${ver}"
+    fi
+  done
+  [[ ${#wanted[@]} -gt 0 ]] || return 0
+
+  local conda; conda="$(detect_conda 2>/dev/null || true)"
+  if [[ -z "${conda}" ]]; then
+    warn "${TOOL}: cannot enforce package pins (${wanted[*]}) — conda not found"
+    return 0
+  fi
+  with_progress "${TOOL}: pinning analysis packages (${wanted[*]})" \
+    _conda_step "${envdir}" "${conda}" install -y -p "${envdir}" \
+      -c conda-forge -c bioconda "${wanted[@]}" \
+    || { warn "${TOOL}: could not install the pinned versions (${wanted[*]})."
+         info "  The env is usable, but not the version tools.yml records."
+         info "  See what you have:  bin/bdtools versions ${TOOL}"
+         return 0; }
+  # A package install overwrites patched files; re-apply. Same reason
+  # update-packages.sh does it, and the same consequence if it is skipped.
+  if [[ -x "${DIR}/deploy/vsnp3-patches/apply.sh" ]]; then
+    run "${DIR}/deploy/vsnp3-patches/apply.sh" "${envdir}" \
+      || warn "${TOOL}: patches did not re-apply after pinning — run bin/bdtools doctor ${TOOL}"
+  fi
 }
 
 # Non-dying check: is a usable python env already present?

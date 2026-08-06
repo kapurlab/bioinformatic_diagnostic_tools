@@ -507,6 +507,27 @@ version from `conda-meta` (instant, no conda solve) and the newest from
 rather than "up to date" when the network is unavailable). It reads the env that
 would **actually run** each tool, which is not always `<checkout>/env`.
 
+**Changing a pin? Verify it first.** A pin can be wrong in two ways nothing offline
+catches — jointly unsatisfiable, or installable on your machine and impossible on
+someone else's:
+
+```bash
+bin/bdtools update-packages all --check-pins     # real solve per platform; minutes
+```
+
+Default targets are `linux-64,osx-64,osx-arm64`. Both pin mistakes this suite has
+made would have been caught by it: `ncbi-amrfinderplus=4.2.7 + kraken2=2.17.1 +
+mlst=2.35.0` is unsatisfiable together, and `mlst 2.34+` is *noarch* yet cannot be
+installed on macOS at all because it depends on `libxcrypt1`, which has no macOS
+build. **noarch does not mean portable.**
+
+**"Cannot be updated" is not an error.** When a newer version exists but cannot be
+installed here — wrong platform, or it conflicts with the environment — the tools
+keep working on what they have, the reason is printed in one line, the version is
+recorded so it is not offered again until a newer release appears, and the command
+**exits 0**. Only real breakage (an install that dies after a successful solve,
+patches that fail to re-apply) is reported as a failure.
+
 `update-packages` installs the newest version, then **re-applies that tool's local
 patches** and bumps the pin. The re-apply is why this is a command and not a
 hand-run `conda install`: vsnp_gui carries Kapur Lab patches over the packaged

@@ -879,8 +879,12 @@ async function pollUpdate(){
       if(s.done){
         updatePolling=false;
         if(done) done.innerHTML = s.ok
-          ? '✅ Updates installed. Use <b>Restart dashboard</b> above to load the new versions.'
-          : '⚠ Update finished with errors — see the log above.';
+          // Neutral on purpose: a run can finish correctly having installed
+          // nothing, because it worked out that an update cannot be applied here.
+          // Calling that "errors" taught people to ignore the word.
+          ? '✅ Finished — see the log above. If anything was installed, use '
+            + '<b>Restart dashboard</b> to load it.'
+          : '⚠ Something went wrong — see the log above.';
         return;
       }
     }catch(e){}

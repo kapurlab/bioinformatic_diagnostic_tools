@@ -296,16 +296,65 @@ class PinStabilityTests(unittest.TestCase):
 
 
 class PinPlatformTests(unittest.TestCase):
-    def test_pinned_mlst_is_the_version_that_exists_on_macos_too(self):
-        # mlst 2.34.0 and 2.35.0 are noarch yet depend on libxcrypt1, which has no
-        # macOS build, so pinning them breaks every Mac install. 2.33.1 is the newest
-        # that solves on both (verified with a --platform osx-64 dry-run solve).
+    """Versions verified NOT to exist on every deployed platform.
+
+    Offline guard against re-pinning a known-bad version. It rejects only versions
+    that have been checked and found impossible somewhere, so a legitimate future
+    bump (say an mlst that drops the libxcrypt1 dependency) still passes. The real
+    gate is a solve per platform, which needs the network and minutes:
+
+        bin/bdtools update-packages all --check-pins
+
+    Extend this map whenever that gate finds another one.
+    """
+
+    KNOWN_UNAVAILABLE = {
+        # noarch, but depends on libxcrypt1 — which has no macOS build at all.
+        "mlst": {"2.34.0", "2.35.0"},
+    }
+
+    def test_no_pin_uses_a_version_known_to_be_unavailable_somewhere(self):
         for tool, specs in PKG.declared().items():
             for _channel, name, version in specs:
-                if name == "mlst":
-                    self.assertEqual(
-                        version, "2.33.1",
-                        f"{tool}: mlst {version} is not installable on macOS")
+                bad = self.KNOWN_UNAVAILABLE.get(name, set())
+                self.assertNotIn(
+                    version, bad,
+                    f"{tool}: {name} {version} cannot be installed on every "
+                    f"platform the lab deploys to (run --check-pins)")
+
+    def test_the_pin_gate_exists_and_is_documented(self):
+        script = (ROOT / "bin/update-packages.sh").read_text(encoding="utf-8")
+        self.assertIn("--check-pins", script)
+        self.assertIn("CONDA_OVERRIDE_OSX", script,
+                      "foreign-platform solves need this or they fail on __osx")
+        self.assertIn("osx-arm64", script, "Apple Silicon must be a checked target")
+
+
+class SeverityTests(unittest.TestCase):
+    """"Cannot be done" is not "went wrong"."""
+
+    def setUp(self):
+        self.script = (ROOT / "bin/update-packages.sh").read_text(encoding="utf-8")
+
+    def test_an_unsolvable_set_is_blocked_not_failed(self):
+        block = self.script[self.script.index("local _blockwhy="):
+                            self.script.index("the set solves")]
+        self.assertIn("BLOCKED+=", block)
+        self.assertNotIn("FAILED+=", block,
+                         "an unsatisfiable solve must not be reported as a failure")
+
+    def test_real_breakage_still_fails(self):
+        # An install that dies after its solve succeeded, or patches that do not
+        # re-apply, must still exit non-zero — that is a human's problem.
+        for marker in ("conda install failed after a successful solve",
+                       "PATCHES DID NOT RE-APPLY"):
+            idx = self.script.index(marker)
+            self.assertIn("FAILED+=", self.script[max(0, idx - 200):idx + 50])
+
+    def test_blocked_alone_exits_zero(self):
+        tail = self.script[self.script.index("if [[ ${#BLOCKED[@]} -gt 0 ]]"):]
+        self.assertIn("This is not a failure", tail)
+        self.assertTrue(tail.rstrip().endswith("exit 0"))
 
 
 class BannerOrderTests(unittest.TestCase):

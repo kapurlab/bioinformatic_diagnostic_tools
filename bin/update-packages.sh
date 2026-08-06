@@ -3,6 +3,12 @@
 # their conda channel, then bump the manifest pin to match.
 #
 #   bdtools update-packages <tool|all> [--dry-run] [--to NAME=VERSION] [--yes]
+#   bdtools update-packages <tool|all> --check-pins [--platform L1,L2]
+#
+# --check-pins verifies that the versions pinned in tools.yml can actually be
+# installed on every platform the lab deploys to (default linux-64, osx-64,
+# osx-arm64). Run it whenever you change a pin: a pin can be jointly unsatisfiable,
+# or installable here and impossible elsewhere. Needs the network; takes minutes.
 #
 # This is deliberately NOT part of `bdtools update <tool>`. That command moves the
 # GUI checkout to a new release tag and rebuilds its environment; this one changes
@@ -29,12 +35,18 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
 TARGET=""
 TO=""
 ASSUME_YES=0
+CHECK_PINS=0
+# The platforms the lab deploys to. A pin has to be installable on all of them.
+PLATFORMS="linux-64,osx-64,osx-arm64"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run) DRY_RUN=1; export DRY_RUN; shift;;
     --to)      TO="${2:?--to needs NAME=VERSION}"; shift 2;;
     --to=*)    TO="${1#--to=}"; shift;;
     --yes|-y)  ASSUME_YES=1; shift;;
+    --check-pins) CHECK_PINS=1; shift;;
+    --platform)   PLATFORMS="${2:?--platform needs a comma-separated list}"; shift 2;;
+    --platform=*) PLATFORMS="${1#--platform=}"; shift;;
     -h|--help) sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
     -*)        die "unknown option: $1 (see: bdtools update-packages --help)";;
     *)         TARGET="$1"; shift;;
@@ -45,6 +57,72 @@ done
 _need_python
 PKG_PY="${KT_BIN_DIR}/lib/packages.py"
 
+# --check-pins — can the pins in tools.yml actually be installed, on every platform
+# the lab deploys to?
+#
+# This is the gate that was missing, and both pin mistakes would have been caught by
+# it. A pin can be wrong in two ways that nothing offline detects:
+#   * jointly unsatisfiable — each package is fine alone, the set is not
+#     (ncbi-amrfinderplus 4.2.7 + kraken2 2.17.1 + mlst 2.35.0);
+#   * fine here, impossible elsewhere — mlst 2.34+ is NOARCH, so it looks portable,
+#     and still cannot be installed on macOS because it depends on libxcrypt1, which
+#     has no macOS build.
+#
+# It runs a real dry-run solve per tool per platform, so it needs the network and
+# takes minutes. Run it when changing a pin, not on every command.
+#
+# CONDA_OVERRIDE_OSX is required for the osx targets: solving for a foreign platform
+# otherwise fails on a missing __osx virtual package, which reads exactly like a real
+# dependency conflict and sends you after the wrong thing.
+check_pins() {
+  local conda; conda="$(detect_conda)" || die "conda/mamba not found."
+  local failures=0 checked=0
+  local tool specs plat spec pkg ver pyver
+  for tool in $(targets); do
+    specs="$(manifest_get "${tool}" packages 2>/dev/null || true)"
+    [[ -n "${specs}" ]] || continue
+    local -a want=()
+    for spec in ${specs}; do
+      pkg="${spec##*::}"; ver="${pkg#*=}"; pkg="${pkg%%=*}"
+      [[ -n "${ver}" && "${ver}" != "${pkg}" ]] && want+=("${pkg}=${ver}")
+    done
+    [[ ${#want[@]} -gt 0 ]] || continue
+    # Match the python the tool's env is built with, since that constrains the solve.
+    pyver="$(grep -m1 -oE 'python=3\.[0-9]+' "$(tool_dir "${tool}")/conda_setup/environment.yml" 2>/dev/null || true)"
+    [[ -z "${pyver}" ]] && pyver="python=3.10"
+    log "${tool}: ${want[*]}  (${pyver})"
+    for plat in ${PLATFORMS//,/ }; do
+      checked=$((checked + 1))
+      local logf="${BDTOOLS_HOME}/logs/${tool}-pins-${plat}.log"
+      mkdir -p "$(dirname "${logf}")"
+      local -a env_pre=()
+      [[ "${plat}" == osx-* ]] && env_pre=(env CONDA_OVERRIDE_OSX=13.0)
+      if "${env_pre[@]}" "${conda}" create --dry-run -y -n "bdtools-pincheck-$$" \
+           --platform "${plat}" -c conda-forge -c bioconda \
+           "${pyver}" "${want[@]}" > "${logf}" 2>&1; then
+        ok "  ${plat}: installable"
+      else
+        failures=$((failures + 1))
+        local why; why="$(_solve_headline "${logf}")"
+        warn "  ${plat}: NOT installable"
+        [[ -n "${why}" ]] && info "      ${why}"
+        info "      full output: ${logf}"
+      fi
+    done
+  done
+  echo
+  if [[ ${checked} -eq 0 ]]; then
+    warn "no pinned analysis packages found to check."
+    return 0
+  fi
+  if [[ ${failures} -gt 0 ]]; then
+    warn "${failures} of ${checked} pin/platform combination(s) cannot be installed."
+    info "  Pick versions that solve everywhere the lab deploys, then re-run this."
+    return 1
+  fi
+  ok "every pinned package set is installable on: ${PLATFORMS}"
+}
+
 targets() {
   if [[ "${TARGET}" == "all" ]]; then manifest_names; else
     manifest_has "${TARGET}" || die "no tool named '${TARGET}' in the manifest"
@@ -52,7 +130,16 @@ targets() {
   fi
 }
 
+# Two different outcomes, deliberately kept apart:
+#   FAILED  — something broke: conda missing, an install that failed after its solve
+#             succeeded, patches that did not re-apply. Exit 1; a human must look.
+#   BLOCKED — the suite correctly worked out that an update cannot be applied here
+#             (the version does not exist for this OS, or it conflicts with the env).
+#             Nothing is wrong and nothing was left half-done, so exit 0.
+# Conflating them made "did what it could, and said why" print as
+# "⚠ Update finished with errors", which teaches people to ignore real errors.
 FAILED=()
+BLOCKED=()
 CHANGED=0
 
 # Everything packages.py already knows: which env actually runs this tool, what is
@@ -183,7 +270,13 @@ update_one_tool() {
   if ! "${conda}" install --dry-run -y -p "${envdir}" \
         -c conda-forge -c bioconda "${specs[@]}" > "${solvelog}" 2>&1; then
     local why; why="$(_solve_headline "${solvelog}")"
-    FAILED+=("${tool}: ${specs[*]} cannot be installed into this env")
+    local _blockwhy="conflicts with this environment"
+    _solve_is_unavailable "${solvelog}" && \
+      _blockwhy="not available for $(uname -s) $(uname -m)"
+    for p in "${plan[@]}"; do
+      IFS='|' read -r pkg channel installed want <<< "${p}"
+      BLOCKED+=("${tool}/${pkg}: staying on ${installed} — ${want} ${_blockwhy}")
+    done
     # Remember it, so the dashboard stops offering an update this machine has
     # already proven it cannot apply. Keyed by version: a newer release is tried
     # again. --to always overrides.
@@ -286,20 +379,33 @@ _bump_pin() {  # _bump_pin <tool> <pkg> <channel> <version>
 # subshell would discard both — reporting "everything is already up to date" after
 # a run that failed, which is the one outcome this script must never produce.
 # `|| FAILED+=` keeps set -e from aborting the whole run on one tool.
+if [[ ${CHECK_PINS} -eq 1 ]]; then
+  check_pins
+  exit $?
+fi
+
 for tool in $(targets); do
   update_one_tool "${tool}" || FAILED+=("${tool}: update aborted")
 done
 
 echo
+if [[ ${#BLOCKED[@]} -gt 0 ]]; then
+  ok "${#BLOCKED[@]} package(s) cannot be updated on this machine — left as they are:"
+  for b in "${BLOCKED[@]}"; do info "  • ${b}"; done
+  info "  Recorded, so they are not offered again until a newer release appears."
+  info "  This is not a failure: the tools keep working on the versions they have."
+fi
 if [[ ${#FAILED[@]} -gt 0 ]]; then
-  warn "finished with problems:"
+  echo
+  warn "finished with problems that need attention:"
   for f in "${FAILED[@]}"; do info "  • ${f}"; done
   exit 1
 fi
 if [[ ${CHANGED} -eq 1 ]]; then
   ok "package updates complete. Restart the dashboard to pick them up."
   info "  tools.yml now pins what is installed — commit it to share this set."
-else
+elif [[ ${#BLOCKED[@]} -eq 0 ]]; then
   ok "nothing to install: every declared package is at its newest version, or held."
   info "  Held packages are listed above with the newer version they cannot take."
 fi
+exit 0

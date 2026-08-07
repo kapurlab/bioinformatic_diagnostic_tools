@@ -147,6 +147,67 @@ tool_dir() {
   fi
 }
 
+# Install this checkout's local ignore rules into .git/info/exclude.
+#
+# A conda env and a node_modules tree are built INSIDE a checkout, and neither
+# belongs in a commit. The rules that can only be expressed at the repo root
+# live here, per clone, rather than in a tracked file — .git/info/exclude is
+# never pushed, so every checkout gets the protection and no repo carries a
+# root-level ignore file. Rules scoped to one directory stay in that
+# directory's own .gitignore, which IS tracked.
+#
+# Idempotent: the block is delimited and rewritten in place, never appended
+# twice, and a checkout the user has edited by hand keeps their lines.
+install_checkout_excludes() {
+  local dir="${1:?checkout dir}" exclude
+  [[ -d "${dir}/.git" ]] || return 0
+  exclude="$(git -C "${dir}" rev-parse --git-path info/exclude 2>/dev/null)" || return 0
+  [[ -n "${exclude}" ]] || return 0
+  [[ "${exclude}" = /* ]] || exclude="${dir}/${exclude}"
+
+  if [[ ${DRY_RUN:-0} -eq 1 ]]; then
+    log "DRY-RUN: would write ignore rules to ${exclude}"
+    return 0
+  fi
+
+  mkdir -p "$(dirname "${exclude}")"
+  local kept=""
+  if [[ -f "${exclude}" ]]; then
+    kept="$(awk '/^# >>> bdtools ignore rules >>>$/{skip=1} !skip{print} /^# <<< bdtools ignore rules <<<$/{skip=0}' "${exclude}")"
+  fi
+  { [[ -n "${kept}" ]] && printf '%s\n' "${kept}"
+    cat <<'RULES'
+# >>> bdtools ignore rules >>>
+# Managed by bdtools; edits inside this block are overwritten. Add your own
+# rules above or below it.
+env/
+node_modules/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.DS_Store
+*.swp
+*.log
+.env
+.env.*
+!.env.example
+# a root .gitignore, if one exists here, is local to this checkout: git honours
+# it whether or not it is tracked, so it works without being published
+/.gitignore
+# local working notes, kept on the machine that produced them
+.claude/
+CLAUDE.md
+AGENTS.md
+HANDOFF*.md
+*_HANDOFF.md
+docs/HANDOFF_*.md
+docs/dev/
+# <<< bdtools ignore rules <<<
+RULES
+  } > "${exclude}.tmp" && mv "${exclude}.tmp" "${exclude}"
+}
+
 # Ensure a tool is checked out at its manifest-pinned version (clones if absent).
 # Honors DRY_RUN. Echoes nothing; callers use tool_dir to get the path.
 ensure_checkout() {
@@ -154,12 +215,14 @@ ensure_checkout() {
   dir="$(tool_dir "$name")"; repo="$(manifest_get "$name" repo)"; version="$(manifest_get "$name" version)"
   if [[ -d "${dir}/.git" ]]; then
     ok "checkout present: ${dir} ($(git -C "${dir}" describe --tags --always 2>/dev/null || echo '?'))"
+    install_checkout_excludes "${dir}"
     return 0
   fi
   log "cloning ${name} @ ${version}"
   run mkdir -p "$(dirname "${dir}")"
   run git clone --branch "${version}" --depth 1 "${repo}" "${dir}" \
     || die "git clone failed (${repo} @ ${version})"
+  install_checkout_excludes "${dir}"
 }
 
 # ---- misc -----------------------------------------------------------------

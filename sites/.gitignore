@@ -1,0 +1,4 @@
+# A real site.conf holds this deployment's paths, groups and addresses. Only the
+# example is tracked; see site.conf.example for every available field.
+*.conf
+!site.conf.example

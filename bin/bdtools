@@ -762,6 +762,10 @@ cmd_test() {
 main() {
   [[ $# -ge 1 ]] || { usage; exit 0; }
   local cmd="$1"; shift
+  # This checkout builds envs and node_modules inside itself, same as a tool's.
+  # Keep its local ignore rules current on any run; failure here must never
+  # stop a command, so it is advisory only.
+  install_checkout_excludes "${REPO_DIR}" 2>/dev/null || true
   case "$cmd" in
     list)               cmd_list "$@";;
     status)             cmd_status "$@";;

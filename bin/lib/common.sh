@@ -182,6 +182,7 @@ install_checkout_excludes() {
 # rules above or below it.
 env/
 node_modules/
+node_modules
 __pycache__/
 *.pyc
 *.pyo
@@ -192,6 +193,11 @@ __pycache__/
 .env
 .env.*
 !.env.example
+# per-machine config and credentials a tool writes beside itself
+*.local.json
+# macOS bundles built from a checkout
+*.app/
+*.icns
 # a root .gitignore, if one exists here, is local to this checkout: git honours
 # it whether or not it is tracked, so it works without being published
 /.gitignore

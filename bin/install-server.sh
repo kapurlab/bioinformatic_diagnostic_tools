@@ -121,7 +121,19 @@ fi
 # subst — rewrite Kapur Lab literals to this site's values. Longest-match first
 # so /srv/kapurlab/tools and the group names are consumed before bare 'kapurlab'.
 # Mirrors vsnp_gui/deploy/install_ood.sh:subst. Branding PROSE is left alone.
+#
+# An account name or a server address is a site identifier, not a suite literal,
+# so neither is written here. If a tool repo still carries one, name the value to
+# search for in site.conf (ORIGIN_ADMIN_USER / ORIGIN_SERVERNAME) alongside the
+# replacement (ADMIN_USER / SERVERNAME); unset means no rewrite, as before.
 subst() {
+  local extra=()
+  if [[ -n "${ORIGIN_ADMIN_USER:-}" && -n "${ADMIN_USER:-}" ]]; then
+    extra+=( -e "s|${ORIGIN_ADMIN_USER}|${ADMIN_USER}|g" )
+  fi
+  if [[ -n "${ORIGIN_SERVERNAME:-}" && -n "${SERVERNAME:-}" ]]; then
+    extra+=( -e "s|${ORIGIN_SERVERNAME}|${SERVERNAME}|g" )
+  fi
   sed -e "s|/srv/kapurlab/tools|${TOOLS_ROOT}|g" \
       -e "s|/srv/kapurlab|${SITE_ROOT}|g" \
       -e "s|kapurlab-admins|${ADMINS_GROUP:-kapurlab-admins}|g" \
@@ -130,8 +142,7 @@ subst() {
       -e "s|WGS3|${SITE_DISPLAY}|g" \
       -e "s|wgs3|${CLUSTER_NAME}|g" \
       -e "s|kapurlab|${SITE_NAME}|g" \
-      -e "s|vxk1|${ADMIN_USER:-vxk1}|g" \
-      -e "s|100\.68\.171\.59|${SERVERNAME:-100.68.171.59}|g" \
+      ${extra[@]+"${extra[@]}"} \
       "$1"
 }
 

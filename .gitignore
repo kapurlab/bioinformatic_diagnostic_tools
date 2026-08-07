@@ -14,13 +14,12 @@ checkouts/
 .DS_Store
 __pycache__/
 *.pyc
+.pytest_cache/
 
-# Session handoffs and the agent working notes under .claude/ are TRACKED: the
-# development record and the new-tool layout checklist are more useful to the
-# next contributor than they are risky, and keeping them local meant every
-# machine had a different copy. Review a handoff before committing it — no
-# credentials, keys, tokens or host addresses.
-#
-# Machine-local agent state stays ignored.
-.claude/settings.local.json
-.claude/*.local.md
+# Local working notes: install runbooks and per-session development records.
+# Kept on the machine that produced them rather than published — they name
+# in-progress state, machine detail and accounts. The stable, shareable
+# documentation is README.md, INSTALL.md and docs/.
+AGENTS.md
+HANDOFF.md
+docs/HANDOFF_*.md

@@ -4,13 +4,12 @@
 tool comes out looking and behaving like the other nine instead of like a
 one-off that has to be retro-fitted later.
 
-Working note, kept in the repo so every contributor and agent sees the same
-version. It names in-progress state and per-machine detail, so expect parts of
-it to age faster than the code. The normative, stable statement of the
-*contract* is [`docs/BUILDING_A_TOOL.md`](../docs/BUILDING_A_TOOL.md);
-the committed, shareable version of the *build guide* is
-`amr_plus_gui/docs/BUILDING_A_SIBLING_TOOL.md`. This file is the "and here is
-what those two don't tell you" layer.
+A working note, kept in the repo so every contributor sees the same version. It
+names in-progress state and per-machine detail, so expect parts of it to age
+faster than the code. The normative, stable statement of the *contract* is
+[`BUILDING_A_TOOL.md`](BUILDING_A_TOOL.md); the committed, shareable version of
+the *build guide* is `amr_plus_gui/docs/BUILDING_A_SIBLING_TOOL.md`. This file is
+the "and here is what those two don't tell you" layer.
 
 **Copy from `mlst_gui`.** It is the smallest tool that has every piece of the
 contract and nothing extra. `amr_plus_gui` is the most complete (organism

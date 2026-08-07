@@ -3,8 +3,8 @@
 # Copy this file and pass it with --site-conf, or place it at sites/site.conf.
 # It is sourced as bash, so keep it valid shell: VAR=value, no spaces around '='.
 # It is the ONE place site-specific values live; the installer rewrites the
-# Kapur Lab literals (/srv/kapurlab, kapurlab-admins, wgs3, vxk1, ...) in each
-# tool's OOD app files from these values at install time.
+# Kapur Lab literals (/srv/kapurlab, kapurlab-admins, wgs3, ...) in each tool's
+# OOD app files from these values at install time.
 #
 # Wgs3 (Kapur Lab) reference values are shown in comments to diff against.
 
@@ -37,13 +37,17 @@ SYS_APPS_DIR=/var/www/ood/apps/sys
 # ---- Groups / admin (used to rewrite group + user literals; optional) ------
 ADMINS_GROUP=${SITE_NAME}-admins
 MEMBERS_GROUP=${SITE_NAME}-members
-# Replaces the literal 'vxk1' if any tool references it. Optional.
+# If a tool repo still hard-codes an account name, name it here and give the
+# replacement. Both must be set for the rewrite to happen; both optional.
+ORIGIN_ADMIN_USER=
 ADMIN_USER=
 
 # ---- Optional --------------------------------------------------------------
 # Reference-DB root the tools' configs point at (staged separately, per tool).
 DATABASES_ROOT=${SITE_ROOT}/databases
-# Replaces the wgs3 reference IP (100.68.171.59) if present. Optional.
+# Same pattern for a hard-coded server address: the address to search for, and
+# this site's address to put in its place. Both must be set; both optional.
+ORIGIN_SERVERNAME=
 SERVERNAME=
 
 # ---- Bare-metal OOD-core bootstrap (only if standing up OOD from scratch) ---

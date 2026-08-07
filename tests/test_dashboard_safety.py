@@ -565,8 +565,8 @@ class StateFileTests(unittest.TestCase):
     # literal "/srv/kapurlab/..." or "/home/<someone>/..." in code is a latent
     # portability bug. Two have already bitten: amr_plus_gui resolved its sibling
     # MLST runner as /srv/kapurlab/tools/mlst_gui, so the organism cross-check
-    # silently never ran off the lab server; and mhc_gui probed /home/vxk1 paths at
-    # import time and crashed for every other account.
+    # silently never ran off the lab server; and mhc_gui probed one developer's
+    # home-directory paths at import time and crashed for every other account.
     #
     # There is existing debt, so these are ceilings that may only go DOWN. The
     # legitimate remaining uses are last-resort fallbacks *after* an env var, the

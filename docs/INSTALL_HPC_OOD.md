@@ -112,13 +112,47 @@ serves BAM/BAI to an embedded IGV viewer). **No WebSockets are used anywhere.**
 | Open OnDemand already running | This guide does **not** install OOD core. Verified against 3.1.16. |
 | A cluster definition | `/etc/ood/config/clusters.d/<id>.yml`. You will need `<id>`. |
 | Slurm | The card emits Slurm flags. Another scheduler needs the usual adapter change — see [Non-Slurm sites](#non-slurm-sites). |
-| `conda` or `mamba` | Used to build nine tool environments. A miniforge install is fine. |
+| `conda` with the **libmamba** solver | Used to build nine tool environments. A recent miniforge is fine. On a site where an admin pins the conda module, check what you have first — see [Which solver you have](#which-solver-you-have). |
 | A shared filesystem | Must be readable by all users **and mounted on the compute nodes**. |
 | Disk | ~21 GB for the nine tool environments + conda base; ~36 GB for reference databases. Budget 60 GB and you will not be tight. See [Reference databases](#reference-databases). |
 | Node.js ≥ 20.19 | **Optional.** Every tool ships a prebuilt frontend, and the installer uses it. Only needed if you want to rebuild frontends from source. |
 
 You do **not** need to change Apache/nginx, PAM, authentication, dashboard
 branding, Unix groups, or `clusters.d`. The installer does not touch them.
+
+### Which solver you have
+
+These nine environments are large mixed conda-forge/bioconda solves, and the
+solver behind them is the difference between minutes and hours. What matters is
+that **libmamba** does the solving — not whether you type `conda` or `mamba`.
+Since conda 23.10 libmamba *is* conda's default solver, so on a current conda
+there is nothing to do. On a cluster where the conda module is pinned by an
+administrator, it may be older. Check before Step 3:
+
+```bash
+conda --version
+conda config --show solver 2>/dev/null || echo "no solver option — conda predates it"
+mamba --version 2>/dev/null || echo "no mamba"
+type -t conda
+```
+
+| What you have | What to do |
+|---|---|
+| conda ≥ 23.10 | Nothing. libmamba is already the default. |
+| Older conda, but `conda config --show solver` works | `export CONDA_SOLVER=libmamba` before Step 3. If the solver is missing, `conda install -n base conda-libmamba-solver` first (or ask your admin to). |
+| Older conda, no libmamba available, `mamba` 1.x on `PATH` | This is the one case where mamba is the right answer: `export CONDA_FRONTEND="$(command -v mamba)"` before Step 3. |
+| `mamba` 2.x | Do **not** point the build at it. mamba 2.5 ran `amr_plus_gui`'s environment at 100% CPU for over two hours without finishing, while conda/libmamba solved the identical spec in about six minutes. Use conda from the same base instead. |
+
+Two things the installer already does for you, so do not add them by hand:
+`CONDA_CHANNEL_PRIORITY=strict`, and remapping the Anaconda `defaults` channel
+onto conda-forge/bioconda. It also exports `CONDA_FRONTEND` pointing at `conda`
+so that tools shipping their own `deploy/install.sh` do not reach for mamba
+behind your back. Any of these that you set yourself wins.
+
+If `type -t conda` prints `function` rather than `file`, that is normal for a
+module-based install — `bdtools` resolves a real binary and never a shell
+function. Setting `CONDA_BASE` (Path A: in `sites/site.conf`; Path B:
+`--conda-base`) removes all guesswork about which base is used.
 
 ---
 
@@ -703,6 +737,17 @@ bin/bdtools install --sandbox all
 `all` installs the whole suite, one tool at a time. A tool that fails does not
 abort the rest — read the summary at the end for any `install failed:` lines.
 
+> **What `--dry-run` cannot check: the cards.** Nothing is cloned in a dry run, so
+> the card-detection step looks inside a checkout that does not exist yet, finds no
+> `ood/apps`, and warns `cannot link a card` — followed by a paragraph about a
+> missing `*_sandbox` card, with an *empty* name in the quotes. Both lines are
+> artifacts of the empty checkout, not findings. All nine tools do ship a
+> `<tool>_sandbox` card. For the same reason the dry run reports `generic sandbox
+> install for vsnp_gui`, even though the real run delegates to vsnp_gui's own
+> installer. What the dry run genuinely verifies is narrower: the manifest
+> resolves, the nine pinned tags and clone URLs are right, and the target paths
+> are right.
+
 For each tool this checks out the source under
 `~/.local/share/bdtools/checkouts/<tool>`, builds its conda environment, writes
 `~/.config/<tool>/sandbox.env` recording the source and environment paths, and
@@ -712,7 +757,7 @@ symlinks an OOD card into `~/ondemand/dev/<tool>`.
 which the installer delegates to. That script also applies the vsnp3 patches and
 registers references, so vSNP is the best-supported sandbox tool.
 
-### The one edit you must make per card
+### The one edit you must make per card — after the install, not before
 
 Every sandbox card ships with a placeholder cluster:
 
@@ -720,22 +765,41 @@ Every sandbox card ships with a placeholder cluster:
 cluster: "CHANGE_ME"
 ```
 
-Nothing rewrites this — the sandbox installer does not know your cluster id. Set
-it in each card you intend to launch:
+Nothing rewrites it — the sandbox installer does not know your cluster id — and a
+card left as `CHANGE_ME` will not submit. This applies to vsnp_gui too: its own
+`deploy/setup-sandbox.sh` does not set the cluster either.
+
+**Order matters.** The cards live *inside* the checkouts that the install creates,
+so there is nothing to edit until `install --sandbox` has actually run. Run the
+`sed` beforehand and the glob matches no files, `sed` reports `can't read …: No
+such file or directory`, and you have changed nothing while appearing to have done
+something. The real deadline is before you **launch** a card, not before you
+install.
+
+**Step 1 — find your cluster id.** It is the filename minus `.yml`:
 
 ```bash
-ls /etc/ood/config/clusters.d/          # find your cluster id
-cd ~/.local/share/bdtools/checkouts
-sed -i 's/cluster: "CHANGE_ME"/cluster: "roar"/' \
-  */ood/apps/*_sandbox/form.yml
+ls /etc/ood/config/clusters.d/
 ```
 
-Substitute your real cluster id for `roar`. A card left as `CHANGE_ME` will not
-submit.
+**Step 2 — set it in every installed card.** Replace `PUT_YOUR_CLUSTER_ID_HERE`
+with what the previous command showed:
+
+```bash
+CLUSTER_ID=PUT_YOUR_CLUSTER_ID_HERE
+sed -i "s/cluster: \"CHANGE_ME\"/cluster: \"${CLUSTER_ID}\"/" ~/.local/share/bdtools/checkouts/*/ood/apps/*_sandbox/form.yml
+```
+
+**Step 3 — confirm it took.** You should get one line per installed tool, and no
+`CHANGE_ME` anywhere in the output:
+
+```bash
+grep -H '^cluster:' ~/.local/share/bdtools/checkouts/*/ood/apps/*_sandbox/form.yml
+```
 
 > These files are inside git checkouts, so the edit shows up as a local
 > modification and `bdtools update` — which force-checks-out — will discard it.
-> Re-apply the `sed` after updating.
+> Re-apply the `sed` after updating, and re-run the `grep` to prove it.
 
 Then: **Develop → My Sandbox Apps → *tool* →** set partition →  **Launch**.
 
@@ -841,7 +905,8 @@ it bound — start there.
 | Session starts then exits immediately | No Python with `starlette`+`httpx`+`uvicorn` | Build a tool environment (Step 3) |
 | `ERROR: cannot find the bioinformatic_diagnostic_tools checkout` | Umbrella is not at `$TOOLS_ROOT/bioinformatic_diagnostic_tools` | Move it there, or fix `SHARED_REPO` in the card's `script.sh.erb` |
 | Card missing from the app list | Not rendered into `$SYS_APPS_DIR` | Re-run Step 5; check `manifest.yml` exists in the destination |
-| Job never submits | `cluster:` does not match a real cluster, or partition is blank/invalid | Fix `form.yml`; compare with `ls /etc/ood/config/clusters.d/` |
+| Job never submits | `cluster:` does not match a real cluster, or partition is blank/invalid | Fix `form.yml`; compare with `ls /etc/ood/config/clusters.d/`. Sandbox cards ship `CHANGE_ME` — see [The one edit you must make per card](#the-one-edit-you-must-make-per-card--after-the-install-not-before) |
+| Environment build spins at 100% CPU for hours | mamba 2.x solver, or conda's classic solver | [Which solver you have](#which-solver-you-have) |
 | Dashboard loads, a tool 404s | That tool's environment was not built | `bdtools doctor`; Steps 3b/3c are the usual culprits |
 | Blank page, assets 404 | Frontend assets requested from an absolute root path | Run `bin/bdtools lint`, which fails on non-relative asset URLs |
 | Run progress never updates | Proxy is buffering SSE | Ensure `text/event-stream` is streamed unbuffered |

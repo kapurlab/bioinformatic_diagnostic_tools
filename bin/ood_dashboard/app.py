@@ -611,10 +611,19 @@ def _rich_page():
 
 
 async def landing(request):
-    if LOCAL:
+    # One landing page in every mode. A laptop, a shared Linux host and an OOD
+    # session are the same product and should look the same; what differs is what
+    # the page is ALLOWED to do, not what it shows. api_info reports
+    # can_control=false under OOD, which hides Shut down/Restart, and the mutating
+    # update routes aren't registered there (see build_app).
+    try:
         return HTMLResponse(_rich_page())
-    who = f"Signed in as {html.escape(OWNER)}." if OWNER else ""
-    return HTMLResponse(SIMPLE_PAGE.format(who=who, host=html.escape(socket.gethostname())))
+    except Exception:
+        # Never serve a blank dashboard. Building the rich page means importing the
+        # legacy module and formatting a large JS payload; if that ever fails, a
+        # minimal page that still names the host beats a 500 or an empty body.
+        who = f"Signed in as {html.escape(OWNER)}." if OWNER else ""
+        return HTMLResponse(SIMPLE_PAGE.format(who=who, host=html.escape(socket.gethostname())))
 
 
 async def api_tools(request):
@@ -836,10 +845,13 @@ def build_app():
         global SUITE, CLIENT
         SUITE = Suite()
         CLIENT = httpx.AsyncClient(timeout=httpx.Timeout(10.0, read=300.0), follow_redirects=False)
+        # Warm readiness in every mode: the landing page shows per-tool state
+        # (installed / needs setup) and an unwarmed page reads as broken. The update
+        # check is not warmed here — api_updates kicks it off on first ask, so it
+        # stays off the startup path.
+        asyncio.create_task(SUITE.refresh_readiness())
         if LOCAL:
             sc.write_dashboard_state(_STATE_FILE, _DASHBOARD_PORT, CONTROL_TOKEN, TOKEN)
-            # Warm both in the background so the page is usable immediately.
-            asyncio.create_task(SUITE.refresh_readiness())
             UPDATES.check_async()
         try:
             yield
@@ -854,16 +866,21 @@ def build_app():
         Route("/api/tools", api_tools),
         Route("/api/info", api_info),
         Route("/api/launch", api_launch, methods=["POST"]),
+        # Read-only panels the landing page draws in every mode. Registering these
+        # under OOD too is what keeps the page from showing a broken update banner
+        # and a dead Re-check link: none of them changes an environment. api_updates
+        # only reports (and kicks off) a check; api_recheck re-probes readiness.
+        Route("/api/updates", api_updates),
+        Route("/api/update-status", api_update_status),
+        Route("/api/activity", api_activity),
+        Route("/api/recheck", api_recheck, methods=["POST"]),
     ]
     if LOCAL:
-        # Self-update + readiness control plane — local only (see landing()).
         routes += [
-            Route("/api/updates", api_updates),
+            # Mutating: these rebuild environments. Local only — an OOD session runs
+            # on a shared node against a shared install.
             Route("/api/check-updates", api_check_updates, methods=["POST"]),
             Route("/api/apply-updates", api_apply_updates, methods=["POST"]),
-            Route("/api/update-status", api_update_status),
-            Route("/api/recheck", api_recheck, methods=["POST"]),
-            Route("/api/activity", api_activity),
             # Lifecycle: stop everything (Shut down) or relaunch (Restart). Local
             # only — never expose these on the shared OOD node.
             Route("/api/shutdown", api_shutdown, methods=["POST"]),

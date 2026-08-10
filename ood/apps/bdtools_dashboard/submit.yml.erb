@@ -8,14 +8,20 @@ batch_connect:
   conn_params:
     - port
 
+# Form attributes are read as BARE locals, not through a `context` object, and
+# there is deliberately no `wall_time:` here. OOD 4 renders this file with a
+# binding that has no `context`, so `context.num_cores` raises on nil. And
+# `bc_num_hours` is a built-in OOD attribute rather than a form local, so it is not
+# readable here at all — declaring it in form.yml is what sets the walltime, which
+# is why computing wall_time by hand was both redundant and fatal. Bare locals
+# work on 3.x as well, so this is one file for both.
 script:
-  wall_time: "<%= context.bc_num_hours.to_i * 3600 %>"
   native:
     - "--nodes=1"
     - "--ntasks=1"
-    - "--cpus-per-task=<%= context.num_cores.to_i %>"
-    - "--mem=<%= context.mem_gb.to_i %>G"
-    - "--partition=<%= context.slurm_partition.to_s.strip %>"
-<%- unless context.slurm_account.to_s.strip.empty? -%>
-    - "--account=<%= context.slurm_account.to_s.strip %>"
+    - "--cpus-per-task=<%= num_cores.to_i %>"
+    - "--mem=<%= mem_gb.to_i %>G"
+    - "--partition=<%= slurm_partition.to_s.strip %>"
+<%- unless slurm_account.to_s.strip.empty? -%>
+    - "--account=<%= slurm_account.to_s.strip %>"
 <%- end -%>

@@ -32,7 +32,15 @@ echo "  umbrella: ${REPO}"
 # view page hands it to the browser once as ?t=... and the dashboard turns it
 # into a cookie. $USER is the OOD-authenticated user; the dashboard rejects any
 # request whose (unspoofable) X-Forwarded-User header doesn't match it.
-export BDTOOLS_SESSION_TOKEN='<%= password %>'
+#
+# Read as a SHELL variable, never by ERB interpolation. OOD 4 dropped `password`
+# from the script template's binding (BatchConnect::Session::TemplateBinding), so
+# an ERB tag naming it fails the stage step outright. The basic template sets it in
+# the shell that runs this script, exactly like $port from before.sh — which this
+# file already reads that way — so the shell form works on 3.x and 4.x alike.
+# Do not write an ERB tag for it even inside a comment: ERB evaluates the whole
+# file, so a commented-out tag raises exactly the same NameError.
+export BDTOOLS_SESSION_TOKEN="${password}"
 export BDTOOLS_SESSION_OWNER="${USER}"
 
 # ---- find a python with the dashboard's deps (starlette + httpx + uvicorn) ----

@@ -27,6 +27,7 @@ Exit 1 if any card fails. Ruby (for ERB) is required; without it the ERB checks
 are skipped with a warning rather than silently passing.
 """
 import argparse
+import json
 import re
 import shutil
 import subprocess
@@ -41,11 +42,27 @@ except ImportError:
 
 PLACEHOLDER = "CHANGE_ME"
 
-# A stub `context` that answers ANY attribute with a string that behaves like a
-# number, so this validator needs no per-card knowledge of form field names. New
-# fields are covered automatically; that is the point.
+# Renders a card's ERB against the binding OOD actually provides, so a card that
+# renders here submits there. Both field conventions are accepted: `context.<field>`
+# (OOD 3) and a bare `<field>` local (OOD 4 renders submit.yml.erb with no `context`
+# at all). Locals come from the card's own form.yml via result_with_hash, so this
+# stays free of per-card knowledge while still failing on a name OOD would not have.
+#
+# Two names are deliberately absent rather than stubbed:
+#   * bc_* fields — OOD built-ins, handled by the dashboard itself and NOT readable
+#     as locals in submit.yml.erb. `bc_num_hours` declared in form.yml is what sets
+#     the walltime; a card that also computes wall_time from it dies at submit.
+#   * password/host/port in a template/ job script — OOD 4 dropped `password` from
+#     BatchConnect::Session::TemplateBinding, so an ERB tag naming it kills the stage
+#     step. A job script reads $password and $port as shell variables from before.sh.
+#     Leaving them undefined is what makes this catch the mistake — including a tag
+#     left inside a comment, which ERB evaluates just the same.
+#
+# Anything defined answers "8": a string that also behaves like a number, so both
+# .to_i and .to_s.strip work without knowing a field's type.
 RUBY_PRELUDE = r"""
 require 'erb'
+require 'json'
 # OOD's rendering environment has these loaded; cards use String#shellescape when
 # interpolating user input into the job script. Without them a perfectly good card
 # fails here with NoMethodError, which would be our bug, not the card's.
@@ -54,16 +71,21 @@ class Ctx
   def method_missing(_n, *_a); "8"; end
   def respond_to_missing?(*_a); true; end
 end
-context  = Ctx.new
-password = "STUB_TOKEN"
-host     = "stub-node"
-port     = "8080"
-# Some cards call OOD helpers when rendering a view; stub the ones we have seen.
-def session; nil; end
-tmpl = ARGV[0]
+tmpl, names_json, kind = ARGV[0], ARGV[1], ARGV[2]
+locals = {}
+JSON.parse(names_json).each { |n| locals[n.to_sym] = "8" }
+locals[:context] = Ctx.new       # OOD 3 style; harmless when a card doesn't use it
+locals[:session] = nil           # some views call it
+if kind == "view"
+  locals[:password] = "STUB_TOKEN"
+  locals[:host]     = "stub-node"
+  locals[:port]     = "8080"
+end
 begin
   # trim_mode '-' matches OOD: it renders card ERB with <%- -%> trimming.
-  puts ERB.new(File.read(tmpl), trim_mode: '-').result(binding)
+  # result_with_hash, not result(binding): locals must be exactly what OOD provides,
+  # and a top-level method_missing would define one on Object and corrupt ERB itself.
+  puts ERB.new(File.read(tmpl), trim_mode: '-').result_with_hash(locals)
 rescue Exception => e
   warn "ERB_ERROR: #{e.class}: #{e.message}"
   exit 3
@@ -71,12 +93,31 @@ end
 """
 
 
+def _form_field_names(card_dir: Path):
+    """Field names a card's form.yml defines, minus OOD's bc_* built-ins."""
+    try:
+        doc = yaml.safe_load((card_dir / "form.yml").read_text()) or {}
+    except (OSError, yaml.YAMLError):
+        return []
+    names = set(doc.get("form") or [])
+    names |= set((doc.get("attributes") or {}).keys())
+    return sorted(n for n in names if isinstance(n, str) and not n.startswith("bc_"))
+
+
 def render_erb(path: Path):
-    """Render an .erb with the stub binding. -> (text, error_or_None)."""
+    """Render an .erb with the stub binding. -> (text, error_or_None).
+
+    Files under template/ are rendered WITHOUT the connection stubs, because that
+    is the binding OOD actually gives a job script.
+    """
     ruby = shutil.which("ruby")
     if not ruby:
         return None, "ruby not found"
-    p = subprocess.run([ruby, "-e", RUBY_PRELUDE, str(path)],
+    is_job_script = path.parent.name == "template"
+    card_dir = path.parent.parent if is_job_script else path.parent
+    names = json.dumps(_form_field_names(card_dir))
+    p = subprocess.run([ruby, "-e", RUBY_PRELUDE, str(path), names,
+                        "job" if is_job_script else "view"],
                        capture_output=True, text=True)
     if p.returncode != 0:
         msg = next((l for l in p.stderr.splitlines() if "ERB_ERROR" in l), p.stderr.strip())

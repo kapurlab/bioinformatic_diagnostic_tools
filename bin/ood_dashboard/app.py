@@ -56,13 +56,25 @@ import tool_launch  # noqa: E402
 import manifest  # noqa: E402
 import suite_common as sc  # noqa: E402  (shared, stdlib-only helpers)
 
-# Local mode (bdtools dashboard on a laptop/WSL/SSH box) enables the readiness
-# badges and the self-update UI. Under OOD this stays off: users can't update a
-# shared install, and readiness is the admin's concern, not per-session.
+# Local mode (bdtools dashboard on a laptop/WSL/SSH box) enables the lifecycle
+# controls (Shut down / Restart). Self-update is governed separately by
+# CAN_UPDATE below: it follows who owns the install, not which mode serves it.
 LOCAL = os.environ.get("BDTOOLS_LOCAL", "").strip() in ("1", "true", "yes")
 
 _REPO_DIR = os.path.dirname(os.path.dirname(_HERE))
 _MANIFEST = os.environ.get("BDTOOLS_MANIFEST", os.path.join(_REPO_DIR, "tools.yml"))
+
+# May THIS user run the self-update from the dashboard? Local mode always may.
+# Under OOD it depends on who owns the install, not on the mode: on a shared
+# /srv checkout ordinary users can't (and must not) update it, but a per-user
+# checkout in $HOME — how a cluster deployment without a shared root runs — is
+# the owner's to update. Writability is the honest test; it is the same test
+# git itself will apply. Previously the update routes simply weren't registered
+# under OOD, so clicking the (always-rendered) button got Starlette's plain
+# "Not Found" and the page died parsing it as JSON.
+CAN_UPDATE = LOCAL or (
+    os.access(_REPO_DIR, os.W_OK) and os.access(os.path.join(_REPO_DIR, ".git"), os.W_OK)
+)
 _STATE_FILE = os.environ.get("BDTOOLS_DASHBOARD_STATE_FILE", "").strip()
 _DASHBOARD_PORT = int(os.environ.get("BDTOOLS_DASHBOARD_PORT", "8080"))
 
@@ -97,7 +109,8 @@ COOKIE = "bdtools_session"
 # Local control-plane requests always require a custom-header token, including
 # on tokenless personal Macs/WSL. A hostile web page can submit a plain POST to
 # 127.0.0.1, but it cannot add this header without a CORS preflight (we expose no
-# CORS policy). OOD does not register these mutation routes.
+# CORS policy). Under OOD mutation routes rely on the session cookie +
+# X-Forwarded-User match instead — this token is local-mode CSRF defense.
 CONTROL_TOKEN = os.environ.get("BDTOOLS_CONTROL_TOKEN", "").strip() or secrets.token_urlsafe(32)
 ACTIVE_JOB_STATES = {"queued", "running", "stopping", "cancelling"}
 
@@ -614,8 +627,9 @@ async def landing(request):
     # One landing page in every mode. A laptop, a shared Linux host and an OOD
     # session are the same product and should look the same; what differs is what
     # the page is ALLOWED to do, not what it shows. api_info reports
-    # can_control=false under OOD, which hides Shut down/Restart, and the mutating
-    # update routes aren't registered there (see build_app).
+    # can_control=false under OOD, which hides Shut down/Restart, and
+    # can_update=false on an install this user can't write, which downgrades the
+    # update banner to read-only (see CAN_UPDATE).
     try:
         return HTMLResponse(_rich_page())
     except Exception:
@@ -658,6 +672,7 @@ async def api_info(request):
         "host": socket.gethostname(),
         "local": LOCAL,
         "can_control": LOCAL,
+        "can_update": CAN_UPDATE,
         "control_token": CONTROL_TOKEN if LOCAL else "",
         "boot_id": BOOT_ID,
         "restarting": EXITING,
@@ -742,7 +757,17 @@ async def api_check_updates(request):
     return JSONResponse(UPDATES.state())
 
 
+_NOT_WRITABLE_MSG = (
+    "this install is not writable by your account, so the dashboard cannot "
+    "update it. Update it from a terminal on the host as the install owner: "
+    "git pull in the bdtools checkout, then bin/bdtools update."
+)
+
+
 async def api_apply_updates(request):
+    if not CAN_UPDATE:
+        return JSONResponse({"started": False, "error": _NOT_WRITABLE_MSG},
+                            status_code=403)
     target = request.query_params.get("target", "all")
     if target not in _valid_targets():
         return JSONResponse({"started": False, "error": f"unknown update target: {target}"},
@@ -874,13 +899,17 @@ def build_app():
         Route("/api/update-status", api_update_status),
         Route("/api/activity", api_activity),
         Route("/api/recheck", api_recheck, methods=["POST"]),
+        # Registered in EVERY mode. check-updates only forces a fresh read-only
+        # check (api_updates already triggers one implicitly). apply-updates
+        # gates itself on CAN_UPDATE — whether this user can write the install —
+        # and answers 403 with a JSON explanation when they can't. Leaving the
+        # route unregistered instead produced Starlette's plain-text 404 ("Not
+        # Found"), which the page then failed to parse as JSON.
+        Route("/api/check-updates", api_check_updates, methods=["POST"]),
+        Route("/api/apply-updates", api_apply_updates, methods=["POST"]),
     ]
     if LOCAL:
         routes += [
-            # Mutating: these rebuild environments. Local only — an OOD session runs
-            # on a shared node against a shared install.
-            Route("/api/check-updates", api_check_updates, methods=["POST"]),
-            Route("/api/apply-updates", api_apply_updates, methods=["POST"]),
             # Lifecycle: stop everything (Shut down) or relaunch (Restart). Local
             # only — never expose these on the shared OOD node.
             Route("/api/shutdown", api_shutdown, methods=["POST"]),

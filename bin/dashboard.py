@@ -873,14 +873,16 @@ function renderUpdates(d){
   ].filter(g=>g.items.length);
   // Numbered 1..N over the groups PRESENT, so left-to-right always reads as the
   // run order with no gaps when only some kinds have updates.
-  const actions = groups.map((g,idx)=>{
-    const n = idx + 1;
-    const label = g.count ? `${g.label} (${g.items.length})` : g.label;
-    const title = `Step ${n} of ${groups.length}: ${g.what}`;
-    return `<button class="u" title="${esc(title)}" onclick="applyUpdates('${g.target}',this)">`
-      + `<span class="ustep">${n}</span>${esc(label)}</button>`;
-  }).join('<span class="uarrow">→</span>')
-    + `<button class="link" onclick="checkUpdates(true)">Re-check</button>`;
+  const actions = canUpdate
+    ? groups.map((g,idx)=>{
+        const n = idx + 1;
+        const label = g.count ? `${g.label} (${g.items.length})` : g.label;
+        const title = `Step ${n} of ${groups.length}: ${g.what}`;
+        return `<button class="u" title="${esc(title)}" onclick="applyUpdates('${g.target}',this)">`
+          + `<span class="ustep">${n}</span>${esc(label)}</button>`;
+      }).join('<span class="uarrow">→</span>')
+        + `<button class="link" onclick="checkUpdates(true)">Re-check</button>`
+    : `<button class="link" onclick="checkUpdates(true)">Re-check</button>`;
   // Items listed in the same order, grouped under their step, each naming the tool
   // it belongs to and WHAT is moving (app release vs conda package).
   const li = groups.map((g,idx)=>{
@@ -897,12 +899,19 @@ function renderUpdates(d){
     + `<div class="udesc" style="margin-top:6px">`
     // Explain only the kinds actually on screen. Naming all three when one is
     // offered is noise, and the "left to right" instruction is meaningless then.
-    + (groups.length > 1
+    + (groups.length > 1 && canUpdate
         ? `<b>Run these left to right</b> — the numbered order matters. ` : '')
     + groups.map(g=>`<b>${esc(g.label)}</b>: ${esc(g.what)}`).join('<br>')
-    + `<br>Installing rebuilds environments and can take a few minutes; idle tool `
-    + `servers are stopped first. Use <b>Restart dashboard</b> after each one to load `
-    + `the new code.`
+    + (canUpdate
+        ? `<br>Installing rebuilds environments and can take a few minutes; idle tool `
+          + `servers are stopped first. `
+          + (canControlG
+              ? `Use <b>Restart dashboard</b> after each one to load the new code.`
+              : `Restart this dashboard session after each one to load the new code.`)
+        : `<br><b>This install is not writable by your account</b>, so updating from `
+          + `here is disabled. Update it from a terminal on the host as the install `
+          + `owner: <code>git pull</code> in the bdtools checkout, then `
+          + `<code>bin/bdtools update</code>.`)
     + `</div>`;
 }
 // The run panel: the log and the outcome of an update, kept outside the banner so
@@ -954,7 +963,9 @@ async function applyUpdates(target,btn){
   const log=document.getElementById('ulog'); if(log){ log.textContent='Starting…\\n'; }
   try{
     const r=await controlFetch('./api/apply-updates?target='+encodeURIComponent(target),{method:'POST'});
-    const j=await r.json();
+    const raw=await r.text();
+    let j; try{ j=JSON.parse(raw); }
+    catch(e){ j={started:false, error:'HTTP '+r.status+' — '+raw.slice(0,300)}; }
     if(!j.started){
       runTitle('Update not started');
       if(log) log.textContent += describeBlock(j)+'\\n';
@@ -978,8 +989,9 @@ async function pollUpdate(){
           // Neutral on purpose: a run can finish correctly having installed
           // nothing, because it worked out that an update cannot be applied here.
           // Calling that "errors" taught people to ignore the word.
-          ? '✅ Finished — see the log above. If anything was installed, use '
-            + '<b>Restart dashboard</b> to load it.'
+          ? ('✅ Finished — see the log above. If anything was installed, '
+            + (canControlG ? 'use <b>Restart dashboard</b> to load it.'
+                           : 'restart this dashboard session to load it.'))
           : '⚠ Something went wrong — see the log above.';
         // Re-check, and repaint the banner from the ANSWER rather than leaving the
         // list the user just acted on sitting there. Without this the banner still
@@ -995,9 +1007,13 @@ async function pollUpdate(){
   tick();
 }
 // ---- Which machine is this? + Shut down / Restart controls (local mode only).
+let canUpdate=true;   // api_info.can_update — false on an install this user can't write
+let canControlG=false; // api_info.can_control — Restart/Shut down wired up?
 async function loadInfo(){
   try{
     const r = await fetch('./api/info'); const d = await r.json();
+    canControlG = !!d.can_control;
+    if(d.can_update===false){ canUpdate=false; pollUpdates(); }
     controlToken=d.control_token||'';
     bootId=d.boot_id||'';
     document.getElementById('host').innerHTML =
@@ -1138,7 +1154,7 @@ class Handler(BaseHTTPRequestHandler):
             # tell the outgoing process from the incoming one; see BOOT_ID below.
             self._send(503 if EXITING else 200, json.dumps(
                 {"host": socket.gethostname(), "local": True, "can_control": True,
-                 "control_token": CONTROL_TOKEN,
+                 "can_update": True, "control_token": CONTROL_TOKEN,
                  "boot_id": BOOT_ID, "restarting": EXITING}))
         elif path == "/api/tools":
             self._send(200, json.dumps(SUITE.state()))

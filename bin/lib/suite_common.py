@@ -429,6 +429,21 @@ def _dirty_paths(porcelain):
     return paths
 
 
+def clean_log_line(line):
+    """One captured subprocess-output line, made fit for the job log — or None.
+
+    conda/mamba draw a solver spinner with carriage-return frames; captured
+    through a pipe those frames pile up into huge lines of "| / - \\" that
+    flood the update panel and bury the one line that matters (a real HPC
+    update log was pages of spinner with a single 'Killed' at the end). Keep
+    only the text after the last \r and drop content that is nothing but
+    spinner frames."""
+    line = line.rstrip("\n").split("\r")[-1].rstrip()
+    if line and set(line) <= set("|/-\\ ."):
+        return None
+    return line
+
+
 def suite_update_command(log):
     """The `bdtools` self-update command, or None when it must be refused.
 
@@ -626,7 +641,9 @@ class UpdateManager:
                 proc = subprocess.Popen(cmd, cwd=REPO_DIR, stdout=subprocess.PIPE,
                                         stderr=subprocess.STDOUT, text=True, bufsize=1)
                 for line in proc.stdout:
-                    self._log(line.rstrip())
+                    line = clean_log_line(line)
+                    if line is not None:
+                        self._log(line)
                 ok = proc.wait() == 0
             except (OSError, subprocess.SubprocessError) as exc:
                 self._log(f"ERROR: {exc}")

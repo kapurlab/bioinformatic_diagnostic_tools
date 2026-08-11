@@ -76,6 +76,7 @@ from suite_common import (  # noqa: E402
     BLURB, CAVEAT, pretty, free_port, port_open, list_tools, update_scope,
     tool_python, readiness_map, check_tool_updates, check_bdtools_update,
     write_dashboard_state, remove_dashboard_state, suite_update_command,
+    clean_log_line,
     tool_checkout_version, package_map, package_update_records,
 )
 
@@ -408,7 +409,9 @@ class Suite:
                 proc = subprocess.Popen(cmd, cwd=str(REPO_DIR), stdout=subprocess.PIPE,
                                         stderr=subprocess.STDOUT, text=True, bufsize=1)
                 for line in proc.stdout:
-                    self._log(line.rstrip())
+                    line = clean_log_line(line)
+                    if line is not None:
+                        self._log(line)
                 ok = proc.wait() == 0
             except (OSError, subprocess.SubprocessError) as exc:
                 self._log(f"ERROR: {exc}")

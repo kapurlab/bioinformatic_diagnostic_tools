@@ -149,6 +149,12 @@ apply_one() {
 
   log "updating ${name} -> ${target}"
   run git -C "$dir" fetch --tags --force --depth 1 origin "${target}"
+  # Site-localized OOD card config (ood/apps/**, e.g. a submit.yml.erb carrying
+  # this cluster's name/account) is a deployment's own deliberate edit — carried
+  # across the force checkout below, never a reason to refuse the update and
+  # never clobbered by it (see common.sh: tool_blocking_edits exemption).
+  local site_snapshot; site_snapshot="$(snapshot_site_edits "${dir}")"
+  [[ -n "${site_snapshot}" ]] && log "preserving site-localized OOD card config across the update"
   # Force past locally-modified build artifacts. A managed checkout's working
   # tree gets dirtied every install because the frontend is rebuilt in place
   # (frontend/dist + package-lock are tracked, but regenerated with whatever
@@ -158,6 +164,7 @@ apply_one() {
   # didn't materialize as a local ref (shallow tag fetches land there).
   run git -C "$dir" checkout -f -q "${target}" \
     || run git -C "$dir" checkout -f -q FETCH_HEAD
+  restore_site_edits "${dir}" "${site_snapshot}"
   # The pin moves BEFORE the build, and has to: install-local.sh's
   # ensure_checkout resolves the checkout against the manifest pin, so building
   # with the pin still on the old tag would check the code back out to the old

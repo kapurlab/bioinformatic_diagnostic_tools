@@ -133,9 +133,54 @@ tool_blocking_edits() {
     [[ -n "${p}" ]] || continue
     case "${p}" in
       frontend/dist|frontend/dist/*|frontend/package-lock.json) ;;
+      # Site-localized OOD card config: a deployment CANNOT run the cards
+      # without writing its own cluster/account values into these (e.g.
+      # ood/apps/*/submit.yml.erb). That edit is the install working as
+      # designed, not a personal experiment — it must neither block an update
+      # nor be destroyed by one. The updaters snapshot and restore these
+      # around their force checkout (snapshot_site_edits below).
+      ood/apps/*) ;;
       *) printf '%s\n' "${p}";;
     esac
   done
+}
+
+# The dirty tracked paths under ood/apps/ — the site-localized card config
+# exempted above. Listed separately so an updater can carry them across a
+# `git checkout -f` to a new tag.
+tool_site_edits() {
+  local dir="$1" p
+  { git -C "${dir}" diff --name-only 2>/dev/null
+    git -C "${dir}" diff --cached --name-only 2>/dev/null; } | sort -u | while IFS= read -r p; do
+    case "${p}" in ood/apps/*) printf '%s\n' "${p}";; esac
+  done
+}
+
+# snapshot_site_edits DIR — copy the site-localized edits to a temp dir and
+# print its path ("" when there is nothing to preserve). Pair with
+# restore_site_edits after the checkout moves; restore also removes the temp.
+snapshot_site_edits() {
+  local dir="$1" tmp="" p edits
+  edits="$(tool_site_edits "${dir}")"
+  [[ -n "${edits}" ]] || { printf ''; return 0; }
+  tmp="$(mktemp -d)" || return 1
+  while IFS= read -r p; do
+    [[ -n "${p}" && -f "${dir}/${p}" ]] || continue
+    mkdir -p "${tmp}/$(dirname "${p}")"
+    cp -p "${dir}/${p}" "${tmp}/${p}"
+  done <<< "${edits}"
+  printf '%s' "${tmp}"
+}
+
+restore_site_edits() {  # DIR TMPDIR
+  local dir="$1" tmp="$2" f rel
+  [[ -n "${tmp}" && -d "${tmp}" ]] || return 0
+  while IFS= read -r -d '' f; do
+    rel="${f#"${tmp}"/}"
+    mkdir -p "${dir}/$(dirname "${rel}")"
+    cp -p "${f}" "${dir}/${rel}"
+  done < <(find "${tmp}" -type f -print0)
+  rm -rf "${tmp}"
 }
 
 tool_dir() {

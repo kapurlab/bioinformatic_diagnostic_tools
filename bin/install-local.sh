@@ -300,8 +300,12 @@ ensure_checkout() {
         local blocking; blocking="$(tool_blocking_edits "${DIR}")"
         if [[ -z "${blocking}" ]]; then
           log "moving ${TOOL} checkout ${at} -> pinned ${VERSION}"
+          # Carry site-localized OOD card config (ood/apps/**) across the force
+          # checkout — a deployment's own cluster/account edits (common.sh).
+          local _site_snap; _site_snap="$(snapshot_site_edits "${DIR}")"
           run git -C "${DIR}" checkout -f -q "${VERSION}" 2>/dev/null \
             || run git -C "${DIR}" checkout -f -q "${want}"
+          restore_site_edits "${DIR}" "${_site_snap}"
           at="$(git -C "${DIR}" describe --tags --always 2>/dev/null || echo '?')"
         else
           # Name the consequence, not just the condition: the build below is about

@@ -452,9 +452,34 @@ def suite_update_command(log):
         ).stdout.strip()
     except (OSError, subprocess.SubprocessError) as exc:
         dirty = f"(could not inspect checkout: {exc})"
+        log("ERROR: bdtools checkout has local changes; refusing to pull.")
+        log(f"  {dirty}")
+        return None
+
+    # Not every porcelain line is "a local edit of yours". Sort them:
+    #   ??         untracked — git pull never touches these; a stray file or a
+    #              clone parked inside the checkout must not block updating.
+    #   ood/apps/* site-localized OOD card config (cluster/account values a
+    #              deployment writes into form.yml/submit.yml.erb) — the install
+    #              working as designed. Carried ACROSS the pull, same policy as
+    #              the tool updater (common.sh: tool_blocking_edits).
+    #   the rest   a real local edit -> refuse, exactly as before.
+    blocking_lines, site_edit_paths = [], []
+    for line in dirty.splitlines():
+        if not line.strip():
+            continue
+        status = line[:2]
+        paths = sorted(_dirty_paths(line))
+        if status == "??":
+            continue
+        if paths and all(p.startswith("ood/apps/") for p in paths):
+            site_edit_paths.extend(paths)
+            continue
+        blocking_lines.append(line)
 
     # Only tools.yml is dirty, and only in pin values -> restore it and carry on.
-    if dirty and _dirty_paths(dirty) == {"tools.yml"}:
+    blocking_paths = _dirty_paths("\n".join(blocking_lines))
+    if blocking_lines and blocking_paths == {"tools.yml"}:
         if _pin_only_manifest_drift():
             log("tools.yml differs from HEAD only in version pins — that is "
                 "`bdtools update`'s own bookkeeping, not an edit of yours.")
@@ -466,17 +491,39 @@ def suite_update_command(log):
                     ["git", "-C", REPO_DIR, "checkout", "--", "tools.yml"],
                     capture_output=True, text=True, check=True, timeout=30,
                 )
-                dirty = ""
+                blocking_lines = []
             except (OSError, subprocess.SubprocessError) as exc:
                 log(f"ERROR: could not restore tools.yml: {exc}")
                 return None
 
-    if dirty:
+    if blocking_lines:
         log("ERROR: bdtools checkout has local changes; refusing to pull.")
         log("Commit/stash them, or update from a separate clean checkout.")
-        for line in dirty.splitlines()[:20]:
+        for line in blocking_lines[:20]:
             log(f"  {line}")
         return None
+
+    if site_edit_paths:
+        # Snapshot the site config, clean it so --ff-only cannot collide with an
+        # upstream change to the same file, pull, then put the site's values
+        # back — the same carry-across the tool updater does in bash.
+        import shlex
+        quoted = " ".join(shlex.quote(p) for p in sorted(set(site_edit_paths)))
+        log("preserving site-localized OOD card config across the pull:")
+        for p in sorted(set(site_edit_paths)):
+            log(f"  {p}")
+        log("$ git pull --ff-only  (updating bdtools)")
+        script = (
+            'set -u; '
+            'tmp="$(mktemp -d)"; '
+            f'for p in {quoted}; do mkdir -p "$tmp/$(dirname "$p")"; cp -p "$p" "$tmp/$p"; done; '
+            f'git checkout -- {quoted}; '
+            'git pull --ff-only; rc=$?; '
+            f'for p in {quoted}; do mkdir -p "$(dirname "$p")"; cp -p "$tmp/$p" "$p"; done; '
+            'rm -rf "$tmp"; exit $rc'
+        )
+        return ["bash", "-c", script]
+
     log("$ git pull --ff-only  (updating bdtools)")
     return ["git", "-C", REPO_DIR, "pull", "--ff-only"]
 

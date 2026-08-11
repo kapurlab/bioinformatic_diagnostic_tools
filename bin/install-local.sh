@@ -680,7 +680,7 @@ build_vsnp_local() {
     if [[ "${refs_mode}" == "shared" ]]; then
       # Authoritative shared set — expose it whole (symlink) and register it.
       ln -sfn "${refs}" "${refpath}"
-      grep -qxF "${refpath}" "${rop}" 2>/dev/null || echo "${refpath}" >> "${rop}"
+      registry_add_line "${rop}" "${refpath}"
     else
       # Supplemental: expose ONLY references not already available elsewhere.
       # "Already available" = every reference subdir name reachable from the
@@ -708,22 +708,21 @@ build_vsnp_local() {
         added=$((added+1))
       done
       if [[ ${added} -gt 0 ]]; then
-        grep -qxF "${refpath}" "${rop}" 2>/dev/null || echo "${refpath}" >> "${rop}"
+        registry_add_line "${rop}" "${refpath}"
         ok "added ${added} supplemental reference(s) not already available -> ${refpath}"
       else
         # Nothing new to contribute — don't leave a redundant registration behind.
-        if grep -qxF "${refpath}" "${rop}" 2>/dev/null; then
-          grep -vxF "${refpath}" "${rop}" > "${rop}.tmp" && mv "${rop}.tmp" "${rop}"
-        fi
+        registry_remove_line "${rop}" "${refpath}"
         ok "all USDA-VS references already available (per vsnp3_path_adder.py -s); none added"
       fi
     fi
     # Register the USDA vsnp_dependencies reference set too, when database-setup
     # provided it (extra references like the Brucella/MTBC test references).
-    [[ -n "${vsnp_deps}" ]] && { grep -qxF "${vsnp_deps}" "${rop}" 2>/dev/null || echo "${vsnp_deps}" >> "${rop}"; }
+    [[ -n "${vsnp_deps}" ]] && registry_add_line "${rop}" "${vsnp_deps}"
     ok "configured local vsnp site: ${site} (references + vcf_db_folders + env link)"
-    info "  Step 2's curated VCF databases are lab-private and are NOT downloaded; add your own"
-    info "  VCF folders under ${site}/refs/vsnp3/vcf_db_folders or via the GUI settings."
+    # Step 2's curated VCF comparison databases (kapurlab/vcf_db_directories).
+    # One-time seed — see common.sh; an admin's later removals/additions win.
+    seed_vcf_db_directories "${site}/refs/vsnp3/vcf_db_folders" "${BDTOOLS_HOME}"
     # stable in-checkout pointer so the validation harness can find the refs
     [[ -e "${DIR}/vSNP_reference_options" ]] || ln -s "${refs}" "${DIR}/vSNP_reference_options" 2>/dev/null || true
   fi

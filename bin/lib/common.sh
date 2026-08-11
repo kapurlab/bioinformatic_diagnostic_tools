@@ -475,3 +475,68 @@ build_failed_for() {
 
 # ---- resolve the suite's python (deferred until conda_base_dir exists) -----
 PYBIN="$(bd_python || true)"; : "${PYBIN:=python3}"
+
+# ---- registry files that may be conda-cache hardlinks -----------------------
+# vsnp3's dependencies/reference_options_paths.txt inside a conda env is a
+# HARDLINK into the package cache (pkgs/vsnp3-*/dependencies/...). Writing it
+# in place (>>, sed -i, `> file`) writes through to the cache, so every future
+# `conda create ... vsnp3` on the machine is born pre-seeded with this
+# install's paths — that is exactly how junk reference locations spread to
+# fresh envs. Always rewrite via tmp+mv: the rename breaks the hardlink and
+# edits only this install.
+registry_add_line() {   # <file> <line> — append if absent, hardlink-safe
+  local f="$1" line="$2" tmp
+  grep -qxF "${line}" "${f}" 2>/dev/null && return 0
+  mkdir -p "$(dirname "${f}")"
+  tmp="$(mktemp "${f}.XXXXXX")" || return 1
+  { [[ -f "${f}" ]] && cat "${f}"; printf '%s\n' "${line}"; } > "${tmp}" || { rm -f "${tmp}"; return 1; }
+  mv -f "${tmp}" "${f}"
+}
+
+registry_remove_line() {  # <file> <line> — remove exact line, hardlink-safe
+  local f="$1" line="$2" tmp
+  [[ -f "${f}" ]] || return 0
+  grep -qxF "${line}" "${f}" 2>/dev/null || return 0
+  tmp="$(mktemp "${f}.XXXXXX")" || return 1
+  grep -vxF "${line}" "${f}" > "${tmp}" || true
+  mv -f "${tmp}" "${f}"
+}
+
+# ---- Step 2 VCF databases (kapurlab/vcf_db_directories) ---------------------
+# The lab's curated VCF comparison databases for vSNP Step 2, published at
+# github.com/kapurlab/vcf_db_directories with the exact 2-level layout the GUI
+# auto-discovers under vcf_db_folders_root (<reference>/<db_name>/*.vcf).
+# Seeded ONCE per machine: the marker means an admin who later removes a DB
+# never has it silently re-added, and an existing entry of the same name is
+# never overwritten. Clone failure is a warn, not a die — these databases are
+# an enhancement, and the repo may be unreachable (offline install, private).
+VCF_DB_DIRS_REPO="https://github.com/kapurlab/vcf_db_directories.git"
+
+seed_vcf_db_directories() {  # <vcf_db_folders_root> <clone_parent_dir>
+  local db_root="$1" clone_parent="$2"
+  local marker="${BDTOOLS_HOME}/state/vcf-db-directories.seeded"
+  [[ -f "${marker}" ]] && return 0
+  [[ "${DRY_RUN:-0}" -eq 1 ]] && { echo "  [dry-run] clone ${VCF_DB_DIRS_REPO} -> ${clone_parent}/vcf_db_directories; link into ${db_root}"; return 0; }
+  local dest="${clone_parent}/vcf_db_directories"
+  if [[ ! -d "${dest}" ]]; then
+    mkdir -p "${clone_parent}"
+    if ! git clone --depth 1 "${VCF_DB_DIRS_REPO}" "${dest}" 2>/dev/null; then
+      warn "could not clone ${VCF_DB_DIRS_REPO} (offline?) — Step 2 VCF databases not seeded; re-run 'bdtools setup-databases vcf-dbs' later"
+      return 0
+    fi
+  fi
+  mkdir -p "${db_root}"
+  local d name linked=0
+  for d in "${dest}"/*/; do
+    [[ -d "${d}" ]] || continue
+    name="$(basename "${d}")"
+    case "${name}" in .*) continue;; esac
+    if [[ ! -e "${db_root}/${name}" ]]; then
+      ln -sfn "${d%/}" "${db_root}/${name}" && linked=$((linked+1))
+    fi
+  done
+  mkdir -p "${BDTOOLS_HOME}/state"
+  printf 'when=%s\nclone=%s\nroot=%s\nlinked=%s\n' \
+    "$(date -u +%FT%TZ)" "${dest}" "${db_root}" "${linked}" > "${marker}"
+  ok "Step 2 VCF databases seeded: ${dest} -> ${db_root} (${linked} linked)"
+}

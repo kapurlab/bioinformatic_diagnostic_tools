@@ -80,7 +80,7 @@ suite_version: "2026.08.04"
 tools:
   - name: vsnp_gui
     repo: https://github.com/kapurlab/vsnp_gui.git
-    version: v0.4.37
+    version: v0.4.38
     updates: install
     ood_apps: [vsnp_gui]
     dev_apps: [vsnp_gui_dev]
@@ -152,7 +152,7 @@ tools:
 
   - name: kraken_id_parse_gui
     repo: https://github.com/kapurlab/kraken_id_parse_gui.git
-    version: v0.2.3
+    version: v0.2.4
     updates: report
     ood_apps: [kraken_id_parse_gui]
     dev_apps: [kraken_id_parse_gui_dev]

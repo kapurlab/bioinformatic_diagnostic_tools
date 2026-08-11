@@ -17,10 +17,14 @@
 #   blast         BLAST ref_prok_rep_genomes      -> <root>/blast/ref_prok_rep_genomes
 #   vsnp-refs     USDA-VS vSNP_reference_options  -> <root>/vsnp3/reference_options
 #   vsnp-deps     USDA-VS vsnp3 test dependencies -> <root>/vsnp3/vsnp_dependencies
+#   vcf-dbs       kapurlab vcf_db_directories     -> <root>/vsnp3/vcf_db_directories
+#                 (Step 2 VCF comparison DBs; seeded ONCE into the GUI's
+#                 vcf_db_folders root — later removals/additions are yours)
 #
 # Consumers wired automatically:
 #   kraken,blast  -> kraken_id_parse_gui  (~/.config/kraken_id_parse_gui/config.json)
 #   vsnp-*        -> vsnp_gui             (reference locations + config.json)
+#   vcf-dbs       -> vsnp_gui             (vcf_db_folders root, one-time)
 set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
 
@@ -62,13 +66,13 @@ while [[ $# -gt 0 ]]; do
     --root)    ROOT="$2";    shift 2;;
     --dry-run) DRY_RUN=1; export DRY_RUN; shift;;
     -h|--help) sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
-    kraken|blast|vsnp-refs|vsnp-deps) WANT+=("$1"); shift;;
+    kraken|blast|vsnp-refs|vsnp-deps|vcf-dbs) WANT+=("$1"); shift;;
     all) shift;;                       # explicit "all" == default
     -*)  die "unknown option: $1";;
-    *)   die "unknown database: $1 (kraken|blast|vsnp-refs|vsnp-deps|all)";;
+    *)   die "unknown database: $1 (kraken|blast|vsnp-refs|vsnp-deps|vcf-dbs|all)";;
   esac
 done
-[[ ${#WANT[@]} -gt 0 ]] || WANT=(kraken blast vsnp-refs vsnp-deps)
+[[ ${#WANT[@]} -gt 0 ]] || WANT=(kraken blast vsnp-refs vsnp-deps vcf-dbs)
 
 # ---- resolve the install root ---------------------------------------------
 if [[ -z "${ROOT}" ]]; then
@@ -246,7 +250,7 @@ wire_vsnp() {
     local p
     for p in "${VSNP_REFS}" "${VSNP_DEPS}"; do
       [[ -d "${p}" ]] || continue
-      grep -qxF "${p}" "${deps_reg}" 2>/dev/null || printf '%s\n' "${p}" >> "${deps_reg}"
+      registry_add_line "${deps_reg}" "${p}"   # hardlink-safe (see common.sh)
     done
     ok "vsnp_gui: reference_options -> ${VSNP_REFS}; registered reference locations"
   else
@@ -256,6 +260,34 @@ wire_vsnp() {
   fi
 }
 
+# Step 2 VCF comparison databases. The clone lands under the database root;
+# the folders are linked (once) into whichever vcf_db_folders root this
+# machine's vSNP GUI actually reads: the local site tree when there is one,
+# else the declared SITE_ROOT layout.
+wire_vcf_dbs() {
+  want vcf-dbs || return 0
+  local site="${BDTOOLS_HOME}/vsnp3-site" target=""
+  if [[ -d "${site}" ]]; then
+    target="${site}/refs/vsnp3/vcf_db_folders"
+  else
+    local sroot; sroot="$("${PYBIN:-python3}" - "${KT_BIN_DIR}/lib" "${REPO_DIR}" <<'PY' 2>/dev/null || true
+import sys
+sys.path.insert(0, sys.argv[1])
+import site_paths
+root = site_paths.site_root(sys.argv[2])
+print(root or "")
+PY
+)"
+    [[ -n "${sroot}" ]] && target="${sroot}/refs/vsnp3/vcf_db_folders"
+  fi
+  if [[ -z "${target}" ]]; then
+    target="${ROOT}/vsnp3/vcf_db_folders"
+    warn "no local vsnp site or SITE_ROOT declared — VCF DBs land at ${target};"
+    warn "  add them in the vSNP GUI (VCF DB folders) or set SITE_ROOT and re-run."
+  fi
+  seed_vcf_db_directories "${target}" "${ROOT}/vsnp3"
+}
+
 # ---- run -------------------------------------------------------------------
 want kraken    && fetch_kraken
 want blast     && fetch_blast
@@ -263,6 +295,7 @@ want vsnp-refs && fetch_vsnp_refs
 want vsnp-deps && fetch_vsnp_deps
 wire_kraken
 wire_vsnp
+wire_vcf_dbs
 
 echo
 ok "Database setup complete (root: ${ROOT})."

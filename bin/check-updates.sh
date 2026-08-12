@@ -52,13 +52,25 @@ while [[ $# -gt 0 ]]; do
 done
 TARGET="${ARGS[0]:-all}"
 
-latest_tag() {  # repo-url -> highest version-sorted RELEASE tag, or empty (never aborts)
+latest_tag() {  # repo-url -> highest version-sorted RELEASE tag, empty (no tags),
+                # or "?" when the remote cannot be reached (never aborts)
   # Only vN.N… tags count. `sort -V | tail -1` is a plain string sort at heart:
   # any stray non-release tag that sorts after "v" (say "wip" or "working") would
   # become "latest" — and --apply force-checks-out that ref and rebuilds the env
   # on every machine that installs updates. Release tags are the only refs this
   # suite promises to ship, so filter to them rather than trusting tag hygiene.
-  { git ls-remote --tags --refs "$1" 2>/dev/null \
+  #
+  # "?" exists because a blocked network used to be indistinguishable from a
+  # repo with no releases: on a compute node with no outbound access every tool
+  # reported "no tags", the dashboard said "✓ Up to date", and a real release
+  # was invisible. An unreachable remote is an answer we don't have, not an
+  # answer of "current" — report it as such.
+  local listing
+  if ! listing="$(git ls-remote --tags --refs "$1" 2>/dev/null)"; then
+    echo "?"
+    return 0
+  fi
+  { printf '%s\n' "$listing" \
       | awk -F/ '{print $NF}' | grep -E '^v[0-9]+(\.[0-9]+)*([._-].+)?$' \
       | sort -V | tail -1; } || true
 }
@@ -70,7 +82,8 @@ report_one() {
   dir="$(tool_dir "$name")"; repo="$(manifest_get "$name" repo)"; pinned="$(manifest_get "$name" version)"
   installed="$([[ -d "${dir}/.git" ]] && git -C "$dir" describe --tags --always 2>/dev/null || echo '—')"
   latest="$(latest_tag "$repo")"
-  if [[ -z "$latest" ]]; then status="no tags (tracks ${pinned})"
+  if [[ "$latest" == "?" ]]; then status="CHECK FAILED — could not reach ${repo} (no network from this host?)"
+  elif [[ -z "$latest" ]]; then status="no tags (tracks ${pinned})"
   elif [[ "$latest" == "$pinned" ]]; then status="up to date"
   else status="↑ ${latest} available"; fi
   printf '%-22s pinned=%-14s installed=%-16s latest=%-12s %s\n' \
@@ -86,6 +99,10 @@ apply_one() {
     "$([[ "${TARGET}" == "all" ]] && echo 0 || echo 1)" || return 5
   dir="$(tool_dir "$name")"; repo="$(manifest_get "$name" repo)"; pinned="$(manifest_get "$name" version)"
   latest="$(latest_tag "$repo")"
+  # "?" = the remote couldn't be reached just now. Fall back to the manifest
+  # pin (exactly the old no-tags behavior) — the fetch below will fail loudly
+  # if the network is really gone, rather than us checking out a literal "?".
+  [[ "$latest" == "?" ]] && latest=""
   target="${latest:-$pinned}"   # newest tag, else stay on the pinned branch
 
   # Not checked out yet: `update` refreshes existing installs — a fresh install

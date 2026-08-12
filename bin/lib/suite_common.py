@@ -203,12 +203,19 @@ def _parse_update_line(line):
         return ""
     installed = field("installed")
     latest = field("latest")
+    # "?" = check-updates could not reach this tool's repo at all (no outbound
+    # network on this host — common on HPC compute nodes). That is "version
+    # unknown", never "up to date": the banner must say the check ran blind
+    # instead of quietly claiming everything is current.
+    check_failed = latest == "?"
     # An update is available when what's INSTALLED here is behind the newest
     # released tag — not when the manifest pin matches the tag. `git describe`
     # may add "-N-g<hash>" past a tag; strip it so a checkout on/ahead of the
     # tag isn't flagged.
     inst_tag = installed.split("-")[0] if installed and installed != "—" else ""
-    available = bool(latest and latest != "—" and inst_tag and inst_tag != latest)
+    available = bool(
+        not check_failed and latest and latest != "—" and inst_tag and inst_tag != latest
+    )
     # tools.yml decides whether bdtools may CHANGE this tool. A report-only tool
     # keeps `latest` — seeing that a release exists is the point — but is never
     # offered, because the CLI would refuse it anyway and a button that leads to a
@@ -224,6 +231,7 @@ def _parse_update_line(line):
         "update_available": available and not report_only,
         "newer_exists": available,
         "report_only": report_only,
+        "check_failed": check_failed,
         # "tool" = this GUI's own release (a git tag + an env rebuild), as opposed
         # to "package" (conda software inside its env) or "suite" (bdtools itself).
         # The banner groups by this and orders the buttons by it.
@@ -350,7 +358,12 @@ def check_bdtools_update():
         if subprocess.run(git + ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
                           capture_output=True, text=True, timeout=15).returncode != 0:
             return None  # no upstream tracking branch
-        subprocess.run(git + ["fetch", "--quiet"], capture_output=True, text=True, timeout=60)
+        # A failed fetch (no outbound network on this host) used to be ignored,
+        # so rev-list compared HEAD against the STALE remote ref and reported
+        # "0 new commits" — i.e. blindness rendered as up-to-date. Report it as
+        # a failed check instead; the banner tells the user the check ran blind.
+        fetch_ok = subprocess.run(git + ["fetch", "--quiet"], capture_output=True,
+                                  text=True, timeout=60).returncode == 0
         behind = subprocess.run(git + ["rev-list", "--count", "HEAD..@{u}"],
                                capture_output=True, text=True, timeout=15).stdout.strip()
         n = int(behind or "0")
@@ -362,8 +375,11 @@ def check_bdtools_update():
         "name": "bdtools",
         "label": "bdtools (suite + dashboard)",
         "installed": current or "—",
-        "latest": f"{n} new commit(s)" if n else current or "—",
+        "latest": (f"{n} new commit(s)" if n else current or "—") if fetch_ok else "?",
+        # A stale ref can still legitimately be ahead (fetched earlier); only
+        # trust "no updates" when the fetch that says so actually ran.
         "update_available": n > 0,
+        "check_failed": not fetch_ok,
         "kind": "suite",
     }
 
@@ -572,9 +588,14 @@ class UpdateManager:
             # tool tag does not move when the science underneath it does.
             items.extend(package_update_records())
             cache = {"checked": True, "items": items,
-                     "any": any(i["update_available"] for i in items)}
+                     "any": any(i["update_available"] for i in items),
+                     # Names whose remote couldn't be reached: the check ran
+                     # blind for these, and the banner must say so instead of
+                     # implying "up to date".
+                     "check_failed": [i["name"] for i in items if i.get("check_failed")]}
         except Exception as exc:
-            cache = {"checked": True, "items": [], "any": False, "error": str(exc)}
+            cache = {"checked": True, "items": [], "any": False,
+                     "check_failed": ["all"], "error": str(exc)}
         finally:
             with self.lock:
                 self.updates_checking = False

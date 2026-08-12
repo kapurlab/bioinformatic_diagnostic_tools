@@ -339,9 +339,13 @@ class Suite:
                 "checked": True,
                 "items": items,
                 "any": any(i["update_available"] for i in items),
+                # Names whose remote couldn't be reached — the check ran blind
+                # for these; renderUpdates turns this into a visible warning.
+                "check_failed": [i["name"] for i in items if i.get("check_failed")],
             }
         except Exception as exc:
-            cache = {"checked": True, "items": [], "any": False, "error": str(exc)}
+            cache = {"checked": True, "items": [], "any": False,
+                     "check_failed": ["all"], "error": str(exc)}
         finally:
             with self.lock:
                 self.updates_checking = False
@@ -558,6 +562,11 @@ addEventListener('storage',e=>{if(e.key===THEME_KEY)applyTheme(preferredTheme(),
  .updates:empty{display:none}
  .updates.checking{color:var(--muted)}
  .updates.current{color:#3f6b48}
+ /* The check ran but couldn't reach the repos: a real warning banner, visually
+    distinct from both "up to date" and "updates available". */
+ .updates.blind{background:#fdeae2;border:1px solid #efc3ad;color:#8a4a2b;
+   border-radius:10px;padding:12px 14px;font-size:13.5px;margin-top:8px}
+ .updates.blind a{color:inherit;font-weight:600}
  .updates.avail{background:#fbf1dc;border:1px solid #f0dcae;color:#7a5a1e;
    border-radius:10px;padding:12px 14px;font-size:13.5px;margin-top:8px}
  .updates.avail a{color:inherit}
@@ -822,6 +831,20 @@ function renderUpdates(d){
       latest: i.latest, newer: !!i.newer_exists, offered: !!i.update_available };
   }
   const avail = items.filter(i=>i.update_available);
+  // Repos the check could NOT reach (no outbound network on this host — typical
+  // for HPC compute nodes). "Couldn't look" must never render as "up to date":
+  // that exact silence hid a real release behind a green check mark.
+  const failed = (d.check_failed && d.check_failed.length)
+    ? d.check_failed
+    : items.filter(i=>i.check_failed).map(i=>i.name);
+  const blindNote = failed.length
+    ? `⚠ <b>The update check could not reach ${failed.includes('all')
+          ? 'any repository' : 'the repositories for: ' + esc(failed.join(', '))}</b>`
+      + ` — ${failed.includes('all') ? 'all' : 'those'} versions are <b>unknown</b>, not current.`
+      + ` This host likely has no outbound network (common on HPC compute nodes).`
+      + ` From a machine that does (e.g. a login node): <code>bin/bdtools check-updates all</code>,`
+      + ` then <code>git pull</code> + <code>bin/bdtools update &lt;tool&gt;</code>.`
+    : '';
   // Held: a newer release exists that this machine has established it cannot
   // install (tools.yml, or a solve that was tried here and refused). Never a
   // banner — it cannot be acted on — but counted here, because "✓ Up to date"
@@ -833,6 +856,14 @@ function renderUpdates(d){
   // refuse it too, and a button that leads to a refusal is worse than no button.
   const kept = items.filter(i=>i.report_only && i.newer_exists);
   if(!avail.length){
+    if(failed.length){
+      // Nothing offerable AND the check ran blind: a warning banner, never the
+      // green "Up to date" line.
+      box.className='updates blind';
+      box.innerHTML = blindNote
+        + ` <a href="#" onclick="checkUpdates(true);return false">Re-check</a>`;
+      return;
+    }
     box.className='updates current';
     const note = held.length
       ? ` <span class="uheldnote" title="${esc(held.map(i=>i.label+": staying on "+i.installed+" (newer: "+i.latest+")").join("\\n"))}">`
@@ -898,6 +929,7 @@ function renderUpdates(d){
   }).join('');
   box.innerHTML = `<div class="uhead"><span class="utitle">↑ Updates available (${avail.length})</span>`
     + `<span class="uactions">${actions}</span></div>`
+    + (blindNote ? `<div style="margin-top:6px">${blindNote}</div>` : '')
     + `<ul class="usteps">${li}</ul>`
     + `<div class="udesc" style="margin-top:6px">`
     // Explain only the kinds actually on screen. Naming all three when one is

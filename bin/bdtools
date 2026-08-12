@@ -137,22 +137,34 @@ EOF
     passthru+=(--with-dev)
   fi
   [[ ${#raw[@]} -gt 0 ]] || die "install: name a tool or 'all' (see: bdtools list)"
-  local targets=() r n
+  local targets=() phases=() r n
   for r in "${raw[@]}"; do
     if [[ "$r" == all ]]; then
       while read -r n; do [[ -n "$n" ]] && targets+=("$n"); done < <(manifest_names)
-    else
-      manifest_has "$r" || die "unknown tool: $r (see: bdtools list)"
+    elif manifest_has "$r"; then
       targets+=("$r")
+    elif [[ "$r" == preflight || "$r" == toolchain || "$r" == app || "$r" == verify ]]; then
+      # install-server.sh takes phase names positionally (e.g. `app` to
+      # re-render just a tool's OOD card without touching its env). The
+      # wrapper used to reject them as unknown tools — it must not refuse
+      # what the script it wraps accepts. Anything else still dies below,
+      # so a typo'd tool name never silently becomes a "phase".
+      phases+=("$r")
+    else
+      die "unknown tool: $r (see: bdtools list; server phases: preflight toolchain app verify)"
     fi
   done
+  [[ ${#targets[@]} -gt 0 ]] || die "install: name a tool or 'all' (see: bdtools list)"
+  if [[ ${#phases[@]} -gt 0 && "${mode}" != "server" ]]; then
+    die "install: phases (${phases[*]}) only apply to --server installs"
+  fi
   local script="${KT_BIN_DIR}/install-${mode}.sh"
   [[ -x "$script" ]] || die "no installer for mode '${mode}' (${script})"
   # install = build only (never auto-launch); `bdtools local <tool>` launches.
   [[ "${mode}" == "local" ]] && passthru+=(--build-only)
   local rc=0 skipped=()
   for t in "${targets[@]}"; do
-    if "$script" "$t" ${passthru[@]+"${passthru[@]}"}; then :; else
+    if "$script" "$t" ${passthru[@]+"${passthru[@]}"} ${phases[@]+"${phases[@]}"}; then :; else
       local ec=$?
       if [[ ${ec} -eq 3 ]]; then skipped+=("$t");   # no local-build path (OOD-only) — not a failure
       else warn "install failed: ${t}"; rc=1; fi

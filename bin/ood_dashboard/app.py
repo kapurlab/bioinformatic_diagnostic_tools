@@ -259,7 +259,13 @@ class Suite:
                              "update_available": p["update_available"],
                              "held": p.get("held", False),
                              "held_reason": p.get("held_reason", ""),
-                             "held_fix": p.get("held_fix", "")}
+                             "held_fix": p.get("held_fix", ""),
+                             # What the SITE validated, and whether this env is
+                             # actually on it. Computed since the pins existed and
+                             # never displayed, so an env that silently built at
+                             # another version looked ordinary on the card.
+                             "pinned": p.get("pinned", ""),
+                             "pin_drift": p.get("pin_drift", False)}
                             for p in packages.get(name, [])
                         ] if installed else []})
         return out

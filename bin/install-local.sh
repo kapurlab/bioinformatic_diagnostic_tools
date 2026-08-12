@@ -620,8 +620,31 @@ build_vsnp_local() {
   if [[ -x "${DIR}/env/bin/python" ]]; then
     ok "env present: ${DIR}/env"
   else
-    with_progress "${TOOL}: creating vsnp3 env (bioconda vsnp3 + snp-dists; solve can take several minutes)" \
-      _conda_step "${DIR}/env" "${conda}" create -y -p "${DIR}/env" -c conda-forge -c bioconda vsnp3 snp-dists
+    # Create the env AT the manifest pins, not open-ended.
+    #
+    # `conda create ... vsnp3 snp-dists` looks harmless and is not: with no
+    # version asked for, the solver is free to take the newest python and then
+    # back-solve vsnp3 to whatever still fits. vsnp3 3.35 needs python <=3.12
+    # and 3.36 needs <3.14, but 3.16 (2023) declares only python >=3.8 — so on
+    # a machine where python 3.14 is current, the "successful" install produced
+    # vsnp3 3.16 while tools.yml pinned 3.35. enforce_package_pins then could
+    # not repair it (installing 3.35 into a python-3.14 env is unsatisfiable),
+    # warned, and returned 0, so the install reported success and the OOD
+    # deployment ran a 19-release-old analysis package. That is precisely the
+    # reproducibility hole the pins exist to close.
+    #
+    # Asking for the pinned version instead makes the package's own python
+    # constraint drive the solve, so the env is right the first time and
+    # enforce_package_pins becomes the confirmation it was meant to be. Falls
+    # back to the open specs when the manifest has no pins.
+    local create_specs=() _s _p
+    for _s in $(manifest_get "${TOOL}" packages 2>/dev/null || true); do
+      _p="${_s##*::}"                      # drop the channel: bioconda::vsnp3=3.35
+      [[ -n "${_p}" ]] && create_specs+=("${_p}")
+    done
+    [[ ${#create_specs[@]} -gt 0 ]] || create_specs=(vsnp3 snp-dists)
+    with_progress "${TOOL}: creating vsnp3 env (${create_specs[*]}; solve can take several minutes)" \
+      _conda_step "${DIR}/env" "${conda}" create -y -p "${DIR}/env" -c conda-forge -c bioconda "${create_specs[@]}"
   fi
   harden_conda_hooks "${DIR}/env"
   # 2. web layer (uvicorn is served from this same python)

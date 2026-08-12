@@ -119,7 +119,11 @@ class Suite:
                      "latest": p["latest"], "update_available": p["update_available"],
                      "held": p.get("held", False),
                      "held_reason": p.get("held_reason", ""),
-                     "held_fix": p.get("held_fix", "")}
+                     "held_fix": p.get("held_fix", ""),
+                     # See the OOD dashboard's copy of this list: the site's
+                     # validated pin, and whether this env is on it.
+                     "pinned": p.get("pinned", ""),
+                     "pin_drift": p.get("pin_drift", False)}
                     for p in (pkgs.get(name, []) if installed else [])
                 ],
                 # ready is None when readiness is unknown (doctor unavailable or
@@ -550,7 +554,12 @@ addEventListener('storage',e=>{if(e.key===THEME_KEY)applyTheme(preferredTheme(),
  .vers .vnew{color:#7a5a1e;background:#fbf1dc;border-radius:999px;padding:0 6px;font-weight:650}
  .vers .vheld{color:var(--muted);background:var(--soft);border-radius:999px;padding:0 6px;
               border:1px solid var(--line)}
+ /* Off the validated pin — a correctness statement, not an update offer, so it
+    reads as a warning rather than as the muted "held" note beside it. */
+ .vers .vdrift{color:#8a4a2b;background:#fdeae2;border:1px solid #efc3ad;border-radius:999px;
+               padding:0 6px;font-weight:650}
  html[data-theme="dark"] .vers .vnew{color:#f0cf95;background:#3a3115}
+ html[data-theme="dark"] .vers .vdrift{color:#f0b79a;background:#3f2317;border-color:#5d3826}
  .dev{background:var(--danger-bg);border:1px solid var(--danger-line);border-radius:8px;padding:8px 10px;
    font-size:12px;color:var(--danger-ink)}
  .dev b{color:var(--danger-ink)}
@@ -743,7 +752,16 @@ function versionBlock(t){
       : (p.held && p.latest && p.latest !== p.installed
           ? ` <span class="vheld" title="${esc(heldTitle(p))}">held (${esc(p.latest)})</span>`
           : '');
-    bits.push(`${esc(p.name)} ${esc(p.installed)}${up}`);
+    // OFF THE VALIDATED PIN. Not the same statement as "an update exists": this
+    // env is not running the version tools.yml records, so results here are not
+    // the version the lab validated. It stayed invisible while an env built at
+    // vsnp3 3.16 sat behind a pin of 3.35 — the card showed "3.16" and nothing
+    // said what it should have been. Shown even when the package is also held,
+    // because "held" explains the newest release, not the missing pin.
+    const drift = p.pin_drift && p.pinned
+      ? ` <span class="vdrift" title="tools.yml pins ${esc(p.pinned)}; this environment has ${esc(p.installed)}. Results here are not from the version this site validated. Rebuild the env to get the pin: bin/bdtools install ${esc(t.name)} --rebuild">≠ pinned ${esc(p.pinned)}</span>`
+      : '';
+    bits.push(`${esc(p.name)} ${esc(p.installed)}${up}${drift}`);
   }
   if(!bits.length) return '';
   return `<div class="vers">${bits.join('<span class="vsep">·</span>')}</div>`;

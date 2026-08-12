@@ -495,18 +495,43 @@ def suite_update_command(log):
     #              working as designed. Carried ACROSS the pull, same policy as
     #              the tool updater (common.sh: tool_blocking_edits).
     #   the rest   a real local edit -> refuse, exactly as before.
-    blocking_lines, site_edit_paths = [], []
+    blocking_lines, site_edit_paths, unmerged_paths = [], [], []
     for line in dirty.splitlines():
         if not line.strip():
             continue
         status = line[:2]
         paths = sorted(_dirty_paths(line))
+        # An UNMERGED path (a merge / stash pop someone left half-finished) is
+        # not an edit of any kind — it is a conflict git has not been told is
+        # over. Classify it first: under ood/apps/ it used to read as
+        # "site-localized config", and the carry-across then ran `git checkout --`
+        # and `git pull` against a conflicted index. Both refuse, so the user got
+        # two raw git errors ("path ... is unmerged", "Pulling is not possible")
+        # under a generic "Something went wrong", with nothing saying which file
+        # or what closes it.
+        if "U" in status or status in ("AA", "DD"):
+            unmerged_paths.extend(paths)
+            continue
         if status == "??":
             continue
         if paths and all(p.startswith("ood/apps/") for p in paths):
             site_edit_paths.extend(paths)
             continue
         blocking_lines.append(line)
+
+    if unmerged_paths:
+        log("ERROR: this checkout has an unresolved merge conflict; refusing to pull.")
+        log("No update can run until it is closed — git blocks every pull while an")
+        log("index entry is still marked conflicted, even if the FILE now looks fine")
+        log("(a conflict resolved by editing but never `git add`ed stays 'unmerged').")
+        for p in sorted(set(unmerged_paths)):
+            log(f"  unmerged: {p}")
+        log("Close it from a terminal — check the file keeps the version you want and")
+        log("has no <<<<<<< markers left, then mark it resolved:")
+        log(f"    grep -n '<<<<<<<' {' '.join(sorted(set(unmerged_paths)))}")
+        log(f"    git -C {REPO_DIR} add {' '.join(sorted(set(unmerged_paths)))}")
+        log("    git stash list      # if a stash pop left this, drop it once resolved")
+        return None
 
     # Only tools.yml is dirty, and only in pin values -> restore it and carry on.
     blocking_paths = _dirty_paths("\n".join(blocking_lines))

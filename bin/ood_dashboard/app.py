@@ -106,6 +106,27 @@ TOKEN = _load_token()
 OWNER = os.environ.get("BDTOOLS_SESSION_OWNER", "").strip()
 STRICT_USER = os.environ.get("BDTOOLS_STRICT_USER_HEADER", "").strip() in ("1", "true", "yes")
 COOKIE = "bdtools_session"
+
+# Fail CLOSED when the wall is missing. Under OOD (not LOCAL) this dashboard
+# binds 0.0.0.0 on a shared node, and the ONLY thing keeping other users off
+# it — and off every tool it proxies, acting as the session owner — is the
+# session token. It arrived empty once (the card's before.sh believed the
+# batch_connect basic template mints $password; it does not) and every session
+# served unauthenticated, silently, because "no token" meant "don't check".
+# A session that cannot authenticate must not start. The operator escape
+# hatch for a deliberately open host is explicit and greppable.
+if (
+    not LOCAL
+    and not TOKEN
+    and os.environ.get("BDTOOLS_INSECURE_NO_TOKEN", "").strip() != "1"
+):
+    raise SystemExit(
+        "refusing to start: OOD mode (BDTOOLS_LOCAL unset) with an empty session "
+        "token. Re-render the dashboard card — `bdtools install --server "
+        "--dashboard` — so template/before.sh mints $password (older rendered "
+        "cards never did), or set BDTOOLS_INSECURE_NO_TOKEN=1 to accept an "
+        "unauthenticated dashboard on this host."
+    )
 # Local control-plane requests always require a custom-header token, including
 # on tokenless personal Macs/WSL. A hostile web page can submit a plain POST to
 # 127.0.0.1, but it cannot add this header without a CORS preflight (we expose no

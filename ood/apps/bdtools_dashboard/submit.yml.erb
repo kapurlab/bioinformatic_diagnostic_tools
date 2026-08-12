@@ -12,8 +12,12 @@
 # "--partition=" rendered empty and made the card unlaunchable outside Slurm).
 batch_connect:
   template: "basic"
+  # password must be a conn_param: view.html.erb builds the ?t=<token> link
+  # from the CONNECTION info, not the shell env — without it the view rendered
+  # "?t=" (empty) and the dashboard ran with no token to enforce.
   conn_params:
     - port
+    - password
 
 # Form attributes are read as BARE locals, not through a `context` object, and
 # there is deliberately no `wall_time:` here. OOD 4 renders this file with a

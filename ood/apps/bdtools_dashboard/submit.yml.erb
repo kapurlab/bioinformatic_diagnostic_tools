@@ -1,8 +1,15 @@
 ---
-# Slurm batch_connect submission for the consolidated dashboard. Runs on ONE
-# compute node; `port` is allocated on that node by before.sh and proxied back
-# through OOD's rnode. Every tool the dashboard launches binds 127.0.0.1 on this
-# same node — reachable only through the dashboard's authenticated reverse proxy.
+# batch_connect submission for the consolidated dashboard. Runs on ONE node;
+# `port` is allocated on that node by before.sh and proxied back through OOD's
+# rnode. Every tool the dashboard launches binds 127.0.0.1 on this same node —
+# reachable only through the dashboard's authenticated reverse proxy.
+#
+# Two adapters, one file. On a Slurm cluster the user fills in the partition
+# field and the sbatch args below are emitted. On a linux_host cluster (a lab
+# server like wgs3) the partition stays blank and NO script.native section
+# renders — the session takes the machine like every per-tool card there, and
+# sbatch flags would be meaningless to that adapter (an unconditional
+# "--partition=" rendered empty and made the card unlaunchable outside Slurm).
 batch_connect:
   template: "basic"
   conn_params:
@@ -15,6 +22,7 @@ batch_connect:
 # readable here at all — declaring it in form.yml is what sets the walltime, which
 # is why computing wall_time by hand was both redundant and fatal. Bare locals
 # work on 3.x as well, so this is one file for both.
+<%- unless slurm_partition.to_s.strip.empty? -%>
 script:
   native:
     - "--nodes=1"
@@ -24,4 +32,5 @@ script:
     - "--partition=<%= slurm_partition.to_s.strip %>"
 <%- unless slurm_account.to_s.strip.empty? -%>
     - "--account=<%= slurm_account.to_s.strip %>"
+<%- end -%>
 <%- end -%>

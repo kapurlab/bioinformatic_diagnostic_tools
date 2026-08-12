@@ -20,7 +20,7 @@ attributes:
     widget: "text_field"
     label: "Slurm partition"
     value: ""
-    help: "The partition/queue to submit to (e.g. open, standard, batch). Ask your HPC admin if unsure."
+    help: "The partition/queue to submit to (e.g. open, standard, batch) — Slurm clusters only. LEAVE BLANK on a lab server (linux_host cluster, e.g. wgs3). Ask your HPC admin if unsure."
 
   slurm_account:
     widget: "text_field"

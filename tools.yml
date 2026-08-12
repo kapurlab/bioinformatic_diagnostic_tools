@@ -86,7 +86,7 @@ tools:
     dev_apps: [vsnp_gui_dev]
     env: vsnp3
     databases: [vsnp3_refs]
-    packages: [bioconda::vsnp3=3.35, bioconda::snp-dists=1.2.0]
+    packages: [bioconda::vsnp3=3.36, bioconda::snp-dists=1.2.0]
 
   - name: amr_plus_gui
     repo: https://github.com/kapurlab/amr_plus_gui.git

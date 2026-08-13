@@ -97,6 +97,12 @@ class BannerRenderTests(unittest.TestCase):
             "document={getElementById:()=>_el};\n"
             # Declared just above renderUpdates in PAGE, outside this slice.
             "const releaseInfo={};\n"
+            # Declared in load()'s section BELOW this slice (api_info fields);
+            # served defaults. Without these stubs every state that reaches the
+            # offered-updates branch throws ReferenceError — which is exactly
+            # what happened when they were added below the slice unstubbed.
+            "let canUpdate=true;\n"
+            "let canControlG=false;\n"
             + body +
             f"\nrenderUpdates({payload});\n"
             "console.log(_el.className+'|'+(_el.innerHTML||_el.textContent));\n"
@@ -191,6 +197,19 @@ class BannerRenderTests(unittest.TestCase):
         self.assertNotIn("Updates available", html)
         self.assertIn("1 newer version is available and not offered", html)
         self.assertIn("v0.2.4", html)      # still says WHICH version
+
+    def test_the_not_offered_line_explains_itself_on_click(self):
+        # The old title= tooltip was invisible in practice — all anyone saw was
+        # the help cursor next to an unexplained warning. The expander must say
+        # what "not offered" means, name the tool and both versions, and give
+        # the exact command for a deliberate update.
+        html = self.render(f"[{self.KEPT}]")
+        self.assertIn("toggleKeptPanel", html)
+        self.assertIn("What this means", html)
+        self.assertIn("bin/bdtools update kraken_id_parse_gui --allow-report-only",
+                      html)
+        self.assertIn("v0.2.3", html)      # installed version, in the table row
+        self.assertIn("Should you update?", html)
 
     def test_a_report_only_tool_does_not_join_the_offered_group(self):
         html = self.render(f"[{self.TOOL},{self.KEPT}]")

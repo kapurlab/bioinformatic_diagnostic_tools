@@ -606,6 +606,12 @@ addEventListener('storage',e=>{if(e.key===THEME_KEY)applyTheme(preferredTheme(),
  .updates li.ugroup ul{font-weight:400;margin-top:2px}
  .updates li{margin:2px 0}
  .updates .uheldnote{border-bottom:1px dotted currentColor;cursor:help}
+ .updates a.uheldnote{color:inherit;text-decoration:none;cursor:pointer}
+ .updates .kpanel{margin:8px 0 2px;padding:10px 14px;border:1px solid var(--line);
+   border-radius:10px;background:var(--soft);color:var(--ink);font-size:13px;line-height:1.55}
+ .updates .kpanel table{border-collapse:collapse;margin:6px 0}
+ .updates .kpanel td{padding:2px 18px 2px 0;white-space:nowrap}
+ .updates .kpanel code{user-select:all}
  .updates .uactions{display:flex;gap:8px;flex-wrap:wrap}
  .updates button.u{background:var(--accent)}
  .updates button.link{background:transparent;color:var(--accent);padding:4px 6px;font-weight:600}
@@ -712,6 +718,11 @@ addEventListener('storage',e=>{if(e.key===THEME_KEY)applyTheme(preferredTheme(),
 <script>
 applyTheme(document.documentElement.dataset.themeMode||'system',false);
 function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+function toggleKeptPanel(ev){
+  ev.preventDefault();
+  const p=document.getElementById('keptPanel');
+  if(p) p.style.display = (p.style.display==='none') ? 'block' : 'none';
+}
 let controlToken='';
 let bootId='';          // identity of the dashboard process we are talking to
 async function ensureControl(){
@@ -928,13 +939,39 @@ function renderUpdates(d){
         + ` at the installed version — a newer release exists that ${held.length>1?"these environments":"this environment"} `
         + `cannot take. The tool card says which, and why.`
       : '';
+    // A clickable expander, not a hover tooltip: the old title= tooltip was
+    // invisible in practice (all anyone saw was the help cursor), so the line
+    // read as an unexplained warning. The panel says what "not offered"
+    // means, names each tool and version, and gives the exact command —
+    // there is deliberately no button (a rebuild is a per-tool decision).
     const keptNote = kept.length
-      ? ` <span class="uheldnote" title="${esc(kept.map(i=>i.label+": "+i.installed+" -> "+i.latest).join("\\n"))}">`
-        + `${kept.length} newer version${kept.length>1?"s are":" is"} available and not offered</span>`
+      ? ` <a href="#" class="uheldnote" onclick="toggleKeptPanel(event)">`
+        + `${kept.length} newer version${kept.length>1?"s are":" is"} available and not offered</a>`
         + ` — updating is opt-in per tool in tools.yml, so nothing is rebuilt behind your back.`
+        + ` <a href="#" onclick="toggleKeptPanel(event)" style="color:inherit">What does this mean?</a>`
+      : '';
+    const keptRows = kept.map(i =>
+      `<tr><td><b>${esc(i.label)}</b></td>`
+      + `<td>${esc(i.installed)} → ${esc(i.latest)}</td>`
+      + `<td><code>bin/bdtools update ${esc(i.name)} --allow-report-only</code></td></tr>`
+    ).join('');
+    const keptPanel = kept.length
+      ? `<div id="keptPanel" class="kpanel" style="display:none">`
+        + `<b>What this means.</b> These tools have a newer release on GitHub, and tools.yml marks them `
+        + `<i>report-only</i>: the dashboard names the release but never installs it. A rebuild that fails `
+        + `costs a working, validated tool, so moving a tool forward is a deliberate act, one tool at a time.`
+        + `<table>${keptRows}</table>`
+        + `<b>Should you update?</b> Staying behind is safe by design — these releases move the GUI layer only; `
+        + `the pinned analysis software (vsnp3, AMRFinderPlus, kraken2 …) is unchanged. Update a tool when its `
+        + `release fixes something you have hit or adds something you want.<br>`
+        + `<b>How:</b> in a terminal, from the suite directory on this machine: <code>git pull</code> first `
+        + `(it carries the new version pins and install scripts), then the tool's command above. `
+        + `There is deliberately no update button for these.`
+        + `</div>`
       : '';
     box.innerHTML = `✓ Up to date.${note}${keptNote} `
-      + `<a href="#" onclick="checkUpdates(true);return false" style="color:inherit">Re-check</a>`;
+      + `<a href="#" onclick="checkUpdates(true);return false" style="color:inherit">Re-check</a>`
+      + keptPanel;
     return;
   }
   box.className='updates avail';

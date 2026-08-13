@@ -103,6 +103,7 @@ class BannerRenderTests(unittest.TestCase):
             # what happened when they were added below the slice unstubbed.
             "let canUpdate=true;\n"
             "let canControlG=false;\n"
+            "let suiteDir='/srv/kapurlab/tools/bioinformatic_diagnostic_tools';\n"
             + body +
             f"\nrenderUpdates({payload});\n"
             "console.log(_el.className+'|'+(_el.innerHTML||_el.textContent));\n"
@@ -193,7 +194,10 @@ class BannerRenderTests(unittest.TestCase):
         # asked for broke a working install.
         html = self.render(f"[{self.KEPT}]")
         self.assertIn("Up to date", html)
-        self.assertNotIn("Install tool updates", html)
+        # What must not exist is an actionable CONTROL. The explainer panel is
+        # allowed to name the button in prose (that is how it tells you what
+        # opting in changes), so assert on the click handler, not the words.
+        self.assertNotIn("applyUpdates(", html)
         self.assertNotIn("Updates available", html)
         self.assertIn("1 newer version is available and not offered", html)
         self.assertIn("v0.2.4", html)      # still says WHICH version
@@ -210,6 +214,13 @@ class BannerRenderTests(unittest.TestCase):
                       html)
         self.assertIn("v0.2.3", html)      # installed version, in the table row
         self.assertIn("Should you update?", html)
+        # And it must answer "how do I opt one in?", which is a tools.yml edit,
+        # not a flag — the question the flag alone left unanswered.
+        self.assertIn("Opting a tool in permanently", html)
+        self.assertIn("updates: install", html)
+        self.assertIn("tools.yml", html)
+        # The cd path must be the real directory, not a placeholder.
+        self.assertIn("/srv/kapurlab/tools/bioinformatic_diagnostic_tools", html)
 
     def test_a_report_only_tool_does_not_join_the_offered_group(self):
         html = self.render(f"[{self.TOOL},{self.KEPT}]")

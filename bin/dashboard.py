@@ -612,6 +612,10 @@ addEventListener('storage',e=>{if(e.key===THEME_KEY)applyTheme(preferredTheme(),
  .updates .kpanel table{border-collapse:collapse;margin:6px 0}
  .updates .kpanel td{padding:2px 18px 2px 0;white-space:nowrap}
  .updates .kpanel code{user-select:all}
+ .updates .kpanel pre{background:var(--bg);border:1px solid var(--line);border-radius:6px;
+   padding:8px 10px;margin:6px 0;overflow-x:auto;font-size:12.5px;user-select:all}
+ .updates .kpanel p{margin:8px 0}
+ .updates .kmuted{color:var(--muted)}
  .updates .uactions{display:flex;gap:8px;flex-wrap:wrap}
  .updates button.u{background:var(--accent)}
  .updates button.link{background:transparent;color:var(--accent);padding:4px 6px;font-weight:600}
@@ -963,10 +967,22 @@ function renderUpdates(d){
         + `<table>${keptRows}</table>`
         + `<b>Should you update?</b> Staying behind is safe by design — these releases move the GUI layer only; `
         + `the pinned analysis software (vsnp3, AMRFinderPlus, kraken2 …) is unchanged. Update a tool when its `
-        + `release fixes something you have hit or adds something you want.<br>`
-        + `<b>How:</b> in a terminal, from the suite directory on this machine: <code>git pull</code> first `
-        + `(it carries the new version pins and install scripts), then the tool's command above. `
-        + `There is deliberately no update button for these.`
+        + `release fixes something you have hit or adds something you want.`
+        + `<p><b>Updating one now (no opt-in needed).</b> In a terminal on this machine, from `
+        + `the suite directory. The <code>git pull</code> comes first — it carries the new version pins and `
+        + `install scripts that the tool update then runs under:</p>`
+        + `<pre>cd ${esc(suiteDir || "&lt;suite directory&gt;")}\ngit pull\n`
+        + `bin/bdtools update &lt;tool&gt; --allow-report-only</pre>`
+        + `<p>The tool name is the third column above. <code>--allow-report-only</code> is the flag that says `
+        + `"yes, I mean this one" — without it the CLI refuses, exactly as the dashboard does.</p>`
+        + `<p><b>Opting a tool in permanently</b> (so it appears under <i>Install tool updates</i> and is `
+        + `offered here from then on): edit <code>tools.yml</code> in the suite directory, find that tool's `
+        + `entry, and change its <code>updates:</code> line — then commit it, so every machine in the lab `
+        + `agrees:</p>`
+        + `<pre>  - name: &lt;tool&gt;\n    updates: report      <span class="kmuted"># named here, never installed</span>\n`
+        + `    updates: install     <span class="kmuted"># offered as a button, rebuilt on request</span></pre>`
+        + `<p class="kmuted">Only vsnp_gui is opted in today. That is the intended state for a diagnostic `
+        + `lab: the version you validated keeps running until you decide otherwise.</p>`
         + `</div>`
       : '';
     box.innerHTML = `✓ Up to date.${note}${keptNote} `
@@ -1138,10 +1154,12 @@ async function pollUpdate(){
 // ---- Which machine is this? + Shut down / Restart controls (local mode only).
 let canUpdate=true;   // api_info.can_update — false on an install this user can't write
 let canControlG=false; // api_info.can_control — Restart/Shut down wired up?
+let suiteDir='';       // api_info.suite_dir — the cd path in the update instructions
 async function loadInfo(){
   try{
     const r = await fetch('./api/info'); const d = await r.json();
     canControlG = !!d.can_control;
+    suiteDir = d.suite_dir||'';
     if(d.can_update===false){ canUpdate=false; pollUpdates(); }
     controlToken=d.control_token||'';
     bootId=d.boot_id||'';
@@ -1284,6 +1302,9 @@ class Handler(BaseHTTPRequestHandler):
             self._send(503 if EXITING else 200, json.dumps(
                 {"host": socket.gethostname(), "local": True, "can_control": True,
                  "can_update": True, "control_token": CONTROL_TOKEN,
+                 # Where to run the commands the update panel prints. Naming the
+                 # real directory turns "run this somewhere" into copy-and-paste.
+                 "suite_dir": str(BIN_DIR.parent),
                  "boot_id": BOOT_ID, "restarting": EXITING}))
         elif path == "/api/tools":
             self._send(200, json.dumps(SUITE.state()))

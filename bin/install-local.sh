@@ -491,6 +491,14 @@ generic_build() {
     else
       ok "env present: ${DIR}/env"
     fi
+  elif [[ -n "$(resolve_env_prefix)" ]]; then
+    # An env this tool already runs from, kept outside the checkout (a shared
+    # site env, a sandbox's own conda env). Building a second one here would
+    # solve for minutes and then be ignored by every launch, which is what
+    # `resolve_python` would still pick. Same reasoning as build_vsnp_local.
+    ok "using this machine's existing ${TOOL} env: $(resolve_env_prefix)"
+    info "  (managed outside the checkout — left as it is)"
+    return 0
   elif [[ -f "${env_file}" ]]; then
     with_progress "${TOOL}: creating conda env (solve can take several minutes)" \
       _conda_step "${DIR}/env" "${conda}" env create -p "${DIR}/env" -f "${env_file}"
@@ -617,9 +625,20 @@ build_vsnp_local() {
   ok "conda: ${conda}"
   # 1. vsnp3 env (+ snp-dists for Step 2). CONDA_SUBDIR=osx-64 already exported on
   #    Apple Silicon by ensure_conda_subdir, so this runs under Rosetta there.
-  if [[ -x "${DIR}/env/bin/python" ]]; then
-    ok "env present: ${DIR}/env"
+  #    ENVP is the env that will actually run this tool: <checkout>/env, or an
+  #    existing external one (see resolve_env_prefix). Everything below targets
+  #    ENVP, so an update refreshes the env in use rather than provisioning a
+  #    parallel one nothing launches.
+  local ENVP; ENVP="$(resolve_env_prefix)"
+  if [[ -n "${ENVP}" ]]; then
+    if [[ "${ENVP}" == "${DIR}/env" ]]; then
+      ok "env present: ${ENVP}"
+    else
+      ok "using this machine's existing ${TOOL} env: ${ENVP}"
+      info "  (managed outside the checkout — refreshing it in place, not rebuilding)"
+    fi
   else
+    ENVP="${DIR}/env"
     # Create the env AT the manifest pins, not open-ended.
     #
     # `conda create ... vsnp3 snp-dists` looks harmless and is not: with no
@@ -644,15 +663,15 @@ build_vsnp_local() {
     done
     [[ ${#create_specs[@]} -gt 0 ]] || create_specs=(vsnp3 snp-dists)
     with_progress "${TOOL}: creating vsnp3 env (${create_specs[*]}; solve can take several minutes)" \
-      _conda_step "${DIR}/env" "${conda}" create -y -p "${DIR}/env" -c conda-forge -c bioconda "${create_specs[@]}"
+      _conda_step "${ENVP}" "${conda}" create -y -p "${ENVP}" -c conda-forge -c bioconda "${create_specs[@]}"
   fi
-  harden_conda_hooks "${DIR}/env"
+  harden_conda_hooks "${ENVP}"
   # 2. web layer (uvicorn is served from this same python)
-  [[ -x "${DIR}/env/bin/pip" ]] && run "${DIR}/env/bin/pip" install --upgrade \
+  [[ -x "${ENVP}/bin/pip" ]] && run "${ENVP}/bin/pip" install --upgrade \
       fastapi uvicorn pydantic python-multipart aiofiles
   # 3. Kapur Lab vsnp3 patches (idempotent; safe on the packaged version)
   [[ -x "${DIR}/deploy/vsnp3-patches/apply.sh" ]] && \
-    { run "${DIR}/deploy/vsnp3-patches/apply.sh" "${DIR}/env" || warn "vsnp3 patch step reported an issue (continuing)"; }
+    { run "${DIR}/deploy/vsnp3-patches/apply.sh" "${ENVP}" || warn "vsnp3 patch step reported an issue (continuing)"; }
   # 4. reference_options (USDA-VS) + register the path vsnp3 reads at runtime.
   #    Prefer a database-setup-managed reference set (bdtools setup-databases
   #    writes BDTOOLS_HOME/db-root) so we don't clone a second copy; otherwise
@@ -687,7 +706,7 @@ build_vsnp_local() {
   if [[ ${DRY_RUN} -eq 0 ]]; then
     local site="${BDTOOLS_HOME}/vsnp3-site"
     mkdir -p "${site}/refs/vsnp3/vcf_db_folders" "${site}/tools" "${site}/projects" "${site}/audit"
-    ln -sfn "${DIR}/env" "${site}/tools/vsnp3"                  # GUI vsnp3_path
+    ln -sfn "${ENVP}" "${site}/tools/vsnp3"                     # GUI vsnp3_path
     # Kraken ID Parse is a sibling tool the vSNP backend shells out to from Step 1.
     # Link the CHECKOUT dir here — NOT its env like vsnp3 above — because the
     # backend appends /bin/kraken_id_parse.py and /env/bin/python to this path
@@ -858,8 +877,11 @@ build() {
 enforce_package_pins() {
   local specs; specs="$(manifest_get "${TOOL}" packages 2>/dev/null || true)"
   [[ -n "${specs}" ]] || return 0
-  local envdir="${DIR}/env"
-  [[ -x "${envdir}/bin/python" ]] || return 0
+  # Read the env that actually runs the tool, not just <checkout>/env — on a
+  # deployment whose env lives elsewhere this used to check nothing and report
+  # nothing, so a pinned version could drift there unseen.
+  local envdir; envdir="$(resolve_env_prefix)"
+  [[ -n "${envdir}" && -x "${envdir}/bin/python" ]] || return 0
 
   local wanted=() spec pkg ver have
   for spec in ${specs}; do
@@ -907,6 +929,28 @@ have_python() {
 # --------------------------------------------------------------------------
 # 3. launch
 # --------------------------------------------------------------------------
+# The env prefix this tool will ACTUALLY run from, or "" if it has none yet.
+#
+# Same precedence as resolve_python below — <checkout>/env wins, else a conda env
+# named after the manifest's `env:` — so a build targets the env a launch will
+# use. Without this the two disagreed on every deployment that keeps its env
+# outside the checkout (an OOD sandbox whose env is ~/miniforge3/envs/vsnp3, a
+# site install sharing one env across tools): `bdtools update` saw no
+# <checkout>/env, decided the tool had no environment, and started building a
+# SECOND one from scratch — a multi-minute solve that on one HPC ran 46 minutes,
+# was killed as a runaway, retried, and failed the update. All to create an env
+# that would then have sat unused, because launch keeps preferring the existing
+# one. Adopting it instead makes an update on those machines what the user asked
+# for: move the code, leave the working environment alone.
+resolve_env_prefix() {
+  if [[ -x "${DIR}/env/bin/python" ]]; then echo "${DIR}/env"; return; fi
+  local conda p; conda="$(detect_conda 2>/dev/null || true)"
+  [[ -n "${conda}" && -n "${ENV_NAME}" ]] || return 0
+  "${conda}" env list 2>/dev/null | awk '{print $1}' | grep -qxF "${ENV_NAME}" || return 0
+  p="$("${conda}" run -n "${ENV_NAME}" sh -c 'echo $CONDA_PREFIX' 2>/dev/null)"
+  [[ -n "${p}" && -x "${p}/bin/python" ]] && echo "${p}"
+}
+
 resolve_python() {
   if [[ -x "${DIR}/env/bin/python" ]]; then echo "${DIR}/env/bin/python"; return; fi
   local conda; conda="$(detect_conda 2>/dev/null || true)"

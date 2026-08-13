@@ -25,6 +25,9 @@
 #   bdtools site-init [opts]            one-time bare-metal site bootstrap
 #   bdtools setup-databases [opts]      download shared reference DBs + wire the GUIs
 #   bdtools doctor  [tool ...]          check installs are runnable; print fixes
+#   bdtools fix     [tool|all]          run the repairs doctor recommends
+#                   [--apply]           (preview by default; data fetches only —
+#                                        env rebuilds are proposed, never run)
 #   bdtools lint    [tool ...]          (maintainer) flag dependency drift in repos
 #   bdtools test    <tool|all> [opts]   validate a deployment on a known sample
 #
@@ -53,7 +56,7 @@ done
 _bdt_dir="$(cd -P "$(dirname "${_bdt_src}")" && pwd)"
 source "${_bdt_dir}/lib/common.sh"
 
-usage() { sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; }
 
 cmd_list() {
   printf '%-22s %-26s %s\n' "TOOL" "VERSION (pinned)" "OOD APP(S)"
@@ -766,6 +769,8 @@ cmd_site_init() { "${KT_BIN_DIR}/site-init.sh" "$@"; }
 
 cmd_setup_databases() { "${KT_BIN_DIR}/setup-databases.sh" "$@"; }
 
+cmd_fix() { "${KT_BIN_DIR}/fix.sh" "$@"; }
+
 cmd_doctor() { "${KT_BIN_DIR}/doctor.sh" "$@"; }
 
 cmd_lint() { "${KT_BIN_DIR}/lint.sh" "$@"; }
@@ -800,6 +805,7 @@ main() {
     site-init)          cmd_site_init "$@";;
     setup-databases)    cmd_setup_databases "$@";;
     doctor)             cmd_doctor "$@";;
+    fix)                cmd_fix "$@";;
     lint)               cmd_lint "$@";;
     test)               cmd_test "$@";;
     -h|--help|help)     usage;;

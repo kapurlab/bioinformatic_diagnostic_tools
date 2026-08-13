@@ -405,7 +405,19 @@ def resolve(tool, port, host="127.0.0.1"):
     # export by a card or a wrapper still wins.
     if tool == "vsnp_gui":
         _site = os.path.join(_bdtools_home(), "vsnp3-site")
-        if os.path.isdir(_site):
+        # "The personal site tree exists" is NOT the same as "this is a personal
+        # install". A box can have both: an old local install left
+        # <BDTOOLS_HOME>/vsnp3-site behind, and the tool now runs from a shared
+        # site checkout. Taking the personal tree there pointed vsnp_gui (and
+        # doctor, which grades what this resolver returns) at an empty refs
+        # directory, so a site with 28 reference sets was reported as having
+        # none — with a fix that would have downloaded a second copy into the
+        # wrong place. Only prefer the personal tree when the tool really is the
+        # managed personal checkout; a site install takes the root its
+        # deployment declares.
+        _managed = os.path.join(_bdtools_home(), "checkouts", tool)
+        _is_personal = os.path.realpath(d) == os.path.realpath(_managed)
+        if os.path.isdir(_site) and (_is_personal or not env.get(site_paths.ENV_SITE_ROOT)):
             env.setdefault("VSNP_GUI_SITE_ROOT", _site)
             # Single-user local install: one Projects root. "" is authoritative-empty
             # in the backend (disables the multi-user shared root); mirrors install-local.sh.

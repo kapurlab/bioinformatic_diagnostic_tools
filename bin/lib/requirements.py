@@ -68,6 +68,10 @@ REQUIREMENTS = {
         "databases": [
             {"label": "vSNP reference options", "config_key": "vsnp3_reference_options_root",
              "kind": "dir",
+             # vsnp3 locates references through this file at run time, so it is
+             # the authority — checked before the config key, which can hold a
+             # stale path from an earlier install on the same machine.
+             "paths_file": "dependencies/reference_options_paths.txt",
              "default": "${VSNP_GUI_SITE_ROOT:-/srv/kapurlab}/refs/vsnp3/reference_options",
              "fix": "bin/bdtools setup-databases vsnp-refs vsnp-deps"},
         ],

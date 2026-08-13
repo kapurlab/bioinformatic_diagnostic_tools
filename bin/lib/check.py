@@ -243,7 +243,36 @@ def _expand(s):
     return os.path.expandvars(s)
 
 
-def check_db(tool, db):
+def _paths_file_roots(env_bin, rel):
+    """Directories listed in a tool's runtime paths file, if it has one.
+
+    Some references are located by a FILE the analysis package reads at run time
+    (vsnp3: <env>/dependencies/reference_options_paths.txt), not by a config key.
+    That file is the authority — it is what vsnp3 and the GUI both consult — so a
+    config key pointing somewhere else does not make the references missing. A
+    stale key from a previous local install had doctor reporting "vSNP reference
+    options missing" on a site with 28 reference sets loaded and visible in the
+    GUI, and offering to download a second copy into the wrong place.
+    """
+    if not rel or not env_bin:
+        return []
+    path = Path(env_bin).parent / rel
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    return [ln.strip() for ln in lines if ln.strip() and not ln.strip().startswith("#")]
+
+
+def check_db(tool, db, env_bin=""):
+    # What the tool actually reads at run time wins over what a config key says.
+    for root in _paths_file_roots(env_bin, db.get("paths_file", "")):
+        p = Path(root)
+        try:
+            if p.is_dir() and any(p.iterdir()):
+                return True, str(p)
+        except OSError:
+            continue
     # The tool uses the configured path if set, else a computed default (which
     # is what config.py falls back to when the key was never written). Check
     # whichever the tool would actually use.
@@ -357,7 +386,7 @@ def run_checks(tool, env_py, scope, tool_dir=None):
 
     if scope == "all":
         for db in spec.get("databases", []):
-            ok, detail = check_db(tool, db)
+            ok, detail = check_db(tool, db, env_bin=env_bin)
             if ok:
                 lines.append((OK, db["label"], None))
             else:

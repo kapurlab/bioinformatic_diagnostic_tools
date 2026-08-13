@@ -202,21 +202,22 @@ class BannerRenderTests(unittest.TestCase):
         self.assertIn("1 newer version is available and not offered", html)
         self.assertIn("v0.2.4", html)      # still says WHICH version
 
-    def test_the_not_offered_line_explains_itself_on_click(self):
-        # The old title= tooltip was invisible in practice — all anyone saw was
-        # the help cursor next to an unexplained warning. The expander must say
-        # what "not offered" means, name the tool and both versions, and give
-        # the exact command for a deliberate update.
+    def test_the_not_offered_line_explains_itself_without_interaction(self):
+        # First a title= tooltip nobody could see, then a panel behind a click
+        # nobody found — twice reported as "there are no directions". The
+        # instructions must therefore be in the rendered page with no hover and
+        # no click: visible by default, collapsible after the fact.
         html = self.render(f"[{self.KEPT}]")
         self.assertIn("toggleKeptPanel", html)
-        self.assertIn("What this means", html)
+        self.assertNotIn('id="keptPanel" class="kpanel" style="display:none"', html)
+        self.assertIn("To update one of these", html)
         self.assertIn("bin/bdtools update kraken_id_parse_gui --allow-report-only",
                       html)
         self.assertIn("v0.2.3", html)      # installed version, in the table row
-        self.assertIn("Should you update?", html)
+        self.assertIn("Do you need to?", html)
         # And it must answer "how do I opt one in?", which is a tools.yml edit,
         # not a flag — the question the flag alone left unanswered.
-        self.assertIn("Opting a tool in permanently", html)
+        self.assertIn("To stop being asked", html)
         self.assertIn("updates: install", html)
         self.assertIn("tools.yml", html)
         # The cd path must be the real directory, not a placeholder.

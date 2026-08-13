@@ -725,7 +725,11 @@ function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>
 function toggleKeptPanel(ev){
   ev.preventDefault();
   const p=document.getElementById('keptPanel');
-  if(p) p.style.display = (p.style.display==='none') ? 'block' : 'none';
+  const t=document.getElementById('keptToggle');
+  if(!p) return;
+  const showing = p.style.display !== 'none';
+  p.style.display = showing ? 'none' : 'block';
+  if(t) t.textContent = showing ? 'Show me how' : 'Hide';
 }
 let controlToken='';
 let bootId='';          // identity of the dashboard process we are talking to
@@ -949,39 +953,41 @@ function renderUpdates(d){
     // means, names each tool and version, and gives the exact command —
     // there is deliberately no button (a rebuild is a per-tool decision).
     const keptNote = kept.length
-      ? ` <a href="#" class="uheldnote" onclick="toggleKeptPanel(event)">`
-        + `${kept.length} newer version${kept.length>1?"s are":" is"} available and not offered</a>`
-        + ` — updating is opt-in per tool in tools.yml, so nothing is rebuilt behind your back.`
-        + ` <a href="#" onclick="toggleKeptPanel(event)" style="color:inherit">What does this mean?</a>`
+      ? ` <b>${kept.length} newer version${kept.length>1?"s are":" is"} available and not offered</b>`
+        + ` — updating is opt-in per tool, so nothing is rebuilt behind your back.`
+        + ` <a href="#" id="keptToggle" onclick="toggleKeptPanel(event)">Hide</a>`
       : '';
     const keptRows = kept.map(i =>
       `<tr><td><b>${esc(i.label)}</b></td>`
       + `<td>${esc(i.installed)} → ${esc(i.latest)}</td>`
       + `<td><code>bin/bdtools update ${esc(i.name)} --allow-report-only</code></td></tr>`
     ).join('');
+    const cd = esc(suiteDir || "<suite directory>");
     const keptPanel = kept.length
-      ? `<div id="keptPanel" class="kpanel" style="display:none">`
-        + `<b>What this means.</b> These tools have a newer release on GitHub, and tools.yml marks them `
-        + `<i>report-only</i>: the dashboard names the release but never installs it. A rebuild that fails `
-        + `costs a working, validated tool, so moving a tool forward is a deliberate act, one tool at a time.`
+      ? `<div id="keptPanel" class="kpanel">`
+        // The instruction first. Everything else on this panel is context for a
+        // decision the user has usually already made by the time they open it.
+        + `<b>To update one of these, run this on this machine:</b>`
+        + `<pre>cd ${cd}\ngit pull\nbin/bdtools update <b>&lt;tool&gt;</b> --allow-report-only</pre>`
+        + `<p>Replace <code>&lt;tool&gt;</code> with a name from the last column below. `
+        + `<code>git pull</code> comes first because it carries the new version pins and install `
+        + `scripts the update runs under. <code>--allow-report-only</code> is you saying "yes, `
+        + `I mean this one" — without it the command refuses, exactly as this dashboard does. `
+        + `Afterwards, reopen the tool (an already-running session keeps the old code).</p>`
         + `<table>${keptRows}</table>`
-        + `<b>Should you update?</b> Staying behind is safe by design — these releases move the GUI layer only; `
-        + `the pinned analysis software (vsnp3, AMRFinderPlus, kraken2 …) is unchanged. Update a tool when its `
-        + `release fixes something you have hit or adds something you want.`
-        + `<p><b>Updating one now (no opt-in needed).</b> In a terminal on this machine, from `
-        + `the suite directory. The <code>git pull</code> comes first — it carries the new version pins and `
-        + `install scripts that the tool update then runs under:</p>`
-        + `<pre>cd ${esc(suiteDir || "&lt;suite directory&gt;")}\ngit pull\n`
-        + `bin/bdtools update &lt;tool&gt; --allow-report-only</pre>`
-        + `<p>The tool name is the third column above. <code>--allow-report-only</code> is the flag that says `
-        + `"yes, I mean this one" — without it the CLI refuses, exactly as the dashboard does.</p>`
-        + `<p><b>Opting a tool in permanently</b> (so it appears under <i>Install tool updates</i> and is `
-        + `offered here from then on): edit <code>tools.yml</code> in the suite directory, find that tool's `
-        + `entry, and change its <code>updates:</code> line — then commit it, so every machine in the lab `
-        + `agrees:</p>`
+        + `<p><b>Why isn't there a button?</b> tools.yml marks these <i>report-only</i>: the `
+        + `dashboard names the release but never installs it. A rebuild re-solves every dependency, `
+        + `and one that fails part-way leaves an environment that may no longer run the tool — `
+        + `which has happened here. So moving a tool forward is deliberate, one tool at a time.</p>`
+        + `<p><b>Do you need to?</b> Staying behind is safe by design. These releases move the GUI `
+        + `layer only; the pinned analysis software (vsnp3, AMRFinderPlus, kraken2 …) is unchanged. `
+        + `Update a tool when its release fixes something you have hit.</p>`
+        + `<p><b>To stop being asked</b> and have a tool offered as a button here from now on, edit `
+        + `<code>tools.yml</code> in the suite directory and change that tool's <code>updates:</code> `
+        + `line, then commit it so every machine in the lab agrees:</p>`
         + `<pre>  - name: &lt;tool&gt;\n    updates: report      <span class="kmuted"># named here, never installed</span>\n`
         + `    updates: install     <span class="kmuted"># offered as a button, rebuilt on request</span></pre>`
-        + `<p class="kmuted">Only vsnp_gui is opted in today. That is the intended state for a diagnostic `
+        + `<p class="kmuted">Only vsnp_gui is opted in today — the intended state for a diagnostic `
         + `lab: the version you validated keeps running until you decide otherwise.</p>`
         + `</div>`
       : '';

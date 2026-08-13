@@ -560,6 +560,19 @@ addEventListener('storage',e=>{if(e.key===THEME_KEY)applyTheme(preferredTheme(),
                padding:0 6px;font-weight:650}
  html[data-theme="dark"] .vers .vnew{color:#f0cf95;background:#3a3115}
  html[data-theme="dark"] .vers .vdrift{color:#f0b79a;background:#3f2317;border-color:#5d3826}
+ /* Software version policy — the formal footer that explains what the badges
+    above mean and why versions here move deliberately. Styled like a card so it
+    reads as part of the product, not an afterthought. */
+ .policy{background:var(--card);border:1px solid var(--line);border-radius:12px;
+   padding:16px 18px;margin:22px 0 8px;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+ .policy h2{margin:0 0 6px;font-size:15px}
+ .policy p{margin:6px 0;color:var(--muted);font-size:13px;line-height:1.55;max-width:105ch}
+ .policy .plegend{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;
+   margin:10px 0 4px;font-size:13px;align-items:baseline}
+ .policy .plegend .vers{font-size:12.5px;white-space:nowrap}
+ .policy .plegend div{color:var(--muted);line-height:1.5}
+ .policy .pfoot{margin-top:8px;font-size:12.5px;color:var(--muted)}
+ .policy code{background:var(--code);border-radius:6px;padding:1px 5px}
  .dev{background:var(--danger-bg);border:1px solid var(--danger-line);border-radius:8px;padding:8px 10px;
    font-size:12px;color:var(--danger-ink)}
  .dev b{color:var(--danger-ink)}
@@ -670,6 +683,32 @@ addEventListener('storage',e=>{if(e.key===THEME_KEY)applyTheme(preferredTheme(),
 <div id="grid" class="grid"></div>
 <p class="recheck" id="recheck" style="display:none"><button onclick="recheck(this)">↻ Re-check readiness</button></p>
 <p class="note" id="note"></p>
+
+<section class="policy" aria-labelledby="policy-title">
+  <h2 id="policy-title">Software version policy</h2>
+  <p>Every analysis package in this suite runs at a <b>version pin</b> — the exact release this
+  laboratory has validated, recorded in the suite manifest. Nothing updates itself: the versions
+  that produced your previous results stay in place until an administrator deliberately moves
+  them, validates the change, and records the new pin. Each tool card above states the versions
+  in use, so what produced a result is always in view.</p>
+  <div class="plegend">
+    <span class="vers"><span class="vnew">↑ 1.3.5</span></span>
+    <div>A newer release has been published upstream. Informational only — it is adopted when the
+    laboratory chooses to validate it, not before.</div>
+    <span class="vers"><span class="vheld">held (2.17.1)</span></span>
+    <div>A newer release exists that this environment cannot take in place (a dependency conflict,
+    or no build for this platform). The installed version is the correct, supported one here; the
+    hold is deliberate and recorded, and is revisited when upstream resolves the conflict.</div>
+    <span class="vers"><span class="vdrift">≠ pinned 2.17.1</span></span>
+    <div>This environment is not on the validated version. The tool still runs; an administrator
+    should reconcile it (<code>bin/bdtools fix</code> shows the exact step).</div>
+    <span class="vers">no badge</span>
+    <div>The installed version matches the validated pin — current, as this laboratory defines it.</div>
+  </div>
+  <p class="pfoot">A pin is a quality control, not a limitation: every machine in the laboratory
+  producing the same result from the same versions outranks running the newest release. Routine
+  health checks: <code>bin/bdtools doctor</code> · safe automated repairs: <code>bin/bdtools fix</code>.</p>
+</section>
 <script>
 applyTheme(document.documentElement.dataset.themeMode||'system',false);
 function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}

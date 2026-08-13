@@ -480,6 +480,8 @@ cmd_dashboard() {
   # once configured, the ordinary `bdtools dashboard` command uses the same
   # source tree every time. An explicit --tools-dir still takes precedence.
   local tools_dir_file="${REPO_DIR}/.bdtools-tools-dir"
+  local tools_dir_from_flag=0
+  [[ -n "${tools_dir}" ]] && tools_dir_from_flag=1
   # `--tools-dir none` forgets the pointer, so going back to the released tools
   # doesn't mean knowing to delete an undocumented dotfile.
   case "${tools_dir}" in
@@ -487,6 +489,7 @@ cmd_dashboard() {
       rm -f "${tools_dir_file}"
       ok "cleared the tool-source override — tools now come from ${BDTOOLS_HOME}/checkouts/<tool>"
       tools_dir=""
+      tools_dir_from_flag=0
       ;;
   esac
   if [[ -z "${tools_dir}" && -f "${tools_dir_file}" ]]; then
@@ -497,6 +500,17 @@ cmd_dashboard() {
     [[ -d "${tools_dir}" ]] || die "--tools-dir does not exist: ${tools_dir}"
     BDTOOLS_TOOLSDIR="$(cd "${tools_dir}" && pwd -P)"
     export BDTOOLS_TOOLSDIR
+    # Actually remember it. There was a `--tools-dir none` that forgets the
+    # pointer and a read of it at startup, but nothing that ever wrote it — so
+    # the flag lasted exactly one invocation while --help said it was
+    # remembered. The failure mode is silent and severe: the next plain
+    # `bdtools dashboard` serves ${BDTOOLS_HOME}/checkouts/<tool> instead, which
+    # on a site tree is usually several releases behind, and the tester reads a
+    # missing feature as a broken feature.
+    if (( tools_dir_from_flag )); then
+      printf '%s\n' "${BDTOOLS_TOOLSDIR}" > "${tools_dir_file}" 2>/dev/null \
+        && info "remembered in .bdtools-tools-dir (clear it with --tools-dir none)"
+    fi
     info "Testing tool source from ${BDTOOLS_TOOLSDIR}"
     # This overrides CODE only. Conda envs and large vendored payloads (kSNP4's
     # 545 MB package) are gitignored, so a worktree has none — they're borrowed

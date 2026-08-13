@@ -715,6 +715,14 @@ class StateFileTests(unittest.TestCase):
         self.assertIn("--tools-dir", launcher)
         self.assertIn("export BDTOOLS_TOOLSDIR", launcher)
         self.assertIn(".bdtools-tools-dir", launcher)
+        # The pointer must be WRITTEN, not only read and deleted. It had a
+        # "forget" (--tools-dir none) and a read at startup but no write, so
+        # --tools-dir lasted one invocation while --help said it was
+        # remembered — and the next plain `bdtools dashboard` silently served
+        # the managed checkouts, which on a site tree are usually several
+        # releases behind whatever was being tested.
+        self.assertRegex(launcher, r">\s*\"\$\{tools_dir_file\}\"",
+                         "--tools-dir must persist to .bdtools-tools-dir")
         self.assertNotIn('pkill -f "uvicorn app.main:app"', (
             ROOT / "bin/bdtools"
         ).read_text(encoding="utf-8"))

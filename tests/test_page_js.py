@@ -82,8 +82,18 @@ class BannerRenderTests(unittest.TestCase):
     actually runs, and the banner is rendered from data the tests can supply.
     """
 
+    # Separates the banner from the foot-of-page panel in one captured line, so
+    # a test can assert WHERE something rendered and not merely that it exists.
+    HOST_MARK = "@@KEPT_HOST@@"
+
     def render(self, items):
         return self.render_state(f"{{checked:true,items:{items}}}")
+
+    def parts(self, items):
+        """(banner, foot-of-page panel) for one render."""
+        out = self.render(items)
+        banner, _, host = out.partition(self.HOST_MARK)
+        return banner, host
 
     def render_state(self, payload):
         page = load_page()
@@ -93,8 +103,20 @@ class BannerRenderTests(unittest.TestCase):
         harness = (
             "function esc(s){return String(s).replace(/[&<>]/g,"
             "c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}\n"
-            "const _el={className:'',innerHTML:'',textContent:''};\n"
-            "document={getElementById:()=>_el};\n"
+            # One stub element PER id. A single shared stub used to be enough,
+            # but the banner (#updates) and the kept-updates panel
+            # (#keptPanelHost, at the foot of the page) are now two elements —
+            # and with one shared stub whichever was written last silently
+            # became "the banner", so an assertion could pass against the wrong
+            # element's HTML entirely.
+            "const _els={};\n"
+            "const _get=id=>(_els[id]=_els[id]||"
+            "{className:'',innerHTML:'',textContent:'',style:{}});\n"
+            "document={getElementById:_get};\n"
+            "const _el=_get('updates');\n"
+            # Defined above renderUpdates in PAGE, outside this slice; the
+            # panel is written through it.
+            "function setKeptPanel(h){_get('keptPanelHost').innerHTML=h||'';}\n"
             # Declared just above renderUpdates in PAGE, outside this slice.
             "const releaseInfo={};\n"
             # Declared in load()'s section BELOW this slice (api_info fields);
@@ -106,7 +128,8 @@ class BannerRenderTests(unittest.TestCase):
             "let suiteDir='/srv/kapurlab/tools/bioinformatic_diagnostic_tools';\n"
             + body +
             f"\nrenderUpdates({payload});\n"
-            "console.log(_el.className+'|'+(_el.innerHTML||_el.textContent));\n"
+            "console.log(_el.className+'|'+(_el.innerHTML||_el.textContent)"
+            f"+'{self.HOST_MARK}'+_get('keptPanelHost').innerHTML);\n"
         )
         with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as fh:
             fh.write(harness)
@@ -222,6 +245,45 @@ class BannerRenderTests(unittest.TestCase):
         self.assertIn("tools.yml", html)
         # The cd path must be the real directory, not a placeholder.
         self.assertIn("/srv/kapurlab/tools/bioinformatic_diagnostic_tools", html)
+
+    def test_the_directions_render_at_the_foot_of_the_page_not_in_the_banner(self):
+        # The panel is a screenful of prose about a decision made rarely. Above
+        # the tool cards it pushed the tools off the screen on arrival, so it
+        # renders into #keptPanelHost at the foot of the page instead. The
+        # banner keeps the one-line notice and a link down to it — the
+        # directions must stay one click from the top, never a hover again.
+        banner, host = self.parts(f"[{self.KEPT}]")
+        self.assertIn("1 newer version is available and not offered", banner)
+        self.assertIn("How to update", banner)
+        self.assertIn("jumpToKeptPanel", banner)
+        self.assertNotIn("To update one of these", banner)
+        self.assertNotIn("kpanel", banner)
+        self.assertIn('id="keptPanel"', host)
+        self.assertIn("To update one of these", host)
+        self.assertIn("bin/bdtools update kraken_id_parse_gui --allow-report-only",
+                      host)
+        # Down here the panel is on its own, so it has to say what it is.
+        self.assertIn("Newer versions that are not offered", host)
+        # Hiding is offered ON the panel, where the thing being hidden is
+        # visible; a "Hide" at the top would act on something off-screen.
+        self.assertIn("toggleKeptPanel", host)
+
+    def test_a_repaint_leaves_no_stale_panel_at_the_foot_of_the_page(self):
+        # renderUpdates repaints on every poll. A tool that has just been
+        # updated (or a check that came back blind) must not leave its
+        # instructions standing at the bottom of the page.
+        for label, payload in (
+                ("an update is offered", f"[{self.PKG}]"),
+                ("nothing is kept", f"[{self.HELD}]"),
+        ):
+            with self.subTest(state=label):
+                _banner, host = self.parts(payload)
+                self.assertEqual(host.strip(), "",
+                                 "the foot-of-page panel should be empty here")
+        # …and while a check is in flight (an early return).
+        out = self.render_state(f"{{checked:true,checking:true,items:[{self.KEPT}]}}")
+        _banner, _, host = out.partition(self.HOST_MARK)
+        self.assertEqual(host.strip(), "", "a check in flight shows no panel")
 
     def test_a_report_only_tool_does_not_join_the_offered_group(self):
         html = self.render(f"[{self.TOOL},{self.KEPT}]")

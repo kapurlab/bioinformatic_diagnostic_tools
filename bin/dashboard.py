@@ -607,15 +607,21 @@ addEventListener('storage',e=>{if(e.key===THEME_KEY)applyTheme(preferredTheme(),
  .updates li{margin:2px 0}
  .updates .uheldnote{border-bottom:1px dotted currentColor;cursor:help}
  .updates a.uheldnote{color:inherit;text-decoration:none;cursor:pointer}
- .updates .kpanel{margin:8px 0 2px;padding:10px 14px;border:1px solid var(--line);
+ /* The kept-updates panel is NOT nested in .updates — it renders at the foot of
+    the page (see #keptPanelHost), so its rules must not be descendant-scoped or
+    it would lose every one of them the moment it moved out of the banner. */
+ .kpanel{margin:18px 0 2px;padding:10px 14px;border:1px solid var(--line);
    border-radius:10px;background:var(--soft);color:var(--ink);font-size:13px;line-height:1.55}
- .updates .kpanel table{border-collapse:collapse;margin:6px 0}
- .updates .kpanel td{padding:2px 18px 2px 0;white-space:nowrap}
- .updates .kpanel code{user-select:all}
- .updates .kpanel pre{background:var(--bg);border:1px solid var(--line);border-radius:6px;
+ .kpanel table{border-collapse:collapse;margin:6px 0}
+ .kpanel td{padding:2px 18px 2px 0;white-space:nowrap}
+ .kpanel code{user-select:all}
+ .kpanel pre{background:var(--bg);border:1px solid var(--line);border-radius:6px;
    padding:8px 10px;margin:6px 0;overflow-x:auto;font-size:12.5px;user-select:all}
- .updates .kpanel p{margin:8px 0}
- .updates .kmuted{color:var(--muted)}
+ .kpanel p{margin:8px 0}
+ .kpanel .ktitle{display:flex;align-items:baseline;gap:10px;font-weight:650;
+   font-size:14px;margin-bottom:2px}
+ .kpanel .ktitle a{margin-left:auto;font-weight:400;font-size:13px}
+ .kmuted{color:var(--muted)}
  .updates .uactions{display:flex;gap:8px;flex-wrap:wrap}
  .updates button.u{background:var(--accent)}
  .updates button.link{background:transparent;color:var(--accent);padding:4px 6px;font-weight:600}
@@ -719,17 +725,42 @@ addEventListener('storage',e=>{if(e.key===THEME_KEY)applyTheme(preferredTheme(),
   producing the same result from the same versions outranks running the newest release. Routine
   health checks: <code>bin/bdtools doctor</code> · safe automated repairs: <code>bin/bdtools fix</code>.</p>
 </section>
+<!-- The "how to take an update" panel renders HERE, at the foot of the page,
+     rather than inside #updates. It is a page of prose about a decision that is
+     made rarely; above the tool cards it pushed the tools themselves off the
+     screen on arrival. The banner keeps the one-line notice and a link down to
+     this panel, so the directions are still one click from the top. -->
+<div id="keptPanelHost"></div>
 <script>
 applyTheme(document.documentElement.dataset.themeMode||'system',false);
 function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+// The panel lives at the foot of the page and the notice that mentions it is at
+// the top, so the top link is a JUMP, not a toggle: hiding something the reader
+// cannot see reads as a dead link (which is how this line's directions went
+// unnoticed twice before). Hiding is offered on the panel itself, where the
+// thing being hidden is on screen.
+function jumpToKeptPanel(ev){
+  if(ev) ev.preventDefault();
+  const p=document.getElementById('keptPanel');
+  if(!p) return;
+  p.style.display='block';
+  if(p.scrollIntoView) p.scrollIntoView({behavior:'smooth', block:'start'});
+}
 function toggleKeptPanel(ev){
-  ev.preventDefault();
+  if(ev) ev.preventDefault();
   const p=document.getElementById('keptPanel');
   const t=document.getElementById('keptToggle');
   if(!p) return;
   const showing = p.style.display !== 'none';
   p.style.display = showing ? 'none' : 'block';
   if(t) t.textContent = showing ? 'Show me how' : 'Hide';
+}
+// Never leave a stale panel at the foot of the page: renderUpdates repaints on
+// every poll, and a tool that has just been updated (or a check that came back
+// blind) must not leave its instructions standing.
+function setKeptPanel(html){
+  const host=document.getElementById('keptPanelHost');
+  if(host) host.innerHTML = html || '';
 }
 let controlToken='';
 let bootId='';          // identity of the dashboard process we are talking to
@@ -890,6 +921,10 @@ let updatePolling = false;
 let updatesPoll = null;
 function renderUpdates(d){
   const box = document.getElementById('updates');
+  // Cleared up front, re-filled below only by the state that has something to
+  // say. Every early return below therefore leaves the foot of the page empty
+  // rather than showing the last poll's instructions.
+  setKeptPanel('');
   // `checked` stays true across a re-check, because the cache still holds the
   // PREVIOUS answer while the new one is computed. Rendering that during a
   // re-check redisplays the list the user has just acted on, which is exactly the
@@ -947,15 +982,16 @@ function renderUpdates(d){
         + ` at the installed version — a newer release exists that ${held.length>1?"these environments":"this environment"} `
         + `cannot take. The tool card says which, and why.`
       : '';
-    // A clickable expander, not a hover tooltip: the old title= tooltip was
-    // invisible in practice (all anyone saw was the help cursor), so the line
-    // read as an unexplained warning. The panel says what "not offered"
-    // means, names each tool and version, and gives the exact command —
-    // there is deliberately no button (a rebuild is a per-tool decision).
+    // A visible link to visible directions: the old title= tooltip was invisible
+    // in practice (all anyone saw was the help cursor), so the line read as an
+    // unexplained warning. The panel says what "not offered" means, names each
+    // tool and version, and gives the exact command — there is deliberately no
+    // button (a rebuild is a per-tool decision). It sits at the FOOT of the
+    // page now, so this line says where it is and jumps to it.
     const keptNote = kept.length
       ? ` <b>${kept.length} newer version${kept.length>1?"s are":" is"} available and not offered</b>`
         + ` — updating is opt-in per tool, so nothing is rebuilt behind your back.`
-        + ` <a href="#" id="keptToggle" onclick="toggleKeptPanel(event)">Hide</a>`
+        + ` <a href="#keptPanel" id="keptToggle" onclick="jumpToKeptPanel(event)">How to update ↓</a>`
       : '';
     const keptRows = kept.map(i =>
       `<tr><td><b>${esc(i.label)}</b></td>`
@@ -965,8 +1001,12 @@ function renderUpdates(d){
     const cd = esc(suiteDir || "<suite directory>");
     const keptPanel = kept.length
       ? `<div id="keptPanel" class="kpanel">`
+        // A title, because down here the panel is on its own — the banner line
+        // that explains why it exists is a screen or two above it.
+        + `<div class="ktitle"><span>Newer versions that are not offered</span>`
+        + `<a href="#" onclick="toggleKeptPanel(event)">Hide</a></div>`
         // The instruction first. Everything else on this panel is context for a
-        // decision the user has usually already made by the time they open it.
+        // decision the user has usually already made by the time they read it.
         + `<b>To update one of these, run this on this machine:</b>`
         + `<pre>cd ${cd}\ngit pull\nbin/bdtools update <b>&lt;tool&gt;</b> --allow-report-only</pre>`
         + `<p>Replace <code>&lt;tool&gt;</code> with a name from the last column below. `
@@ -992,8 +1032,8 @@ function renderUpdates(d){
         + `</div>`
       : '';
     box.innerHTML = `✓ Up to date.${note}${keptNote} `
-      + `<a href="#" onclick="checkUpdates(true);return false" style="color:inherit">Re-check</a>`
-      + keptPanel;
+      + `<a href="#" onclick="checkUpdates(true);return false" style="color:inherit">Re-check</a>`;
+    setKeptPanel(keptPanel);
     return;
   }
   box.className='updates avail';

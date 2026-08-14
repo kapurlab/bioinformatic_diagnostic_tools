@@ -170,7 +170,15 @@ class _FallbackResolver:
             if flat == fs or flat.startswith(fs + "-"):
                 if best is None or len(s) > len(best):
                     best = s
-        return best if best is not None else label
+        if best is not None:
+            return best
+        head = label.split("_", 1)[0]
+        if head and head != label:
+            cands = [s for s in known
+                     if s == head or s.startswith(head + "-") or s.startswith(head + "_")]
+            if len(cands) == 1:
+                return cands[0]
+        return label
 
     @staticmethod
     def ambiguous_stems(pairs):
@@ -356,7 +364,7 @@ def main():
         # mistaken for the renderer's word.
         X = _FallbackResolver()
         note("renderer not importable here — using a copy of its rules "
-             "(same three: exact, S_ prefix, then dash/underscore-insensitive)")
+             "(same four: exact, S_ prefix, dash/underscore-insensitive, leading-id)")
 
     # Exactly the sets preview_xlsx builds.
     bams, vcfs = set(), set()

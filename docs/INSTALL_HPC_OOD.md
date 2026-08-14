@@ -168,15 +168,20 @@ dashboard's session script resolves the checkout by path, so this is not a
 throwaway location.
 
 ```bash
-sudo mkdir -p /shared/apps/bdtools
+sudo mkdir -p /shared/apps/bdtools/tools
 sudo git clone https://github.com/kapurlab/bioinformatic_diagnostic_tools.git \
-  /shared/apps/bdtools/bioinformatic_diagnostic_tools
-cd /shared/apps/bdtools/bioinformatic_diagnostic_tools
+  /shared/apps/bdtools/tools/bioinformatic_diagnostic_tools
+cd /shared/apps/bdtools/tools/bioinformatic_diagnostic_tools
 ```
 
-Substitute your own path for `/shared/apps/bdtools` throughout. Whatever you
-choose becomes `TOOLS_ROOT` in the next step, and the umbrella **must** end up at
-`$TOOLS_ROOT/bioinformatic_diagnostic_tools` — the card looks for it there.
+Substitute your own path for `/shared/apps/bdtools` throughout. It becomes
+`SITE_ROOT` in the next step; tool checkouts and environments live under
+`${SITE_ROOT}/tools` (`TOOLS_ROOT`), and the umbrella **must** end up at
+`$TOOLS_ROOT/bioinformatic_diagnostic_tools` — the rendered card's session
+script looks for it there and nowhere else. (An earlier revision of this guide
+cloned it one level up, directly under `SITE_ROOT`; a card rendered against that
+layout fails at launch with `cannot find the bioinformatic_diagnostic_tools
+checkout`.)
 
 ### Step 2 — Write `sites/site.conf`
 
@@ -929,14 +934,15 @@ under any adapter.
 
 We would rather you hear these from us than discover them.
 
-- **The Slurm submission path has not been exercised in production.** The
-  reference deployment runs OOD 3.1.16 with the **`linux_host`** adapter
-  (Singularity + tmux, no scheduler), so its cards carry no resource request at
-  all. The dashboard application itself is in daily use — through an equivalent
-  single-port local proxy — but the `batch_connect` + Slurm submission has been
-  reviewed rather than run. Expect first-launch iteration on `submit.yml.erb`,
-  not on the application. This is the strongest argument for rehearsing with
-  Path B first.
+- **The Slurm submission path has now been run at one site.** In August 2026 the
+  dashboard card was launched per-user (Path B) at an institutional Slurm site
+  running OOD 4, and the templates were corrected against real behaviour there: the ERB
+  binding exposes form attributes as bare locals (no `context`), sbatch args
+  render only when a partition is given, and `before.sh` mints the session token
+  itself. The reference deployment still runs OOD 3.1.16 with the
+  **`linux_host`** adapter (no scheduler), so a new Slurm site should still
+  treat its first launch as a verification step — but expect it to verify, not
+  to need surgery. Rehearsing with Path B remains the cheap way to prove it.
 
   Everything short of handing the job to a scheduler *is* checked automatically,
   and you can run that check yourself before you install anything:

@@ -110,14 +110,14 @@ that ships in each tool repo is used instead.
 
 ## Known gaps — please read before we agree on a date
 
-- **The Slurm submission path has never been exercised.** Our production server
-  runs OOD 3.1.16 with the **`linux_host`** adapter (Singularity + tmux, no
-  scheduler), so its cards carry no resource request at all. The dashboard's
-  `submit.yml.erb` emits real Slurm flags (`--cpus-per-task`, `--mem`,
-  `--partition`, optional `--account`) that have only been reviewed, not run.
-  The dashboard *application* is heavily used daily — just via the equivalent
-  single-port local proxy, not through `batch_connect` + Slurm. Expect the first
-  session launch to need iteration on the submit template, not on the app.
+- **The Slurm submission path has been run at one site so far.** In August 2026
+  the card was launched per-user (sandbox) at an institutional Slurm site running
+  OOD 4; the submit/form templates were corrected against real behaviour there
+  (bare-local ERB binding, partition-conditional sbatch args, session-token
+  minting in `before.sh`). Our own production server runs OOD 3.1.16 with the
+  **`linux_host`** adapter (no scheduler), so treat your first launch as a
+  verification step — on current templates it should verify rather than need
+  iteration.
 - Version upgrades on a server tree deliberately do **not** use
   `bdtools update` (which force-checks-out). `install --server` verifies `HEAD`
   matches the pinned tag in `tools.yml` and refuses to build a diverged tree.
@@ -125,8 +125,6 @@ that ships in each tool repo is used instead.
   unpacks group-unreadable — it needs a permission fix at install time.
 - The MHC typing tool is flagged in-app as under development: DRB3 is
   production-ready, Class I calls are provisional. Not for diagnostic use yet.
-- AMRFinderPlus currently has a database/binary version mismatch pending a
-  decision on which side moves; that tool will produce no calls until resolved.
 
 ## Recommended path: prove it as a sandbox app first
 

@@ -1,6 +1,6 @@
 ---
 name: Diagnostic Tools Dashboard
-description: "One authenticated session for the whole Kapur Lab suite — allocates a node once, runs every tool on it."
+description: "One authenticated session for the whole diagnostic-tools suite — allocates a node once, runs every tool on it."
 icon: fa://dna
 category: Bioinformatics
 subcategory: Diagnostics

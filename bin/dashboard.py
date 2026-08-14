@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""dashboard.py — a local landing page for the Kapur Lab tool suite.
+"""dashboard.py — a local landing page for the bioinformatic diagnostic tool suite.
 
 Run via `bdtools dashboard [--port N] [--no-browser]`. There is no Open OnDemand
 in local mode, so this is the equivalent home page: it lists the GUIs that are
@@ -484,7 +484,7 @@ def _schedule_exit(code):
 PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="bdtools-dashboard" content="1">
-<title>Kapur Laboratory bioinformatic diagnostic tools (bdtools)</title>
+<title>Bioinformatic Diagnostic Tools (bdtools)</title>
 <script>
 const THEME_KEY='bdtools-theme';
 function preferredTheme(){
@@ -669,7 +669,7 @@ addEventListener('storage',e=>{if(e.key===THEME_KEY)applyTheme(preferredTheme(),
  @keyframes spin{to{transform:rotate(360deg)}}
 </style></head><body>
 <header><div class="hbar">
-  <div><h1>Kapur Laboratory bioinformatic diagnostic tools (bdtools)</h1>
+  <div><h1>Bioinformatic Diagnostic Tools (bdtools)</h1>
   <p class="sub">Pick a tool to launch it on this machine. Each opens in a new tab.</p></div>
   <div class="head-actions">
   <div class="theme-switch" role="group" aria-label="Appearance">
@@ -1463,7 +1463,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     global SUITE, BOUND_HOST
-    ap = argparse.ArgumentParser(description="Kapur Lab local tool dashboard.")
+    ap = argparse.ArgumentParser(description="Bioinformatic Diagnostic Tools — local dashboard.")
     ap.add_argument("--port", type=int, default=None, help="dashboard port (default: 8080 or a free port)")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--no-browser", action="store_true")
@@ -1494,7 +1494,7 @@ def main():
     bar = "=" * 64
     print(f"""
 {bar}
-  Kapur Laboratory bioinformatic diagnostic tools (bdtools) — your dashboard is running.
+  Bioinformatic Diagnostic Tools (bdtools) — your dashboard is running.
 
   Open this in your web browser:
       {url}

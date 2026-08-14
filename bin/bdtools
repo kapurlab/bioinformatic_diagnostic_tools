@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# bdtools — the Kapur Lab tool-suite manager.
+# bdtools — the bioinformatic diagnostic tool-suite manager.
 #
 # One entry point to install, run, and update the lab's bioinformatics GUIs
 # across environments. Reads the suite manifest (tools.yml) and dispatches to
@@ -628,7 +628,7 @@ cmd_dashboard() {
       url="http://127.0.0.1:${port}/?t=${BDTOOLS_SESSION_TOKEN}"
     fi
     local bar="================================================================"
-    printf '\n%s\n  Kapur Laboratory bioinformatic diagnostic tools (bdtools)\n  dashboard starting (single-port proxy).\n\n  Open this in your web browser:\n      %s\n\n' "${bar}" "${url}"
+    printf '\n%s\n  Bioinformatic Diagnostic Tools (bdtools)\n  dashboard starting (single-port proxy).\n\n  Open this in your web browser:\n      %s\n\n' "${bar}" "${url}"
     # Say WHY the URL looks the way it does, in BOTH directions. The same command
     # prints a plain URL on a Mac and a "?t=..." one on a Linux server, and without
     # an explanation that difference reads as a broken install rather than as the

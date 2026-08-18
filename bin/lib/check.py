@@ -40,6 +40,43 @@ def config_value(tool, key):
         return ""
 
 
+# Import-name → pip-name for the web layer the installers pip-install into each
+# tool env (backend/requirements.txt). These are NOT analysis packages: when
+# ONLY these are missing — the classic remnant of an env rebuild that died
+# before its pip step — the cure is a targeted pip install into the EXISTING
+# env, not a rebuild. A rebuild re-solves every conda package (the operation
+# that broke a working kraken env on macOS once already) to close a 20-second
+# gap, and `bdtools update` refuses it for report-only tools anyway, which
+# left the card recommending a command that could not run.
+PIP_WEB_MODULES = {
+    "fastapi": "fastapi",
+    "uvicorn": "uvicorn",
+    "pydantic": "pydantic",
+    "aiofiles": "aiofiles",
+    "multipart": "python-multipart",
+}
+
+
+def web_layer_fix(env_py, tool_dir, missing):
+    """The targeted remedy when every missing module is pip-owned web layer.
+
+    Prefers the tool's own backend/requirements.txt (exactly what a healthy
+    install would have pip-installed); the missing packages are also named
+    explicitly so an older checkout whose requirements.txt predates a
+    declaration (e.g. python-multipart) still ends up complete. Returns None
+    when any missing module is an analysis package — that is a real env
+    problem and keeps the rebuild remedy."""
+    if not missing or any(m not in PIP_WEB_MODULES for m in missing):
+        return None
+    pkgs = " ".join(sorted({PIP_WEB_MODULES[m] for m in missing}))
+    req = Path(tool_dir, "backend", "requirements.txt") if tool_dir else None
+    if req and req.is_file():
+        return (f'"{env_py}" -m pip install -r "{req}" {pkgs}'
+                "   # restores the web layer; analysis packages untouched")
+    return (f'"{env_py}" -m pip install {pkgs}'
+            "   # restores the web layer; analysis packages untouched")
+
+
 def check_modules(env_py, modules):
     """Return the subset of modules that fail to import in the tool's env.
 
@@ -318,8 +355,11 @@ def run_checks(tool, env_py, scope, tool_dir=None):
 
     missing = check_modules(env_py, spec.get("modules", []))
     if missing:
-        lines.append((BAD, f"python modules missing: {', '.join(missing)}", default_fix))
-        issues.append({"label": f"missing modules: {', '.join(missing)}", "fix": default_fix})
+        # Web-layer-only gaps get a targeted pip install into the existing env;
+        # a missing ANALYSIS module keeps the full-rebuild remedy.
+        mod_fix = web_layer_fix(env_py, tool_dir, missing) or default_fix
+        lines.append((BAD, f"python modules missing: {', '.join(missing)}", mod_fix))
+        issues.append({"label": f"missing modules: {', '.join(missing)}", "fix": mod_fix})
     elif spec.get("modules"):
         lines.append((OK, f"python modules ({len(spec['modules'])}) import", None))
 

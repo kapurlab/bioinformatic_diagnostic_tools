@@ -33,12 +33,20 @@ Database `kind`:
 """
 
 # Shared by every GUI: the FastAPI/uvicorn web layer that serves the SPA.
-_WEB = ["fastapi", "uvicorn", "pydantic"]
+# `multipart` (pip name python-multipart) belongs here because every backend
+# has UploadFile routes, and FastAPI refuses to even import an app that
+# declares one without it — an env can report every analysis version
+# correctly and still not start. Probed as `multipart` (the import name every
+# python-multipart release has answered to, old and new).
+_WEB = ["fastapi", "uvicorn", "pydantic", "multipart"]
+# ...and the GUIs whose upload/log streaming goes through aiofiles (all but
+# vsnp_gui, which does its file IO synchronously).
+_WEB_AIO = _WEB + ["aiofiles"]
 
 REQUIREMENTS = {
     "kraken_id_parse_gui": {
-        "modules": _WEB + ["humanize", "Bio", "pandas", "allel", "numpy",
-                           "pysam", "yaml", "svgwrite", "cairosvg", "PIL"],
+        "modules": _WEB_AIO + ["humanize", "Bio", "pandas", "allel", "numpy",
+                               "pysam", "yaml", "svgwrite", "cairosvg", "PIL"],
         # playwright is an optional PDF renderer with a fallback — not installed
         # even in prod, so don't flag it as missing.
         "optional_imports": ["playwright"],
@@ -76,10 +84,10 @@ REQUIREMENTS = {
              "fix": "bin/bdtools setup-databases vsnp-refs vsnp-deps"},
         ],
     },
-    "mlst_gui":   {"modules": _WEB, "binaries": ["mlst"]},
-    "amr_plus_gui": {"modules": _WEB, "binaries": ["amrfinder", "mlst"]},
-    "genoflu_gui": {"modules": _WEB, "binaries": ["seqkit"]},
-    "irma_gui":   {"modules": _WEB, "binaries": ["IRMA", "seqkit"]},
+    "mlst_gui":   {"modules": _WEB_AIO, "binaries": ["mlst"]},
+    "amr_plus_gui": {"modules": _WEB_AIO, "binaries": ["amrfinder", "mlst"]},
+    "genoflu_gui": {"modules": _WEB_AIO, "binaries": ["seqkit"]},
+    "irma_gui":   {"modules": _WEB_AIO, "binaries": ["IRMA", "seqkit"]},
     # kSNP4 is NOT a conda package — deploy/install.sh downloads the kSNP4.1
     # package for the host OS from SourceForge into vendor/kSNP4-bin and prepends
     # that to PATH. So its binaries are invisible to an <env>/bin search, which is
@@ -92,7 +100,7 @@ REQUIREMENTS = {
     # ksnp_gui on macOS entirely — so the one check that could have caught a
     # wrong-OS payload never ran there. `binary_format_probes` is that check.
     "ksnp_gui": {
-        "modules": _WEB,
+        "modules": _WEB_AIO,
         "binaries": ["seqkit", "kSNP4", "Kchooser4", "MakeKSNP4infile"],
         "asset_dirs": ["vendor/kSNP4-bin"],
         # kSNP4 itself is a bash script and says nothing about the payload's
@@ -100,7 +108,7 @@ REQUIREMENTS = {
         "binary_format_probes": ["MakeKSNP4infile", "Kchooser4"],
         "fix": "bin/bdtools install ksnp_gui   # downloads the kSNP4.1 package for this OS into vendor/",
     },
-    "ncbi_submit_gui": {"modules": _WEB, "binaries": []},
+    "ncbi_submit_gui": {"modules": _WEB_AIO, "binaries": []},
     "mhc_gui": {
         "modules": _WEB + ["aiofiles", "openpyxl"],
         "binaries": ["nanoq", "minimap2", "samtools", "bcftools", "vsearch",

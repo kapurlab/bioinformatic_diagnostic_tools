@@ -19,6 +19,13 @@
 # deletes (`rm -rf`) or changes which VERSION of the analysis software runs:
 # moving a pinned package changes results, which is a revalidation event.
 #
+# A `pip install` of the WEB LAYER (fastapi/uvicorn/…) into the existing env is
+# the deliberate exception: it is additive, touches no conda transaction and no
+# analysis package, and exists precisely because a rebuild that died part-way
+# tends to leave a healthy analysis env whose only gap is that pip step — the
+# state a rebuild is too risky to fix and `bdtools update` refuses to touch on
+# report-only tools.
+#
 # The classifier is an ALLOWLIST — a remedy this script does not recognise is
 # proposed, not guessed at. New remedy, new explicit decision.
 #
@@ -43,15 +50,17 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Which remedies may run unattended. Additive data/payload fetches only: they
-# cannot break an environment that currently works — the worst case is a failed
-# download, which leaves exactly what was there before.
+# Which remedies may run unattended. Additive operations only — data/payload
+# fetches and web-layer pip installs: they cannot break an environment that
+# currently works — the worst case is a failed download/install, which leaves
+# exactly what was there before.
 fix_class() {
   local c="$1"
   case "${c}" in
     *"rm -rf"*)                 echo manual;;   # destructive, never
     *"setup-databases"*)        echo auto;;     # fetches reference data
     *"deploy/install.sh"*)      echo auto;;     # fetches a vendored payload (kSNP4)
+    *" -m pip install "*)       echo auto;;     # adds the web layer into the EXISTING env — no conda re-solve, no analysis version change
     *"update-packages"*)        echo manual;;   # changes the analysis version
     *"bdtools update"*)         echo manual;;   # rebuilds the env
     *"bdtools install"*)        echo manual;;   # builds/rebuilds the env
@@ -98,10 +107,12 @@ while IFS=$'\t' read -r tool cmd labels; do
   klass="$(fix_class "${cmd}")"
   policy="$(tool_updates_policy "${tool}" 2>/dev/null || echo report)"
   # A report-only tool is one bdtools must not CHANGE. A data fetch changes no
-  # software, so it stays allowed; anything else needs the same explicit opt-in
-  # the update path requires.
+  # software, and a web-layer pip install changes no ANALYSIS software (the
+  # versions a diagnostic result depends on are untouched — without the web
+  # layer the tool cannot even start to use them). Both stay allowed; anything
+  # else needs the same explicit opt-in the update path requires.
   if [[ "${klass}" == "auto" && "${policy}" != "install" && ${ALLOW_REPORT_ONLY} -eq 0 \
-        && "${cmd}" != *"setup-databases"* ]]; then
+        && "${cmd}" != *"setup-databases"* && "${cmd}" != *" -m pip install "* ]]; then
     klass="manual"
     labels="${labels} [report-only tool]"
   fi
@@ -118,7 +129,7 @@ log "fix plan${APPLY:+ }$( [[ ${APPLY} -eq 1 ]] && echo '(applying)' || echo '(p
 echo
 
 if [[ ${#auto_cmds[@]} -gt 0 ]]; then
-  echo "  WILL RUN (safe to automate — data/payload fetches):"
+  echo "  WILL RUN (safe to automate — data/payload fetches, web-layer pip installs):"
   for i in "${!auto_cmds[@]}"; do
     printf '    %-22s %s\n' "${auto_tools[$i]}" "${auto_cmds[$i]}"
   done

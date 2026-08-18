@@ -487,7 +487,7 @@ def run_checks(tool, env_py, scope, tool_dir=None):
     finding — reported, never part of the pass/fail)."""
     spec = requirements.for_tool(tool)
     lines, issues, notes = [], [], []
-    default_fix = spec.get("fix", f"bin/bdtools update {tool}")
+    default_fix = spec.get("fix", f"bin/bdtools install {tool} --fresh")
 
     want_os = spec.get("os")
     sysname = "linux" if platform.system() == "Linux" else (

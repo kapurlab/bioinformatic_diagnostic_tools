@@ -95,6 +95,11 @@ cmd_install() {
       --no-card)   passthru+=(--no-card); shift;;   # server: build a tool's env but skip its per-tool card
       --dashboard) dashboard=1; shift;;             # server: install the consolidated dashboard card
       --no-dashboard) no_dashboard=1; shift;;   # local: don't auto-open the dashboard at the end
+      # Env-shape flags, handled by install-local.sh. They were rejected here as
+      # unknown options while the dashboard's own help text told people to run
+      # `bdtools install <tool> --rebuild` — advice that could not work.
+      --rebuild)   passthru+=(--rebuild); shift;;
+      --fresh)     passthru+=(--fresh); shift;;
       -h|--help)   cat <<'EOF'
 usage: bdtools install [--local|--sandbox|--server] <tool|all> [options]
 
@@ -112,6 +117,13 @@ Options:
   --dashboard        --server: register the single consolidated dashboard card
   --with-dev         --server: also register developer branch-picker cards
   --no-dashboard     --local: don't open the dashboard when finished
+  --rebuild          apply newly-declared dependencies to an existing env
+                     (additive: `conda env update` — it cannot remove anything)
+  --fresh            START THE ENV OVER: set the existing one aside, build from
+                     nothing, put it back if the build fails. The fix for an env
+                     that is wrong rather than incomplete — mixed architecture,
+                     a swapped python, a half-linked transaction. Also the only
+                     way to correct an env built for the wrong platform.
 
 `all` means every tool in tools.yml. Examples:
 
@@ -119,6 +131,7 @@ Options:
   bdtools install --sandbox all              # per-user OOD apps
   bdtools install all --server --no-card     # build envs site-wide, no cards
   bdtools install --server --dashboard       # register the one OOD card
+  bdtools install kraken_id_parse_gui --fresh   # rebuild one tool's env from scratch
 
 Open OnDemand deployments: see docs/INSTALL_HPC_OOD.md.
 EOF

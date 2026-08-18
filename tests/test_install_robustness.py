@@ -129,6 +129,95 @@ class EnvPlatformTests(unittest.TestCase):
             self.assertIn("was built for osx-64", r.stderr)
 
 
+class FreshRebuildTests(unittest.TestCase):
+    """`install --fresh` — the one command for an env that is wrong, not incomplete.
+
+    Its whole value is that it cannot lose a working env: the old prefix is moved
+    aside, not deleted, and a build that fails puts it back. That promise is what
+    these tests hold to, because the alternative recipe it replaces (`rm -rf
+    <env> && bdtools install <tool>`) had already cost a working macOS install.
+    """
+    def _harness(self, envdir, body):
+        return sh(f'''
+          TOOL=faketool; FRESH=1; DRY_RUN=0
+          snapshot_env() {{ :; }}
+          tool_env_prefix() {{ printf '%s' "{envdir}"; }}
+          # the functions under test, lifted from install-local.sh
+          eval "$(sed -n '/^FRESH_ASIDE=""; FRESH_ORIG=""/,/^  FRESH_ASIDE=""$/p' \
+                    "{ROOT}/bin/install-local.sh"; echo '}}')"
+          {body}
+        ''')
+
+    def test_a_failed_build_puts_the_old_env_back_exactly(self):
+        with tempfile.TemporaryDirectory() as td:
+            env = Path(td) / "env"
+            write(env / "bin/python", "original\n")
+            write(env / "lib/python3.10/site-packages/fastapi/__init__.py", "x\n")
+            r = self._harness(env, f'''
+              discard_env_for_fresh
+              [[ -d "{env}" ]] && {{ echo "STILL-THERE"; exit 1; }}
+              mkdir -p "{env}"; echo half > "{env}/junk"   # a half-built new env
+              restore_env_from_fresh
+            ''')
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertEqual((env / "bin/python").read_text(), "original\n")
+            self.assertTrue((env / "lib/python3.10/site-packages/fastapi/__init__.py").exists(),
+                            "the pip layer must come back with the env")
+            self.assertFalse((env / "junk").exists(),
+                             "the half-built env must not survive the restore")
+            self.assertEqual(list(Path(td).glob("env.bdtools-old-*")), [],
+                             "the set-aside copy must not be left behind")
+
+    def test_the_old_env_is_only_moved_never_deleted(self):
+        with tempfile.TemporaryDirectory() as td:
+            env = Path(td) / "env"
+            write(env / "bin/python", "original\n")
+            r = self._harness(env, "discard_env_for_fresh")
+            self.assertEqual(r.returncode, 0, r.stderr)
+            aside = list(Path(td).glob("env.bdtools-old-*"))
+            self.assertEqual(len(aside), 1, "the env should be set aside, not removed")
+            self.assertEqual((aside[0] / "bin/python").read_text(), "original\n")
+
+    def test_an_env_the_user_cannot_write_is_refused(self):
+        # On a shared install the resolved env can be one somebody else owns.
+        with tempfile.TemporaryDirectory() as td:
+            parent = Path(td) / "shared"
+            env = parent / "env"
+            env.mkdir(parents=True)
+            parent.chmod(0o555)
+            try:
+                r = self._harness(env, "discard_env_for_fresh")
+                self.assertNotEqual(r.returncode, 0)
+                self.assertIn("not yours to replace", r.stdout + r.stderr)
+                self.assertTrue(env.exists())
+            finally:
+                parent.chmod(0o755)
+
+    def test_no_existing_env_is_not_an_error(self):
+        with tempfile.TemporaryDirectory() as td:
+            r = self._harness(Path(td) / "nope", "discard_env_for_fresh")
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("no env here yet", r.stdout)
+
+    def test_dry_run_moves_nothing(self):
+        with tempfile.TemporaryDirectory() as td:
+            env = Path(td) / "env"
+            write(env / "bin/python", "original\n")
+            r = self._harness(env, "DRY_RUN=1; discard_env_for_fresh")
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertTrue((env / "bin/python").exists())
+            self.assertEqual(list(Path(td).glob("env.bdtools-old-*")), [])
+
+    def test_the_cli_accepts_the_flag(self):
+        # It was rejected as an unknown option for --rebuild while the dashboard
+        # told people to run it; a flag the UI advertises must reach the installer.
+        for flag in ("--fresh", "--rebuild"):
+            r = subprocess.run([str(ROOT / "bin/bdtools"), "install",
+                                "kraken_id_parse_gui", flag, "--dry-run"],
+                               capture_output=True, text=True)
+            self.assertNotIn("unknown option", r.stdout + r.stderr, flag)
+
+
 class HookHardeningTests(unittest.TestCase):
     """harden_conda_hooks: an upstream hook must not be able to fail a transaction."""
 

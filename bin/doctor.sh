@@ -83,7 +83,7 @@ while read -r name; do
     foreign="$([[ -n "${py}" ]] && env_foreign_subdirs "${envdir}" || true)"
     if [[ -n "${foreign}" ]]; then
       warn "${name}: mixed-architecture env — $(printf '%s' "${foreign}" | tr '\n' ';') package(s) are not $(env_conda_subdir "${envdir}")."
-      info "  FIX: rm -rf ${envdir} && bin/bdtools install ${name}   (an update cannot remove them)"
+      info "  FIX: bin/bdtools install ${name} --fresh   (an update cannot remove them; --fresh rebuilds the env)"
       issues=$((issues + 1))
     fi
     # An env can also pass every check and still be the WRONG env: if the last

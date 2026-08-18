@@ -51,6 +51,11 @@ _WEB = ["fastapi", "uvicorn", "pydantic", "multipart"]
 # vsnp_gui, which does its file IO synchronously).
 _WEB_AIO = _WEB + ["aiofiles"]
 
+# Repairs point at `install <tool> --fresh`, not `update <tool>`. `update` is
+# governed by the per-tool updates policy, so on every report-only tool — eight
+# of the nine — the remedy printed on the card was a command that refuses to run.
+# `install --fresh` rebuilds the env at the version tools.yml already pins, so it
+# repairs without moving anything, and it works the same on every tool.
 REQUIREMENTS = {
     "kraken_id_parse_gui": {
         "modules": _WEB_AIO + ["humanize", "Bio", "pandas", "allel", "numpy",
@@ -65,7 +70,7 @@ REQUIREMENTS = {
         # platform limitation, not a "rebuild the env" error a rebuild can't fix.
         # The Bracken abundance/pie-chart step won't run on macOS; the rest does.
         "platform_unavailable": {"macos": ["bracken"]},
-        "fix": "bin/bdtools update kraken_id_parse_gui   # rebuilds the env",
+        "fix": "bin/bdtools install kraken_id_parse_gui --fresh   # rebuilds this env from scratch",
         "databases": [
             {"label": "Kraken2 DB", "config_key": "kraken_db",
              "kind": "dir_marker", "marker": "hash.k2d",
@@ -81,7 +86,7 @@ REQUIREMENTS = {
         "modules": _WEB,
         "binaries": ["vsnp3_step1.py", "vsnp3_step2.py", "snp-dists", "bcftools", "samtools"],
         "sibling_tools": ["kraken_id_parse_gui"],   # Step 1's "Run Kraken" hand-off
-        "fix": "bin/bdtools update vsnp_gui   # rebuilds the vsnp3 env",
+        "fix": "bin/bdtools install vsnp_gui --fresh   # rebuilds the vsnp3 env from scratch",
         "databases": [
             {"label": "vSNP reference options", "config_key": "vsnp3_reference_options_root",
              "kind": "dir",

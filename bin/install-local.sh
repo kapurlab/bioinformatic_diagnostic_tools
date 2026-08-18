@@ -18,12 +18,13 @@
 set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
 
-TOOL=""; RUN_ONLY=0; BUILD_ONLY=0; PORT=""; NO_BROWSER=0; PRINT_PYTHON=0; REBUILD=0
+TOOL=""; RUN_ONLY=0; BUILD_ONLY=0; PORT=""; NO_BROWSER=0; PRINT_PYTHON=0; REBUILD=0; FRESH=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --run-only)   RUN_ONLY=1; shift;;
     --build-only) BUILD_ONLY=1; shift;;
-    --rebuild)    REBUILD=1; shift;;            # refresh an existing env from its spec (apply new deps)
+    --rebuild)    REBUILD=1; shift;;            # ADDITIVE: conda env update from the spec (picks up newly-declared deps)
+    --fresh)      FRESH=1; shift;;              # START OVER: discard the existing env and build it from nothing
     --no-browser) NO_BROWSER=1; shift;;        # launch but don't open a browser (used by the dashboard)
     --print-python) PRINT_PYTHON=1; shift;;     # print the tool's env python if built, else exit 1; no build/launch
     --prefix)   export BDTOOLS_HOME="$2"; shift 2;;
@@ -576,7 +577,7 @@ ensure_conda_subdir() {
     if [[ -n "${CONDA_SUBDIR:-}" && "${CONDA_SUBDIR}" != "${existing}" ]]; then
       warn "CONDA_SUBDIR=${CONDA_SUBDIR}, but ${envdir} was built for ${existing} — solving for ${existing}."
       info "  An env's architecture is fixed at creation; updating it for another platform mixes binaries."
-      info "  To move this tool to ${CONDA_SUBDIR}, delete the env first:  rm -rf ${envdir}"
+      info "  To move this tool to ${CONDA_SUBDIR}:  CONDA_SUBDIR=${CONDA_SUBDIR} bin/bdtools install ${TOOL} --fresh"
     fi
     export CONDA_SUBDIR="${existing}"
     ok "env platform: ${existing} (pinned from the existing env, not the host)"
@@ -587,7 +588,7 @@ ensure_conda_subdir() {
     if [[ -n "${foreign}" ]]; then
       warn "${envdir} is a MIXED-architecture env: $(printf '%s' "${foreign}" | tr '\n' ';') package(s) are not ${existing}."
       info "  Those binaries cannot run in an ${existing} prefix, and updating cannot remove them."
-      info "  Rebuild it:  rm -rf ${envdir} && bin/bdtools install ${TOOL}"
+      info "  Rebuild it:  bin/bdtools install ${TOOL} --fresh"
     fi
     # An env from another machine/arch cannot run here at all. Say so now, at
     # install time, instead of leaving "Bad CPU type"/missing-symbol errors to
@@ -597,7 +598,7 @@ ensure_conda_subdir() {
     if [[ -n "${host}" && "${existing}" != "${host}" ]] \
        && ! [[ "${host}" == "osx-arm64" && "${existing}" == "osx-64" ]]; then
       warn "${envdir} was built for ${existing}, but this machine is ${host} — that env cannot run here."
-      info "  Rebuild it for this machine:  rm -rf ${envdir} && bin/bdtools install ${TOOL}"
+      info "  Rebuild it for this machine:  bin/bdtools install ${TOOL} --fresh"
     fi
     return 0
   fi
@@ -838,7 +839,74 @@ build_vsnp_local() {
   fi
 }
 
+# --fresh — start this tool's env over from nothing.
+#
+# The single command to hand someone whose env is wrong in a way no update can
+# repair: a mixed-architecture prefix, a python swapped out from under the pip
+# layer, a half-linked transaction, a package set nobody can account for. Those
+# all share one property — something is PRESENT that should not be — and every
+# other mode here is additive. `--rebuild` is `conda env update`, which by
+# design cannot remove anything; enforce_package_pins moves versions but not
+# platforms. Up to now the answer was a two-part recipe (`rm -rf <env> &&
+# bdtools install <tool>`) that nobody should be asked to type: get the path
+# wrong and you delete the wrong env, and if the build then fails you are left
+# with nothing at all. That is also why plain `install` refuses to touch an env
+# that already exists.
+#
+# So this does not delete anything. It snapshots the package set, MOVES the
+# prefix aside on the same filesystem — instant, and reversible — and builds from
+# nothing. A conda env is not relocatable, but the copy is never run from its new
+# path; it is only ever moved BACK, restoring the original prefix byte for byte.
+# A failed build puts it back automatically. A build that passes its self-check
+# removes it, and the snapshot stays behind either way, so `bdtools restore-env`
+# can still name every package that was there.
+#
+# On Apple Silicon this is also the only way to fix a platform mistake: the
+# subdir is decided when an env is created (ensure_conda_subdir), and with the
+# old prefix gone, rule 2 gets to make that decision again from scratch.
+FRESH_ASIDE=""; FRESH_ORIG=""
+discard_env_for_fresh() {
+  [[ ${FRESH} -eq 1 ]] || return 0
+  local envdir; envdir="$(tool_env_prefix "${TOOL}" 2>/dev/null || true)"
+  if [[ -z "${envdir}" || ! -d "${envdir}" ]]; then
+    ok "--fresh: ${TOOL} has no env here yet — building a new one"
+    return 0
+  fi
+  # Resolved through tool_env_python, so this is the env the tool actually LAUNCHES
+  # with, which on a shared install can be one somebody else owns. Not ours to move.
+  [[ -w "$(dirname "${envdir}")" && -w "${envdir}" ]]     || die "--fresh: ${envdir} is not yours to replace (no write permission).
+       That is the env ${TOOL} runs from. Ask whoever owns it, or install your own copy."
+  log "--fresh: replacing ${envdir}"
+  snapshot_env "${TOOL}" "${envdir}"
+  local aside="${envdir}.bdtools-old-$(date +%Y%m%d%H%M%S)"
+  if [[ "${DRY_RUN:-0}" -eq 1 ]]; then
+    echo "  [dry-run] mv ${envdir} ${aside}"
+    echo "  [dry-run] build a new env at ${envdir}, then remove ${aside}"
+    return 0
+  fi
+  mv "${envdir}" "${aside}" \
+    || die "--fresh: could not move ${envdir} aside. Is the tool still running? Stop it and retry."
+  FRESH_ORIG="${envdir}"; FRESH_ASIDE="${aside}"
+  ok "--fresh: old env set aside — it goes back automatically if this build fails"
+}
+
+# Put it back. Called from the build's EXIT trap, so it covers `die` too.
+restore_env_from_fresh() {
+  [[ -n "${FRESH_ASIDE}" && -d "${FRESH_ASIDE}" ]] || return 0
+  rm -rf "${FRESH_ORIG}" 2>/dev/null || true
+  if mv "${FRESH_ASIDE}" "${FRESH_ORIG}"; then
+    warn "--fresh: build failed — the previous env has been put back at ${FRESH_ORIG}"
+    info "  It is exactly what it was, so the tool should run as it did before."
+  else
+    warn "--fresh: build failed AND the old env could not be moved back."
+    info "  It is intact at ${FRESH_ASIDE} — restore it with:"
+    info "      mv ${FRESH_ASIDE} ${FRESH_ORIG}"
+  fi
+  FRESH_ASIDE=""
+}
+
 build() {
+  discard_env_for_fresh
   ensure_conda_subdir
   # Guard the existing env's activation hooks before anything runs conda —
   # including a delegated deploy/install.sh, whose own conda calls hit the same
@@ -1168,7 +1236,8 @@ if [[ ${DO_BUILD} -eq 1 ]]; then
     # The moment the snapshot is worth something. A failed transaction is rolled
     # back, not restored, so say plainly that the env was left alone and how to
     # put it back to what it was.
-    if [[ -x "${DIR}/env/bin/python" ]]; then
+    restore_env_from_fresh
+    if [[ -z "${FRESH_ORIG}" && -x "${DIR}/env/bin/python" ]]; then
       info "  The existing env was NOT deleted — the tool may still run: bin/bdtools doctor ${TOOL}"
     fi
     restore_env_hint "${TOOL}"
@@ -1190,6 +1259,20 @@ if [[ ${DO_BUILD} -eq 1 && ${DRY_RUN} -eq 0 ]] && have_python; then
   if [[ -n "${py_chk}" ]] && ! "${PYBIN}" "${KT_BIN_DIR}/lib/check.py" \
         --tool "${TOOL}" --dir "${DIR}" --python "${py_chk}" --scope env; then
     warn "${TOOL}: the build finished but the self-check above found problems — run the suggested fix."
+    SELF_CHECK_OK=0
+  fi
+fi
+
+# The set-aside env from --fresh is discarded only once the new one has PASSED its
+# self-check. A build can exit 0 and still produce an env that does not import
+# what the tool needs, and that is precisely when someone wants the old one back.
+if [[ -n "${FRESH_ASIDE:-}" && -d "${FRESH_ASIDE}" ]]; then
+  if [[ "${SELF_CHECK_OK:-1}" -eq 1 ]]; then
+    rm -rf "${FRESH_ASIDE}" && ok "--fresh: new env passed its self-check; the old one is gone"
+    info "  Its package list is still recorded: bin/bdtools restore-env ${TOOL} --prev"
+  else
+    warn "--fresh: keeping the previous env at ${FRESH_ASIDE} — the new one did not pass its self-check."
+    info "  Go back to it with:  rm -rf ${FRESH_ORIG} && mv ${FRESH_ASIDE} ${FRESH_ORIG}"
   fi
 fi
 

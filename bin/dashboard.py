@@ -848,7 +848,7 @@ function versionBlock(t){
     // said what it should have been. Shown even when the package is also held,
     // because "held" explains the newest release, not the missing pin.
     const drift = p.pin_drift && p.pinned
-      ? ` <span class="vdrift" title="tools.yml pins ${esc(p.pinned)}; this environment has ${esc(p.installed)}. Results here are not from the version this site validated. Rebuild the env to get the pin: bin/bdtools install ${esc(t.name)} --rebuild">≠ pinned ${esc(p.pinned)}</span>`
+      ? ` <span class="vdrift" title="tools.yml pins ${esc(p.pinned)}; this environment has ${esc(p.installed)}. Results here are not from the version this site validated. Rebuild the env to get the pin: bin/bdtools install ${esc(t.name)} --fresh">≠ pinned ${esc(p.pinned)}</span>`
       : '';
     bits.push(`${esc(p.name)} ${esc(p.installed)}${up}${drift}`);
   }

@@ -684,9 +684,37 @@ bin/bdtools doctor vsnp_gui      # just one
 ```
 
 A healthy tool shows all ✓; anything broken shows a ✗ with the fix command right
-under it (e.g. `bin/bdtools setup-databases kraken` for a missing database, or
-`bin/bdtools update <tool>` to rebuild an incomplete environment). The installer
-runs this for you at the end of an install, too.
+under it (e.g. `bin/bdtools setup-databases kraken` for a missing database). The
+installer runs this for you at the end of an install, too.
+
+**The three steps, in order.** If you only remember one thing to tell someone
+whose tool won't run, make it the third:
+
+```bash
+bin/bdtools doctor <tool>            # 1. what is actually wrong, and the command for it
+bin/bdtools fix <tool> --apply       # 2. run the repairs that cannot break anything
+bin/bdtools install <tool> --fresh   # 3. start the environment over from nothing
+```
+
+Step 3 is the one that always applies. An environment can be *incomplete* — a
+missing module, a database that was never downloaded — and steps 1 and 2 repair
+that in place, in seconds. But an environment can also be *wrong*: packages built
+for another architecture, a python version swapped out from under the pip layer,
+a transaction that failed half-way. Nothing additive fixes that, because
+something is present that should not be. `--fresh` is the answer to all of it,
+and it is safe to reach for:
+
+* The old environment is **moved aside, not deleted**, and put back automatically
+  if the build fails — so the worst case is the tool you already had.
+* It builds at the version `tools.yml` pins, so it repairs without changing which
+  version of the analysis software you are running.
+* It is not gated by the per-tool update policy, so it works on every tool.
+* A fresh environment gets its platform decided from scratch, which on Apple
+  Silicon is the only way to correct one built for the wrong architecture.
+
+Expect it to take as long as the original install of that tool (minutes, mostly
+solving and downloading). `--rebuild`, by contrast, only *adds* newly declared
+dependencies to the environment that is already there.
 
 **A tool failed partway through `install all` — how do I resume (and pick up a
 fix)?** `install all` builds the tools in order and stops at the first failure;

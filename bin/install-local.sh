@@ -762,9 +762,47 @@ build_vsnp_local() {
         ok "all USDA-VS references already available (per vsnp3_path_adder.py -s); none added"
       fi
     fi
-    # Register the USDA vsnp_dependencies reference set too, when database-setup
-    # provided it (extra references like the Brucella/MTBC test references).
-    [[ -n "${vsnp_deps}" ]] && registry_add_line "${rop}" "${vsnp_deps}"
+    # The USDA vsnp_dependencies set (when database-setup provided it) mostly
+    # DUPLICATES the reference_options set registered above — registering it
+    # whole used to double every entry in the GUI's reference dropdowns. Expose
+    # only what it uniquely contributes (e.g. mtbc0_v1.1): a managed dir of
+    # symlinks to the names not already reachable via the other registered
+    # locations, registered only when non-empty. Rebuilt on every install run,
+    # so it tracks upstream additions and never goes stale. A pre-existing
+    # whole-dir registration (an older install, or a deliberate user choice in
+    # the GUI's Reference Locations editor) is left alone — in that case every
+    # deps name is already reachable and this contributes nothing.
+    if [[ -n "${vsnp_deps}" ]]; then
+      local deps_extra="${site}/refs/vsnp3/vsnp_dependencies_extra"
+      local deps_already; deps_already="$(
+        while IFS= read -r p; do
+          [[ -z "$p" ]] && continue
+          [[ "$p" == "${deps_extra}" ]] && continue   # ignore our own managed dir
+          [[ -d "$p" ]] || continue
+          for d in "$p"/*/; do [[ -d "$d" ]] && basename "$d"; done
+        done < "${rop}" | sort -u
+      )"
+      rm -rf "${deps_extra}"
+      mkdir -p "${deps_extra}"
+      local deps_added=0 dname
+      for d in "${vsnp_deps}"/*/; do
+        [[ -d "$d" ]] || continue
+        dname="$(basename "$d")"
+        [[ "${dname}" == .* ]] && continue                        # .git is not a reference
+        compgen -G "${d}*.fasta" >/dev/null || compgen -G "${d}*.xlsx" >/dev/null || continue
+        grep -qxF "${dname}" <<< "${deps_already}" && continue    # already available → skip
+        ln -sfn "${d%/}" "${deps_extra}/${dname}"
+        deps_added=$((deps_added+1))
+      done
+      if [[ ${deps_added} -gt 0 ]]; then
+        registry_add_line "${rop}" "${deps_extra}"
+        ok "added ${deps_added} reference(s) unique to vsnp_dependencies -> ${deps_extra}"
+      else
+        registry_remove_line "${rop}" "${deps_extra}"
+        rmdir "${deps_extra}" 2>/dev/null || true
+        ok "vsnp_dependencies adds no references not already available; none registered"
+      fi
+    fi
     ok "configured local vsnp site: ${site} (references + vcf_db_folders + env link)"
     # Step 2's curated VCF comparison databases (kapurlab/vcf_db_directories).
     # One-time seed — see common.sh; an admin's later removals/additions win.

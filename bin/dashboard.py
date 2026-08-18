@@ -666,6 +666,12 @@ addEventListener('storage',e=>{if(e.key===THEME_KEY)applyTheme(preferredTheme(),
  html[data-theme="dark"] button:disabled{background:#34414a;color:#89959c}
  html[data-theme="dark"] .ulog{background:#080d11;color:#dce6eb}
  html[data-theme="dark"] .err{color:#f0a09b}
+ /* Portal sign-in expired while the page sat open. Uses the danger tokens, which
+    are already redefined per theme, so this needs no dark-mode override. */
+ .sessexp{margin:8px 24px 0;background:var(--danger-bg);border:1px solid var(--danger-line);
+   color:var(--danger-ink);border-radius:10px;padding:12px 14px;font-size:13.5px}
+ .sessexp button{margin-left:10px;background:var(--accent);color:var(--button-ink);
+   padding:6px 12px;font-size:13px}
  @keyframes spin{to{transform:rotate(360deg)}}
 </style></head><body>
 <header><div class="hbar">
@@ -689,6 +695,7 @@ addEventListener('storage',e=>{if(e.key===THEME_KEY)applyTheme(preferredTheme(),
   <div class="ospin" id="ospin"></div>
   <h2 id="otitle"></h2><p id="omsg"></p>
 </div></div>
+<div id="sessexp" class="sessexp" style="display:none"></div>
 <div id="updates" class="updates"></div>
 <!-- The run panel lives OUTSIDE #updates on purpose. An update run ends by
      re-checking, which repaints #updates — and when the log lived in there, the
@@ -859,8 +866,54 @@ function versionBlock(t){
 // re-render: a missing vendored dependency only bites once an analysis runs, so a
 // message that flashes and vanishes is worse than none.
 const launchWarn = {};
+// The portal's SSO session has its own lifetime, independent of both the Slurm
+// allocation and this dashboard's token, and it can lapse while this page sits
+// open. When it does, every poll below comes back as the identity provider's
+// HTML login page instead of JSON. Before this, that surfaced as an unhandled
+// rejection inside load(): the 5s interval kept firing and kept failing, so the
+// grid froze with stale cards and said nothing — indistinguishable from a hung
+// dashboard. Name it instead, and offer the one thing that fixes it: a real
+// navigation, which can carry the SSO round trip that a fetch() cannot.
+//
+// Two consecutive failures, not one, so a transient blip stays silent. A 5xx is
+// reported as a server problem rather than a sign-in one, because telling
+// someone to log in again when the backend threw would send them the wrong way.
+let apiFailStreak = 0;
+function lapseKind(r){
+  if(r.status === 401 || r.status === 403) return 'auth';
+  if(r.status >= 500) return 'net';
+  if(!(r.headers.get('content-type')||'').includes('json')) return 'auth';
+  return '';
+}
+function showSessionNotice(kind){
+  apiFailStreak++;
+  if(apiFailStreak < 2) return;          // one miss is noise, not news
+  const el = document.getElementById('sessexp');
+  if(!el) return;
+  el.innerHTML = (kind === 'auth')
+    ? `<b>Your portal sign-in looks like it expired.</b> Anything already running is
+       unaffected — it keeps going on the compute node. Reload to sign back in and
+       resume live updates.<button onclick="location.reload()">Reload</button>`
+    : `<b>Lost contact with the dashboard.</b> Anything already running is unaffected.
+       Still retrying every 5 seconds.<button onclick="location.reload()">Reload</button>`;
+  el.style.display = '';
+}
+function clearSessionNotice(){
+  apiFailStreak = 0;
+  const el = document.getElementById('sessexp');
+  if(el && el.style.display !== 'none'){ el.style.display = 'none'; el.innerHTML = ''; }
+}
 async function load(){
-  const r = await fetch('./api/tools'); const tools = await r.json();
+  let tools;
+  try{
+    const r = await fetch('./api/tools', {cache:'no-store'});
+    const bad = lapseKind(r);
+    if(bad){ showSessionNotice(bad); return; }
+    tools = await r.json();
+  }catch(e){
+    showSessionNotice('net'); return;    // network/parse failure: keep the last grid
+  }
+  clearSessionNotice();
   const g = document.getElementById('grid'); g.innerHTML='';
   let anyInstalled=false, anyIssues=false;
   for(const t of tools){

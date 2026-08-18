@@ -26,6 +26,14 @@ that hold binaries NOT installed by conda — so a `<env>/bin` + PATH search wou
 miss them. They are resolved via tool_launch._resolve_asset_dir, i.e. exactly the
 way the launcher builds PATH, so doctor and the launcher can never disagree.
 
+`sibling_tools` names OTHER suite tools whose envs this one invokes at run time
+(the BDTOOLS_SIBLING_ENV map: amr_plus -> mlst/kraken2, irma -> genoflu, vsnp ->
+the Kraken GUI). Doctor asks the launcher's resolver that each resolves to a
+real env: every other check here grades the tool's OWN env and stays green
+while a hand-off path is missing — which is how an install whose Kraken GUI ran
+from a named conda env passed every check and still had no working Kraken
+hand-off in vSNP Step 1.
+
 Database `kind`:
   dir          a directory that must exist and be non-empty
   dir_marker   a directory that must contain `marker` (e.g. kraken2's hash.k2d)
@@ -72,6 +80,7 @@ REQUIREMENTS = {
     "vsnp_gui": {
         "modules": _WEB,
         "binaries": ["vsnp3_step1.py", "vsnp3_step2.py", "snp-dists", "bcftools", "samtools"],
+        "sibling_tools": ["kraken_id_parse_gui"],   # Step 1's "Run Kraken" hand-off
         "fix": "bin/bdtools update vsnp_gui   # rebuilds the vsnp3 env",
         "databases": [
             {"label": "vSNP reference options", "config_key": "vsnp3_reference_options_root",
@@ -91,9 +100,11 @@ REQUIREMENTS = {
     # contain them, and probing this env for them would report a missing
     # program that no rebuild of THIS env could fix. Same for genoflu, which
     # irma_gui runs from genoflu_gui's env and was never listed here.
-    "amr_plus_gui": {"modules": _WEB_AIO, "binaries": ["amrfinder"]},
+    "amr_plus_gui": {"modules": _WEB_AIO, "binaries": ["amrfinder"],
+                     "sibling_tools": ["mlst_gui", "kraken_id_parse_gui"]},
     "genoflu_gui": {"modules": _WEB_AIO, "binaries": ["seqkit"]},
-    "irma_gui":   {"modules": _WEB_AIO, "binaries": ["IRMA", "seqkit"]},
+    "irma_gui":   {"modules": _WEB_AIO, "binaries": ["IRMA", "seqkit"],
+                   "sibling_tools": ["genoflu_gui"]},
     # kSNP4 is NOT a conda package — deploy/install.sh downloads the kSNP4.1
     # package for the host OS from SourceForge into vendor/kSNP4-bin and prepends
     # that to PATH. So its binaries are invisible to an <env>/bin search, which is

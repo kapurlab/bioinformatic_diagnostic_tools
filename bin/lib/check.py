@@ -270,6 +270,32 @@ def resolve_asset_dirs(tool, tool_dir, asset_dirs):
     return found, missing
 
 
+def sibling_handoff(name):
+    """(env_dir, tool_dir) the launcher would hand a consumer for sibling `name`.
+
+    Asked of tool_launch.resolve — the same answer the sibling-env map exports —
+    never guessed from <root>/<name>/env. The guess is exactly what made doctor
+    pass while a hand-off failed: a sibling built as a NAMED conda env has no
+    <checkout>/env, so every per-tool check was green and the consumer still
+    found nothing at the path it probed."""
+    try:
+        import tool_launch  # sibling module, stdlib-only
+    except Exception:
+        return "", ""
+    outer = getattr(tool_launch, "_SCANNING_SIBLINGS", False)
+    tool_launch._SCANNING_SIBLINGS = True
+    try:
+        plan = tool_launch.resolve(name, 0)
+    except Exception:
+        return "", ""
+    finally:
+        tool_launch._SCANNING_SIBLINGS = outer
+    env = plan.get("env_dir") or ""
+    if env == "(base)":
+        env = ""
+    return env, plan.get("dir") or ""
+
+
 def _expand(s):
     """Expand $VAR, ${VAR}, and ${VAR:-fallback} against the environment."""
     import re
@@ -423,6 +449,37 @@ def run_checks(tool, env_py, scope, tool_dir=None):
                "(core analysis is still runnable)")
         lines.append((SKIP, msg, None))
         notes.append(msg)
+
+    # Sibling hand-offs: software this tool runs from ANOTHER tool's env
+    # (amr_plus -> mlst/kraken2, irma -> genoflu, vsnp -> the Kraken GUI).
+    # Everything above grades the env THIS tool launches with, which says
+    # nothing about the path a hand-off resolves: an install whose
+    # kraken_id_parse_gui ran from a named conda env passed every per-tool
+    # check while vsnp_gui's Kraken hand-off, probing <checkout>/env, found
+    # nothing. Ask the launcher's resolver, so the two can never disagree.
+    for sib in spec.get("sibling_tools", []):
+        sib_env, sib_dir = sibling_handoff(sib)
+        if not sib_env:
+            fix = f"bin/bdtools install {sib}"
+            label = (f"sibling {sib}: no runnable environment — "
+                     f"the {sib} hand-off will fail or be skipped at runtime")
+            lines.append((BAD, label, fix))
+            issues.append({"label": f"sibling {sib} env missing", "fix": fix})
+            continue
+        checkout_env = os.path.join(sib_dir, "env") if sib_dir else ""
+        if checkout_env and not os.path.isdir(checkout_env):
+            # The launcher (and current releases) will find sib_env; releases
+            # from before the sibling-env map, and backends started outside
+            # the launcher, probe <checkout>/env and will miss it.
+            remedy = f"ln -sfn {sib_env} {checkout_env}"
+            msg = (f"sibling {sib} runs from {sib_env}, but {checkout_env} "
+                   f"does not exist — consumers that probe the checkout "
+                   f"(older releases, backends started outside the launcher) "
+                   f"will miss it")
+            lines.append((SKIP, msg, remedy))
+            notes.append(f"{msg}; remedy: {remedy}")
+        else:
+            lines.append((OK, f"sibling {sib} env: {sib_env}", None))
 
     if scope == "all":
         for db in spec.get("databases", []):

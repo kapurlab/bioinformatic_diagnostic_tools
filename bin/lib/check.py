@@ -15,6 +15,7 @@ import argparse
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -57,6 +58,72 @@ PIP_WEB_MODULES = {
 }
 
 
+# Import-name -> conda package for the ANALYSIS modules the specs probe. A
+# module that does not import is a gap in ONE package, and naming that package
+# is what lets this report offer a targeted install. Without this table any
+# non-web gap fell through to the tool's `fix` string — a full env rebuild — and
+# that remedy is both the largest available action (it re-solves every conda
+# package, the operation that has already broken a working kraken env on macOS)
+# and, for a report-only tool, one that refuses to run at all. So the card said
+# "Needs setup before it can run" and named the single command guaranteed to do
+# nothing. Reinstalling one package cannot re-solve the env, and it works on
+# every tool regardless of update policy.
+CONDA_MODULES = {
+    "Bio": "biopython",
+    "PIL": "pillow",
+    "allel": "scikit-allel",
+    "cairosvg": "cairosvg",
+    "humanize": "humanize",
+    "jinja2": "jinja2",
+    "numpy": "numpy",
+    "openpyxl": "openpyxl",
+    "pandas": "pandas",
+    "pysam": "pysam",
+    "svgwrite": "svgwrite",
+    "yaml": "pyyaml",
+}
+
+
+def env_conda_subdir(envdir):
+    """The conda platform this env was built for — majority of its packages.
+
+    Same rule as common.sh:env_conda_subdir, in python because the remedy string
+    is built here. A `conda install` that omits it re-solves for the HOST
+    platform, so on Apple Silicon it links osx-arm64 packages into an osx-64
+    env; the result runs until the analysis calls the binary and then dies with
+    "incompatible architecture". A repair must not be able to cause that.
+    """
+    counts = {}
+    for meta in Path(envdir, "conda-meta").glob("*.json"):
+        try:
+            sd = json.loads(meta.read_text(encoding="utf-8")).get("subdir", "")
+        except Exception:
+            continue
+        if sd and sd != "noarch":
+            counts[sd] = counts.get(sd, 0) + 1
+    return max(counts, key=counts.get) if counts else ""
+
+
+def _pip_cmd(env_py, tool_dir, web):
+    """Bare pip command restoring the named web-layer packages."""
+    pkgs = " ".join(sorted({PIP_WEB_MODULES[m] for m in web}))
+    req = Path(tool_dir, "backend", "requirements.txt") if tool_dir else None
+    if req and req.is_file():
+        return f'"{env_py}" -m pip install -r "{req}" {pkgs}'
+    return f'"{env_py}" -m pip install {pkgs}'
+
+
+def _conda_cmd(env_py, conda_missing):
+    """Bare conda command reinstalling the named analysis packages, pinned to
+    the platform the env was actually built for."""
+    envdir = str(Path(env_py).parent.parent)
+    subdir = env_conda_subdir(envdir)
+    pre = f"CONDA_SUBDIR={subdir} " if subdir else ""
+    pkgs = " ".join(sorted({CONDA_MODULES[m] for m in conda_missing}))
+    return (f'{pre}conda install -y -p "{envdir}" '
+            f'-c conda-forge -c bioconda {pkgs}')
+
+
 def web_layer_fix(env_py, tool_dir, missing):
     """The targeted remedy when every missing module is pip-owned web layer.
 
@@ -64,17 +131,73 @@ def web_layer_fix(env_py, tool_dir, missing):
     install would have pip-installed); the missing packages are also named
     explicitly so an older checkout whose requirements.txt predates a
     declaration (e.g. python-multipart) still ends up complete. Returns None
-    when any missing module is an analysis package — that is a real env
-    problem and keeps the rebuild remedy."""
+    when any missing module is an analysis package — those need conda, so the
+    caller asks module_fix for the combined remedy."""
     if not missing or any(m not in PIP_WEB_MODULES for m in missing):
         return None
-    pkgs = " ".join(sorted({PIP_WEB_MODULES[m] for m in missing}))
-    req = Path(tool_dir, "backend", "requirements.txt") if tool_dir else None
-    if req and req.is_file():
-        return (f'"{env_py}" -m pip install -r "{req}" {pkgs}'
-                "   # restores the web layer; analysis packages untouched")
-    return (f'"{env_py}" -m pip install {pkgs}'
-            "   # restores the web layer; analysis packages untouched")
+    return (_pip_cmd(env_py, tool_dir, missing)
+            + "   # restores the web layer; analysis packages untouched")
+
+
+def module_fix(env_py, tool_dir, missing):
+    """Targeted remedy for missing python modules, or None if one is unknown.
+
+    The web layer is pip-owned and the analysis modules are conda-owned, so a
+    gap that spans both needs both commands — the real case this was written
+    for reported fastapi, uvicorn AND pysam together, and answering only the
+    pip half would have left the tool still unable to run. Returns None only
+    when a missing module maps to neither table: then nobody here knows what to
+    install and the caller's rebuild remedy is the honest answer.
+
+    Kept to ONE line: `bdtools fix` carries remedies through a tab-separated
+    plan, so a newline in a command truncates the plan silently.
+    """
+    if not missing:
+        return None
+    web = [m for m in missing if m in PIP_WEB_MODULES]
+    conda_missing = [m for m in missing if m in CONDA_MODULES]
+    if len(set(web)) + len(set(conda_missing)) != len(set(missing)):
+        return None
+    if not conda_missing:
+        return web_layer_fix(env_py, tool_dir, web)
+    cmds = []
+    if web:
+        cmds.append(_pip_cmd(env_py, tool_dir, web))
+    cmds.append(_conda_cmd(env_py, conda_missing))
+    return (" && ".join(cmds)
+            + "   # installs only what is missing; the env is not re-solved")
+
+
+def stale_python_trees(env_py):
+    """(current, [stale]) lib/pythonX.Y trees in this env.
+
+    A conda transaction that moves python's minor version relinks conda's own
+    py-ABI packages for the new one, but conda does not own pip-installed files
+    — those stay in the OLD tree, where nothing looks for them any more. The
+    symptom is a handful of modules that imported yesterday and don't today,
+    with every conda package present and correct, which reads exactly like a
+    broken env and gets answered with a rebuild. It isn't one, and a rebuild is
+    a far bigger risk than the pip install that actually fixes it, so say what
+    happened.
+    """
+    envdir = Path(env_py).parent.parent
+    # Symlinks excluded: conda ships lib/python3.1 -> python3.10 in every env,
+    # and counting that as a second tree reported a python version change on
+    # every healthy install.
+    trees = sorted(p.name for p in envdir.glob("lib/python3.*")
+                   if p.is_dir() and not p.is_symlink())
+    if len(trees) < 2:
+        return "", []
+    try:
+        cur = subprocess.run(
+            [env_py, "-c",
+             "import sys; print('python%d.%d' % sys.version_info[:2])"],
+            capture_output=True, text=True, timeout=60).stdout.strip()
+    except Exception:
+        cur = ""
+    if not cur:
+        return "", []
+    return cur, [t for t in trees if t != cur]
 
 
 def check_modules(env_py, modules):
@@ -360,7 +483,8 @@ def check_db(tool, db, env_bin=""):
 def run_checks(tool, env_py, scope, tool_dir=None):
     """Return (status, lines, issues, notes). status: 'ok'|'issues'|'skip'.
     lines: pretty (symbol, text, fix-or-None) tuples. issues: [{label, fix}]
-    (fixable problems). notes: [str] (platform limitations — not fixable here)."""
+    (fixable problems). notes: [str] (platform limits, and context explaining a
+    finding — reported, never part of the pass/fail)."""
     spec = requirements.for_tool(tool)
     lines, issues, notes = [], [], []
     default_fix = spec.get("fix", f"bin/bdtools update {tool}")
@@ -381,11 +505,21 @@ def run_checks(tool, env_py, scope, tool_dir=None):
 
     missing = check_modules(env_py, spec.get("modules", []))
     if missing:
-        # Web-layer-only gaps get a targeted pip install into the existing env;
-        # a missing ANALYSIS module keeps the full-rebuild remedy.
-        mod_fix = web_layer_fix(env_py, tool_dir, missing) or default_fix
+        # Install what is missing, in the env that is already here. The rebuild
+        # remedy is the fallback for modules nothing here can name — not the
+        # first answer to every import error.
+        mod_fix = module_fix(env_py, tool_dir, missing) or default_fix
         lines.append((BAD, f"python modules missing: {', '.join(missing)}", mod_fix))
         issues.append({"label": f"missing modules: {', '.join(missing)}", "fix": mod_fix})
+        cur_py, stale = stale_python_trees(env_py)
+        if stale:
+            why = (f"cause: this env's python is now {cur_py}, but "
+                   f"{', '.join(stale)} is still on disk — the python version was "
+                   "replaced, and anything pip-installed under the old one is "
+                   "stranded there. The env is not broken; reinstall the "
+                   "modules above.")
+            lines.append((SKIP, why, None))
+            notes.append(why)
     elif spec.get("modules"):
         lines.append((OK, f"python modules ({len(spec['modules'])}) import", None))
 
@@ -493,6 +627,25 @@ def run_checks(tool, env_py, scope, tool_dir=None):
     return ("issues" if issues else "ok"), lines, issues, notes
 
 
+BDTOOLS = str(Path(__file__).resolve().parents[1] / "bdtools")
+
+
+def absolute_fix(cmd):
+    """Rewrite a leading `bin/bdtools` to its absolute path.
+
+    Every fix string is written relative to the umbrella checkout root, which is
+    not where anyone is standing when they read one: these commands are copied
+    off a dashboard card or out of doctor's report into whatever directory the
+    terminal is in, and from bin/ — the likeliest place, since that is where
+    these scripts live — the answer is "zsh: no such file or directory:
+    bin/bdtools". An absolute path cannot be pasted wrong, and still contains
+    "bdtools update", so fix.sh's classifier reads it the same as before.
+    """
+    if not cmd:
+        return cmd
+    return re.sub(r"(?<![\w./])bin/bdtools(?=\s|$)", BDTOOLS, cmd)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--tool", required=True)
@@ -504,6 +657,9 @@ def main():
 
     status, lines, issues, notes = run_checks(
         args.tool, args.python, args.scope, tool_dir=args.dir)
+    lines = [(sym, text, absolute_fix(fix)) for sym, text, fix in lines]
+    for iss in issues:
+        iss["fix"] = absolute_fix(iss.get("fix", ""))
 
     if args.json:
         print(json.dumps({"tool": args.tool, "status": status,

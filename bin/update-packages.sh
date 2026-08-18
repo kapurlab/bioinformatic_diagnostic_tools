@@ -326,6 +326,11 @@ update_one_tool() {
   # older env — a newer package can need a newer libcurl/zlib/perl than something
   # else in the env can tolerate — and it deserves one clear sentence, not a
   # 200-line solver tree presented as "conda install failed".
+  # Before the solve, so the dry run and the install that follows it are answering
+  # the same question. A solve on one platform and an install on another can
+  # disagree, and the disagreement surfaces as an install that fails after a
+  # "successful" solve.
+  _pin_env_subdir "${envdir}"
   local solvelog="${BDTOOLS_HOME}/logs/${tool}-package-solve.log"
   mkdir -p "$(dirname "${solvelog}")"
   info "  checking whether these versions can coexist in this env…"
@@ -333,8 +338,10 @@ update_one_tool() {
         -c conda-forge -c bioconda "${specs[@]}" > "${solvelog}" 2>&1; then
     local why; why="$(_solve_headline "${solvelog}")"
     local _blockwhy="conflicts with this environment"
+    # Name the platform actually solved for, which on Apple Silicon is the env's
+    # osx-64, not the host's Darwin/arm64.
     _solve_is_unavailable "${solvelog}" && \
-      _blockwhy="not available for $(uname -s) $(uname -m)"
+      _blockwhy="not available for ${CONDA_SUBDIR:-$(uname -s) $(uname -m)}"
     for p in "${plan[@]}"; do
       IFS='|' read -r pkg channel installed want <<< "${p}"
       BLOCKED+=("${tool}/${pkg}: staying on ${installed} — ${want} ${_blockwhy}")
@@ -438,8 +445,30 @@ PYREC
   CHANGED=1
 }
 
+# Solve for the platform the env was BUILT for, never the host's.
+#
+# An env's architecture is fixed when it is created, and on Apple Silicon these
+# envs are deliberately built osx-64 under Rosetta (install-local.sh's
+# ensure_conda_subdir — most of the bioinformatics closure has no arm64 build).
+# Nothing here pinned that, so bumping a pin on a Mac ran an osx-arm64 solve
+# against an osx-64 prefix and linked arm64 packages into it. conda reports
+# success; the tool then dies whenever the analysis reaches one of them —
+# "mach-o file, but is an incompatible architecture" out of kraken2's perl deps,
+# an hour into someone's day, from a command that only claimed to change a
+# version number. install-local.sh has enforced this rule for its own solves all
+# along; update-packages is the other door into the same env.
+_pin_env_subdir() {   # ENVDIR
+  local sd; sd="$(env_conda_subdir "$1")"
+  [[ -n "${sd}" ]] || return 0
+  export CONDA_SUBDIR="${sd}"
+  local foreign; foreign="$(env_foreign_subdirs "$1")"
+  [[ -n "${foreign}" ]] && warn "$1 already contains $(printf '%s' "${foreign}" | tr '\n' ';') package(s) — a mixed-architecture env; installing cannot remove them (bin/bdtools doctor explains the rebuild)."
+  return 0
+}
+
 _conda_install_set() {
   local conda="$1" envdir="$2"; shift 2
+  _pin_env_subdir "${envdir}"
   run "${conda}" install -y -p "${envdir}" -c conda-forge -c bioconda "$@"
 }
 

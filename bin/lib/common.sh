@@ -389,6 +389,63 @@ env_foreign_subdirs() {
   printf '%s' "${out}"
 }
 
+# Which python does this tool ACTUALLY run on?
+#
+# Ask tool_launch.resolve — the same resolver the dashboard launches through and
+# that packages.env_dir_for reports versions from. Doctor used to answer this
+# question on its own (checkout env, else a conda env matching the manifest's
+# `env:` NAME), and on any machine where those disagree it audited an env the
+# tool never touches. Live example: a shared site install runs vsnp_gui from the
+# PREFIX env /srv/kapurlab/tools/vsnp3, while a stale personal `vsnp3` env from
+# an old install still existed in the user's conda — doctor graded the personal
+# one and reported fastapi/uvicorn/pydantic and snp-dists "missing", plus a fix
+# ("rebuilds the vsnp3 env") that would have rebuilt a perfectly good env to cure
+# a problem in a different one. Every finding was a false positive, and the card
+# said "Needs setup before it can run" about a tool that was running.
+#
+# The heuristics stay as fallbacks for installs tool_launch cannot resolve.
+tool_env_python() {
+  local dir="$1" envname="$2" name="${3:-}" conda py
+  if [[ -n "${name}" ]]; then
+    # lib dir passed as argv[1], not via the environment: KT_BIN_DIR is a plain
+    # shell variable in common.sh, never exported, so reading it from os.environ
+    # here silently found nothing and every lookup fell through to the old
+    # heuristics — the bug this function exists to fix, still happening.
+    py="$("${PYBIN}" -c '
+import os, sys
+sys.path.insert(0, sys.argv[1])
+try:
+    import tool_launch
+    d = (tool_launch.resolve(sys.argv[2], 0) or {}).get("env_dir") or ""
+except Exception:
+    d = ""
+if d and d != "(base)":
+    p = os.path.join(d, "bin", "python")
+    if os.path.exists(p):
+        print(p)
+' "${KT_BIN_DIR}/lib" "${name}" 2>/dev/null)"
+    [[ -n "${py}" ]] && { echo "${py}"; return; }
+  fi
+  if [[ -x "${dir}/env/bin/python" ]]; then echo "${dir}/env/bin/python"; return; fi
+  conda="$(detect_conda 2>/dev/null || true)"
+  if [[ -n "${conda}" && -n "${envname}" ]] \
+     && "${conda}" env list 2>/dev/null | awk '{print $1}' | grep -qxF "${envname}"; then
+    "${conda}" run -n "${envname}" sh -c 'echo $CONDA_PREFIX/bin/python' 2>/dev/null
+  fi
+}
+
+# tool_env_prefix TOOL — the env DIRECTORY the tool runs from ("" if none).
+# Callers that operate on an env (restore, targeted conda repair) need the prefix
+# rather than the interpreter, and must not re-derive it: a resolver that only
+# knows <checkout>/env sees no env at all for every tool installed as a NAMED
+# conda env, and the sensible-looking fallback — "no env, so rebuild it" — sends
+# someone to rebuild a working install instead of repairing it.
+tool_env_prefix() {   # TOOL
+  local py; py="$(tool_env_python "$(tool_dir "$1")" "$(manifest_get "$1" env 2>/dev/null || true)" "$1")"
+  [[ -n "${py}" ]] || return 0
+  printf '%s' "${py%/bin/python}"
+}
+
 # harden_conda_hooks ENVDIR — make an env's conda activate/deactivate hooks
 # survive `set -u`. Idempotent; safe to call before and after every conda op.
 #

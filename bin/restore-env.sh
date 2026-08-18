@@ -31,15 +31,41 @@ manifest_has "${TOOL}" || die "no tool named '${TOOL}' in the manifest"
 
 SNAP="$(_env_snapshot_file "${TOOL}")"
 [[ ${USE_PREV} -eq 1 ]] && SNAP="${SNAP}.prev"
-[[ -f "${SNAP}" ]] || die "no env snapshot for ${TOOL} at ${SNAP}
+if [[ ! -f "${SNAP}" ]]; then
+  # No snapshot only means BDTOOLS never changed this env — conda still recorded
+  # every transaction it ran, including ones a human ran by hand, and rolling
+  # back to a revision is the same kind of no-solve replay this script does.
+  # Offer that before a rebuild: a rebuild is the largest available action and
+  # the one most likely to fail on the env that just broke.
+  _e="$(tool_env_prefix "${TOOL}" 2>/dev/null || true)"
+  die "no env snapshot for ${TOOL} at ${SNAP}
        Snapshots are written when bdtools changes an env, so there is none
-       until the first such change. Rebuild instead:  bin/bdtools install ${TOOL}"
+       until the first such change.
+
+       Try conda's own history instead — it records by-hand transactions too:
+           conda list --revisions -p ${_e:-<env>} | tail -30
+           conda install -p ${_e:-<env>} --revision <N>
+       Or, as a last resort, rebuild:  bin/bdtools install ${TOOL}"
+fi
 
 DIR="$(tool_dir "${TOOL}")"
-ENVDIR="${DIR}/env"
-[[ -d "${ENVDIR}" ]] || die "${TOOL} has no env at ${ENVDIR} (run: bin/bdtools install ${TOOL})"
+# Ask the shared resolver, not ${DIR}/env. A tool installed --personal runs from
+# a NAMED conda env, and this script used to declare it had no env at all and
+# send the user to `bdtools install` — a full rebuild, offered by the one command
+# whose entire purpose is to avoid rebuilding after a bad transaction. That made
+# the recovery path unreachable exactly where it was needed.
+ENVDIR="$(tool_env_prefix "${TOOL}")"
+[[ -n "${ENVDIR}" && -d "${ENVDIR}" ]] || die "${TOOL} has no env this machine can see (looked for ${DIR}/env and a conda env named '$(manifest_get "${TOOL}" env 2>/dev/null || echo '?')')
+       Build one:  bin/bdtools install ${TOOL}"
 
 CONDA="$(detect_conda)" || die "conda/mamba not found."
+
+# Replay on the platform the env was BUILT for. An explicit URL list pins the
+# packages, but conda still refuses or substitutes when the running subdir
+# disagrees, and on Apple Silicon the host subdir (osx-arm64) is not the subdir
+# of an env deliberately built osx-64 under Rosetta.
+_subdir="$(env_conda_subdir "${ENVDIR}")"
+[[ -n "${_subdir}" ]] && { export CONDA_SUBDIR="${_subdir}"; info "  platform: ${_subdir} (pinned from the env)"; }
 
 n="$(grep -cv '^\(#\|@\)' "${SNAP}" 2>/dev/null || echo 0)"
 log "restoring ${TOOL}: ${n} package(s) from $(basename "${SNAP}")"

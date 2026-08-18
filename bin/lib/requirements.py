@@ -85,7 +85,13 @@ REQUIREMENTS = {
         ],
     },
     "mlst_gui":   {"modules": _WEB_AIO, "binaries": ["mlst"]},
-    "amr_plus_gui": {"modules": _WEB_AIO, "binaries": ["amrfinder", "mlst"]},
+    # mlst and kraken2 are sibling-provided for amr_plus_gui (they run from
+    # mlst_gui's and kraken_id_parse_gui's envs — see its bin/amr_pipeline.py),
+    # so they are graded under those tools. A fresh amr_plus env does not
+    # contain them, and probing this env for them would report a missing
+    # program that no rebuild of THIS env could fix. Same for genoflu, which
+    # irma_gui runs from genoflu_gui's env and was never listed here.
+    "amr_plus_gui": {"modules": _WEB_AIO, "binaries": ["amrfinder"]},
     "genoflu_gui": {"modules": _WEB_AIO, "binaries": ["seqkit"]},
     "irma_gui":   {"modules": _WEB_AIO, "binaries": ["IRMA", "seqkit"]},
     # kSNP4 is NOT a conda package — deploy/install.sh downloads the kSNP4.1

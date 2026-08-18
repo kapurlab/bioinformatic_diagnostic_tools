@@ -259,7 +259,8 @@ class UnsatisfiableRecordTests(unittest.TestCase):
                  mock.patch.object(PKG, "held", return_value={}), \
                  mock.patch.object(PKG, "unsatisfiable_here", return_value={
                      "mlst_gui/mlst": {"version": "2.35.0",
-                                       "reason": "nothing provides libxcrypt1"}}):
+                                       "reason": "nothing provides libxcrypt1",
+                                       "pins": PKG.pins_for("mlst_gui")}}):
                 rec = next(r for r in PKG.report(["mlst_gui"], use_network=True)
                            if r["package"] == "mlst")
         self.assertEqual(rec["installed"], "2.33.1")
@@ -285,7 +286,8 @@ class UnsatisfiableRecordTests(unittest.TestCase):
                      mock.patch.object(PKG, "_save_cache", lambda cache: None), \
                      mock.patch.object(PKG, "unsatisfiable_here", return_value={
                          "amr_plus_gui/ncbi-amrfinderplus": {
-                             "version": "4.2.7", "reason": reason}}):
+                             "version": "4.2.7", "reason": reason,
+                             "pins": PKG.pins_for("amr_plus_gui")}}):
                     return next(r for r in PKG.report(["amr_plus_gui"],
                                                       use_network=True)
                                 if r["package"] == "ncbi-amrfinderplus")
@@ -296,6 +298,32 @@ class UnsatisfiableRecordTests(unittest.TestCase):
                          "bdtools install amr_plus_gui --rebuild")
         self.assertEqual(elsewhere["held_fix"], "",
                          "a rebuild cannot conjure a build that does not exist")
+
+    def test_a_record_from_a_different_pin_set_no_longer_holds(self):
+        # The kraken2-split case: ncbi-amrfinderplus=4.2.7 was unsatisfiable
+        # while kraken2 was co-pinned into the same env, and the record was
+        # written under that pin set. Dropping the kraken2 pin changed the
+        # question, so the old answer must not keep the tool held — the next
+        # check re-tries. Records from before pin tracking (no "pins" key)
+        # are treated the same way.
+        for stale in (["kraken2=2.17.1", "ncbi-amrfinderplus=4.2.7"], None):
+            with tempfile.TemporaryDirectory() as tmp:
+                meta = Path(tmp) / "conda-meta"
+                meta.mkdir()
+                (meta / "ncbi-amrfinderplus-3.12.8-h1234_0.json").touch()
+                record = {"version": "4.2.7", "reason": "requires perl >=5.32.1"}
+                if stale is not None:
+                    record["pins"] = stale
+                with mock.patch.object(PKG, "env_dir_for", return_value=tmp), \
+                     mock.patch.object(PKG, "latest_version", return_value="4.2.7"), \
+                     mock.patch.object(PKG, "_save_cache", lambda cache: None), \
+                     mock.patch.object(PKG, "unsatisfiable_here", return_value={
+                         "amr_plus_gui/ncbi-amrfinderplus": record}):
+                    rec = next(r for r in PKG.report(["amr_plus_gui"],
+                                                     use_network=True)
+                               if r["package"] == "ncbi-amrfinderplus")
+            self.assertTrue(rec["update_available"], stale)
+            self.assertFalse(rec["held"], stale)
 
     def test_a_record_for_a_different_version_does_not_hold_the_new_one(self):
         # Keyed by version so a NEWER release is tried again — the record suppresses

@@ -76,13 +76,29 @@ def _platform_key():
     return f"{platform.system()}-{platform.machine()}".lower()
 
 
+def pins_for(tool, specs=None):
+    """The tool's declared pin set as a stable, comparable list.
+
+    This is the CONTEXT an unsatisfiable record was true in: a solve fails (or
+    succeeds) for the whole set, not for one package in isolation. amr_plus_gui
+    is the worked example — ncbi-amrfinderplus=4.2.7 was unsatisfiable while
+    kraken2 was co-pinned in the same env, and became installable the day the
+    kraken2 pin moved out to kraken_id_parse_gui."""
+    if specs is None:
+        specs = declared()
+    return sorted(f"{name}={pinned}" for _channel, name, pinned in specs.get(tool, []))
+
+
 def record_unsatisfiable(tool, package, version, reason=""):
     """Remember that <package>=<version> could not be installed for <tool> here.
 
     Written after a solve says no, so the dashboard stops offering an update that
     cannot succeed on this machine. Keyed by the exact version: when a newer one is
     released the key no longer matches and it is tried again — the record suppresses
-    a known-bad answer, it does not give up on the package.
+    a known-bad answer, it does not give up on the package. The tool's pin set is
+    stored alongside for the same reason: the answer was about installing this
+    version WITH those pins, so when the manifest's pin set changes the record no
+    longer applies and the version is tried again (see the check in report()).
     """
     path = _unsat_path()
     try:
@@ -90,8 +106,13 @@ def record_unsatisfiable(tool, package, version, reason=""):
             data = json.load(fh)
     except (OSError, ValueError):
         data = {}
+    try:
+        pins = pins_for(tool)
+    except Exception:
+        pins = []   # unreadable manifest -> a pins mismatch later, i.e. a re-try
     data.setdefault(_platform_key(), {})[f"{tool}/{package}"] = {
         "version": version, "reason": reason, "at": int(time.time()),
+        "pins": pins,
     }
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -311,6 +332,13 @@ def report(tools=None, use_network=True):
             # held too, without needing a manifest edit — that record is per
             # platform, which a shared manifest cannot be.
             tried = unsat.get(f"{tool}/{name}") or {}
+            # ...but only while the tool's pin set is the one the solve failed
+            # under. A record written against a different set (or before pin
+            # tracking existed) answers a question that is no longer being
+            # asked — drop it and let the next run re-try, instead of staying
+            # "held" forever on a conflict that may have moved out of the env.
+            if tried and tried.get("pins") != pins_for(tool, specs):
+                tried = {}
             blocked_version = tried.get("version", "")
             newer = is_newer(latest, inst) if inst else False
             # Why it is held, and what (if anything) would change that. Carried on

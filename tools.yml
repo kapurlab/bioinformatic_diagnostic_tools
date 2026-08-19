@@ -80,7 +80,7 @@ suite_version: "2026.08.13"
 tools:
   - name: vsnp_gui
     repo: https://github.com/kapurlab/vsnp_gui.git
-    version: v0.4.66
+    version: v0.4.67
     updates: install
     ood_apps: [vsnp_gui]
     dev_apps: [vsnp_gui_dev]
@@ -90,7 +90,7 @@ tools:
 
   - name: amr_plus_gui
     repo: https://github.com/kapurlab/amr_plus_gui.git
-    version: v0.3.8
+    version: v0.3.9
     updates: report
     ood_apps: [amr_plus_gui]
     dev_apps: [amr_plus_gui_dev]
@@ -119,7 +119,7 @@ tools:
 
   - name: irma_gui
     repo: https://github.com/kapurlab/irma_gui.git
-    version: v0.3.11
+    version: v0.3.12
     updates: report
     ood_apps: [irma_gui]
     dev_apps: [irma_gui_dev]
@@ -133,7 +133,7 @@ tools:
 
   - name: genoflu_gui
     repo: https://github.com/kapurlab/genoflu_gui.git
-    version: v0.3.6
+    version: v0.3.7
     updates: report
     ood_apps: [genoflu_gui]
     dev_apps: [genoflu_gui_dev]
@@ -144,7 +144,7 @@ tools:
 
   - name: mlst_gui
     repo: https://github.com/kapurlab/mlst_gui.git
-    version: v0.3.7
+    version: v0.3.8
     updates: report
     ood_apps: [mlst_gui]
     dev_apps: [mlst_gui_dev]
@@ -163,7 +163,7 @@ tools:
 
   - name: kraken_id_parse_gui
     repo: https://github.com/kapurlab/kraken_id_parse_gui.git
-    version: v0.2.13
+    version: v0.2.14
     updates: report
     ood_apps: [kraken_id_parse_gui]
     dev_apps: [kraken_id_parse_gui_dev]
@@ -178,7 +178,7 @@ tools:
   # unpacked into the checkout, so its version travels with the tool release.
   - name: ksnp_gui
     repo: https://github.com/kapurlab/ksnp_gui.git
-    version: v0.5.4
+    version: v0.5.5
     updates: report
     ood_apps: [ksnp_gui]
     dev_apps: [ksnp_gui_dev]
@@ -186,7 +186,7 @@ tools:
 
   - name: ncbi_submit_gui
     repo: https://github.com/kapurlab/ncbi_submit_gui.git
-    version: v0.2.5
+    version: v0.2.6
     updates: report
     ood_apps: [ncbi_submit_gui]
     dev_apps: [ncbi_submit_gui_dev]

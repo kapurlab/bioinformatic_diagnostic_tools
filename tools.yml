@@ -119,7 +119,7 @@ tools:
 
   - name: irma_gui
     repo: https://github.com/kapurlab/irma_gui.git
-    version: v0.3.10
+    version: v0.3.11
     updates: report
     ood_apps: [irma_gui]
     dev_apps: [irma_gui_dev]
@@ -178,7 +178,7 @@ tools:
   # unpacked into the checkout, so its version travels with the tool release.
   - name: ksnp_gui
     repo: https://github.com/kapurlab/ksnp_gui.git
-    version: v0.5.3
+    version: v0.5.4
     updates: report
     ood_apps: [ksnp_gui]
     dev_apps: [ksnp_gui_dev]

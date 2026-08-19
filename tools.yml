@@ -119,7 +119,7 @@ tools:
 
   - name: irma_gui
     repo: https://github.com/kapurlab/irma_gui.git
-    version: v0.3.5
+    version: v0.3.6
     updates: report
     ood_apps: [irma_gui]
     dev_apps: [irma_gui_dev]
@@ -163,7 +163,7 @@ tools:
 
   - name: kraken_id_parse_gui
     repo: https://github.com/kapurlab/kraken_id_parse_gui.git
-    version: v0.2.8
+    version: v0.2.9
     updates: report
     ood_apps: [kraken_id_parse_gui]
     dev_apps: [kraken_id_parse_gui_dev]

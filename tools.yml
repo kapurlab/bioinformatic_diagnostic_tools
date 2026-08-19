@@ -90,7 +90,7 @@ tools:
 
   - name: amr_plus_gui
     repo: https://github.com/kapurlab/amr_plus_gui.git
-    version: v0.3.7
+    version: v0.3.8
     updates: report
     ood_apps: [amr_plus_gui]
     dev_apps: [amr_plus_gui_dev]
@@ -133,7 +133,7 @@ tools:
 
   - name: genoflu_gui
     repo: https://github.com/kapurlab/genoflu_gui.git
-    version: v0.3.5
+    version: v0.3.6
     updates: report
     ood_apps: [genoflu_gui]
     dev_apps: [genoflu_gui_dev]
@@ -144,7 +144,7 @@ tools:
 
   - name: mlst_gui
     repo: https://github.com/kapurlab/mlst_gui.git
-    version: v0.3.6
+    version: v0.3.7
     updates: report
     ood_apps: [mlst_gui]
     dev_apps: [mlst_gui_dev]
@@ -163,7 +163,7 @@ tools:
 
   - name: kraken_id_parse_gui
     repo: https://github.com/kapurlab/kraken_id_parse_gui.git
-    version: v0.2.12
+    version: v0.2.13
     updates: report
     ood_apps: [kraken_id_parse_gui]
     dev_apps: [kraken_id_parse_gui_dev]

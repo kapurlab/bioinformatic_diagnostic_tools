@@ -890,12 +890,21 @@ function showSessionNotice(kind){
   if(apiFailStreak < 2) return;          // one miss is noise, not news
   const el = document.getElementById('sessexp');
   if(!el) return;
+  // Only the auth case gets a Reload button. Offering one for a network fault
+  // was a mistake with teeth: when the portal hostname stops RESOLVING (a
+  // cached negative DNS answer holds for the zone's SOA minimum, routinely 15
+  // minutes), reloading navigates a still-usable page into an unreachable one
+  // and there is no way back until the cache ages out. Retrying in place costs
+  // nothing and cannot strand anyone, so that is what a network fault offers.
   el.innerHTML = (kind === 'auth')
     ? `<b>Your portal sign-in looks like it expired.</b> Anything already running is
        unaffected — it keeps going on the compute node. Reload to sign back in and
        resume live updates.<button onclick="location.reload()">Reload</button>`
-    : `<b>Lost contact with the dashboard.</b> Anything already running is unaffected.
-       Still retrying every 5 seconds.<button onclick="location.reload()">Reload</button>`;
+    : `<b>Lost contact with the dashboard.</b> Anything already running is unaffected,
+       and the tool tabs you already have open are not affected either. Still retrying
+       every 5 seconds. <b>Avoid reloading</b> — if the network or name lookup is the
+       problem, a reload can fail and leave you waiting for it to recover.
+       <button onclick="load()">Retry now</button>`;
   el.style.display = '';
 }
 function clearSessionNotice(){

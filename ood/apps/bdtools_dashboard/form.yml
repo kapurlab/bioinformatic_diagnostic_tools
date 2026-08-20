@@ -34,7 +34,7 @@ attributes:
     value: 16
     min: 1
     max: 128
-    help: "Shared by every tool you open this session. 16 comfortably covers concurrent bacterial-WGS work; raise it for a heavy vSNP/assembly run."
+    help: "Shared by every tool you open this session. 16 comfortably covers concurrent bacterial-WGS work; raise it for a heavy vSNP/assembly run. Enforced on Slurm clusters only — on a lab server (blank partition) this is advisory and the defaults are fine."
 
   mem_gb:
     widget: "number_field"
@@ -42,7 +42,7 @@ attributes:
     value: 64
     min: 4
     max: 1024
-    help: "Shared across all tools in the session."
+    help: "Shared across all tools in the session. Enforced on Slurm clusters only — advisory on a lab server."
 
   bc_num_hours:
     widget: "number_field"

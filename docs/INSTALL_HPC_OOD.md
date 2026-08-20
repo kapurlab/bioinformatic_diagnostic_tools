@@ -241,19 +241,21 @@ echo "SITE_ROOT=$SITE_ROOT"; echo "TOOLS_ROOT=$TOOLS_ROOT"
 
 #### 3a. The seven standard tools
 
-`--no-card` means "build the environment, do not register a per-tool card" —
-which is what you want, because the dashboard is the only card you will register.
+A tool install builds the environment only — per-tool cards are sunset, and
+the dashboard is the only card you will register. (`--no-card` is accepted
+from older scripts and means the same thing; `--with-card` exists for a site
+that genuinely wants a dedicated single-tool card.)
 
 Review first:
 
 ```bash
-sudo bin/bdtools install all --server --no-card --site-conf sites/site.conf --dry-run
+sudo bin/bdtools install all --server --site-conf sites/site.conf --dry-run
 ```
 
 Then run it for real:
 
 ```bash
-sudo bin/bdtools install all --server --no-card --site-conf sites/site.conf
+sudo bin/bdtools install all --server --site-conf sites/site.conf
 ```
 
 This clones each tool at its pinned tag into `$TOOLS_ROOT/<tool>` and builds its
@@ -883,8 +885,8 @@ cd $TOOLS_ROOT/<tool>
 sudo git fetch --tags
 sudo git checkout <new-tag>            # reconcile any local commits first
 cd $TOOLS_ROOT/bioinformatic_diagnostic_tools
-sudo bin/bdtools install <tool> --server --no-card --site-conf sites/site.conf --dry-run
-sudo bin/bdtools install <tool> --server --no-card --site-conf sites/site.conf
+sudo bin/bdtools install <tool> --server --site-conf sites/site.conf --dry-run
+sudo bin/bdtools install <tool> --server --site-conf sites/site.conf
 BDTOOLS_TOOLSDIR=$TOOLS_ROOT bin/bdtools doctor <tool>
 ```
 

@@ -2,32 +2,30 @@
 # install-server.sh — install ONE tool as a system Open OnDemand app.
 #
 # The sysadmin / bare-metal path. Installs a tool's source + conda env at
-# TOOLS_ROOT/<tool> and renders its OOD card into the sys-apps dir, rewriting
-# the Kapur Lab literals (paths, cluster name, groups) from the site config.
-# Run as root (it writes /var/www/ood/apps/sys). Always --dry-run first.
+# TOOLS_ROOT/<tool>. Run as root when a card phase writes /var/www/ood/apps/sys.
+# Always --dry-run first.
 #
-#   install-server.sh <tool> [--site-conf PATH] [--with-dev] [--no-card] [--dry-run] [phase ...]
+#   install-server.sh <tool> [--site-conf PATH] [--with-card] [--with-dev] [--dry-run] [phase ...]
 #   install-server.sh --dashboard [--site-conf PATH] [--dry-run]
 #
-# Phases (default: all): preflight toolchain app verify
+# Phases: preflight toolchain app verify
 #   preflight  OOD core present? conda/node? cluster defined? sys-apps writable?
 #   toolchain  checkout the pinned tool at TOOLS_ROOT/<tool>; build env+frontend
 #   app        render ood/apps/<tool>/* into SYS_APPS_DIR/<tool> (site subst)
 #   verify     card + env + frontend present
 #
-# CONSOLIDATED DASHBOARD (recommended): with --dashboard, installs the single
-# umbrella-owned card (SYS_APPS_DIR/bdtools_dashboard) that allocates ONE node per
-# session and runs every tool on it behind one authenticated reverse proxy. Build
-# each tool's env first with `--no-card` (env only, no per-tool card):
-#   for t in $(bin/bdtools list ...); do install-server.sh "$t" --no-card; done
+# THE DASHBOARD IS THE FRONT DOOR. The one card users see is the consolidated
+# dashboard (--dashboard renders SYS_APPS_DIR/bdtools_dashboard): it allocates
+# ONE session and runs every tool on it behind one authenticated reverse
+# proxy. A tool install therefore builds the ENV ONLY by default:
+#   for t in $(bin/bdtools list ...); do install-server.sh "$t"; done
 #   install-server.sh --dashboard
-# Per-tool cards are still available (omit --no-card) for a dedicated single-tool
-# session, but are no longer required for routine use.
 #
-# By default ONLY the production card(s) (tools.yml `ood_apps`) are installed —
-# that is all a normal user sees in the dashboard. Pass --with-dev to ALSO
-# install the developer branch-picker card(s) (`dev_apps`, e.g. <tool>_dev).
-# Developers only; do not use on a site meant for routine diagnostic users.
+# PER-TOOL CARDS ARE SUNSET. --with-card still renders a tool's dedicated
+# card for a site that wants a single-tool session; --no-card is accepted for
+# old scripts and means what the default now means. --with-dev additionally
+# renders the developer branch-picker card(s) (`dev_apps`, e.g. <tool>_dev) —
+# developers only; both flags imply nothing unless the app phase runs.
 #
 # SCOPE: this installs the *app* (the reusable, multi-tool part). It does NOT
 # manage OOD core, the scheduler, auth, Unix groups, storage/quotas, dashboard
@@ -38,13 +36,14 @@ set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
 
 SITE_CONF="${REPO_DIR}/sites/site.conf"
-TOOL=""; PHASES=(); WITH_DEV=0; DASHBOARD=0; NO_CARD=0
+TOOL=""; PHASES=(); WITH_DEV=0; DASHBOARD=0; WITH_CARD=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --site-conf) SITE_CONF="$2"; shift 2;;
     --with-dev)  WITH_DEV=1; shift;;
     --dashboard) DASHBOARD=1; shift;;   # install the umbrella's consolidated dashboard card
-    --no-card)   NO_CARD=1; shift;;     # build a tool's env but do NOT install its per-tool card
+    --with-card) WITH_CARD=1; shift;;   # ALSO install the tool's dedicated per-tool card (sunset)
+    --no-card)   WITH_CARD=0; shift;;   # accepted for old scripts; env-only is the default now
     --dry-run)   DRY_RUN=1; export DRY_RUN; shift;;
     -h|--help)   sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
     -*)          die "unknown option: $1";;
@@ -57,8 +56,11 @@ if [[ ${DASHBOARD} -eq 1 ]]; then
 else
   [[ -n "${TOOL}" ]] || die "name a tool (see: bdtools list), or pass --dashboard"
   if [[ ${#PHASES[@]} -eq 0 ]]; then
-    if [[ ${NO_CARD} -eq 1 ]]; then PHASES=(preflight toolchain verify)   # env only, no card
-    else PHASES=(preflight toolchain app verify); fi
+    # Per-tool cards are SUNSET: the consolidated dashboard is the one front
+    # door users see, so a tool install builds the env only. --with-card
+    # still renders the dedicated card for a site that wants one.
+    if [[ ${WITH_CARD} -eq 1 ]]; then PHASES=(preflight toolchain app verify)
+    else PHASES=(preflight toolchain verify); fi   # env only (default)
   fi
 fi
 

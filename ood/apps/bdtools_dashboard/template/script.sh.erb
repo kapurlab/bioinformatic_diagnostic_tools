@@ -43,6 +43,18 @@ echo "  umbrella: ${REPO}"
 export BDTOOLS_SESSION_TOKEN="${password}"
 export BDTOOLS_SESSION_OWNER="${USER}"
 
+# ---- session resource intent (the card's CPU/memory fields) ----
+# On a Slurm cluster these numbers became the allocation via submit.yml.erb;
+# on a linux_host server nothing enforces them, so hand them to the tools:
+# every tool launched in this session inherits this environment
+# (tool_launch.py starts backends from os.environ) and sizes its thread
+# counts to BDTOOLS_SESSION_CORES instead of grabbing every core on a shared
+# box. Form attributes are bare ERB locals (see the submit.yml.erb note);
+# defined?() keeps a card whose form dropped the field from failing to stage.
+export BDTOOLS_SESSION_CORES="<%= defined?(num_cores) ? num_cores.to_i : 0 %>"
+export BDTOOLS_SESSION_MEM_GB="<%= defined?(mem_gb) ? mem_gb.to_i : 0 %>"
+echo "  session budget: ${BDTOOLS_SESSION_CORES} cores, ${BDTOOLS_SESSION_MEM_GB} GB (tools cap their threads to this)"
+
 # ---- find a python with the dashboard's deps (starlette + httpx + uvicorn) ----
 # These live in every tool's conda env; pick the first that imports them.
 PYTHON=""

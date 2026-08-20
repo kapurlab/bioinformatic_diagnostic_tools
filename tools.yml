@@ -28,21 +28,29 @@
 #               report  — versions are read and displayed, and nothing is ever
 #                         installed, rebuilt or moved  (the DEFAULT when absent)
 #
-# WHY MOST TOOLS ARE report-ONLY. An env rebuild is not a small act: it re-solves
-# every dependency, and a conda transaction that fails part-way rolls back into an
-# env that may no longer run the tool. That is not theoretical — a dashboard
-# "Install tool updates" run rebuilt kraken_id_parse_gui on macOS, died on an
-# upstream spades post-link script, and left a working install broken through no
-# fault of the tool. A diagnostic lab needs the version it validated to keep
-# running; being a release behind costs nothing, and a rebuild that fails costs a
-# working tool. So updating is opt-in per tool, not the default, and today only
-# vSNP3 is opted in. Seeing that a newer version exists is unaffected — that is
-# read-only and always on.
+# EVERY TOOL IS OPTED IN (2026-08-20). The dashboard shows each tool's newest
+# release, so an update that then refuses to apply contradicts the screen: the
+# version a dashboard shows and the version an update produces must be the same
+# thing. `bdtools update all` — and the dashboard's update button — therefore
+# acts on the whole suite.
 #
-# To act on a report-only tool deliberately (an admin recovering an install, or
-# after validating a release), name it and pass --allow-report-only:
-#     bin/bdtools update kraken_id_parse_gui --allow-report-only
-# There is no way to do it from the dashboard, and no bulk form of it.
+# From 2026-08-06 to 2026-08-20 everything but vsnp_gui was report-only, after
+# an update-all rebuilt kraken_id_parse_gui on macOS, died on an upstream spades
+# post-link script, and left a working install broken through no fault of the
+# tool. What makes all-in acceptable now is that the safety lives in the
+# mechanism instead of the default: each tool updates in its own subshell (one
+# failure never abandons the rest), a build that dies is recorded and retried
+# rather than reported as current, and every env change snapshots first
+# (`bdtools restore-env <tool>` puts the previous package set back). A GUI
+# update also cannot move the science: analysis packages change only through
+# the exact `packages:` pins below, which the installer re-enforces after every
+# rebuild.
+#
+# `updates: report` remains supported to freeze one tool deliberately (e.g.
+# mid-validation, or an install being debugged): its versions are still read
+# and shown, nothing about it is changed, and the dashboard offers no button
+# for it. Acting on a frozen tool is one named tool at a time:
+#     bin/bdtools update <tool> --allow-report-only
 #
 # Why `packages` is pinned here and not left to each tool's environment.yml: those
 # floor-pin (`mlst>=2.23`) or leave the version open, so what you got depended on
@@ -90,8 +98,8 @@ tools:
 
   - name: amr_plus_gui
     repo: https://github.com/kapurlab/amr_plus_gui.git
-    version: v0.3.10
-    updates: report
+    version: v0.3.11
+    updates: install
     ood_apps: [amr_plus_gui]
     dev_apps: [amr_plus_gui_dev]
     env: amr_plus
@@ -120,7 +128,7 @@ tools:
   - name: irma_gui
     repo: https://github.com/kapurlab/irma_gui.git
     version: v0.3.13
-    updates: report
+    updates: install
     ood_apps: [irma_gui]
     dev_apps: [irma_gui_dev]
     env: irma_gui
@@ -134,7 +142,7 @@ tools:
   - name: genoflu_gui
     repo: https://github.com/kapurlab/genoflu_gui.git
     version: v0.3.8
-    updates: report
+    updates: install
     ood_apps: [genoflu_gui]
     dev_apps: [genoflu_gui_dev]
     env: genoflu_gui
@@ -145,7 +153,7 @@ tools:
   - name: mlst_gui
     repo: https://github.com/kapurlab/mlst_gui.git
     version: v0.3.9
-    updates: report
+    updates: install
     ood_apps: [mlst_gui]
     dev_apps: [mlst_gui_dev]
     env: mlst
@@ -163,8 +171,8 @@ tools:
 
   - name: kraken_id_parse_gui
     repo: https://github.com/kapurlab/kraken_id_parse_gui.git
-    version: v0.2.18
-    updates: report
+    version: v0.2.19
+    updates: install
     ood_apps: [kraken_id_parse_gui]
     dev_apps: [kraken_id_parse_gui_dev]
     env: kraken_id_parse
@@ -179,7 +187,7 @@ tools:
   - name: ksnp_gui
     repo: https://github.com/kapurlab/ksnp_gui.git
     version: v0.5.6
-    updates: report
+    updates: install
     ood_apps: [ksnp_gui]
     dev_apps: [ksnp_gui_dev]
     env: ksnp
@@ -187,7 +195,7 @@ tools:
   - name: ncbi_submit_gui
     repo: https://github.com/kapurlab/ncbi_submit_gui.git
     version: v0.2.7
-    updates: report
+    updates: install
     ood_apps: [ncbi_submit_gui]
     dev_apps: [ncbi_submit_gui_dev]
     env: ncbi_submit
@@ -200,7 +208,7 @@ tools:
   - name: mhc_gui
     repo: https://github.com/kapurlab/bovine_mhc_typer.git
     version: v0.2.4
-    updates: report
+    updates: install
     ood_apps: [mhc_gui]
     dev_apps: [mhc_gui_dev]
     env: mhc_gui

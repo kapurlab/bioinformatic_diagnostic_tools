@@ -34,7 +34,7 @@ attributes:
     value: 16
     min: 1
     max: 128
-    help: "Shared by every tool you open this session. 16 comfortably covers concurrent bacterial-WGS work; raise it for a heavy vSNP/assembly run. Enforced on Slurm clusters only — on a lab server (blank partition) this is advisory and the defaults are fine."
+    help: "Shared by every tool you open this session: tools cap their thread counts to this number (and on a Slurm cluster it is also the allocation). 16 comfortably covers concurrent bacterial-WGS work; raise it for a heavy assembly run on an otherwise idle machine."
 
   mem_gb:
     widget: "number_field"

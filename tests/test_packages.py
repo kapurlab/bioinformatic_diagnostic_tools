@@ -140,21 +140,38 @@ class ChannelLookupTests(unittest.TestCase):
 
 class ReportTests(unittest.TestCase):
     def test_report_marks_updates_and_pin_drift(self):
+        # Pins vsnp3 in a fixture manifest instead of relying on the live
+        # tools.yml pin: this test went red the day the real pin moved from
+        # 3.35 to 3.36, and a routine pin bump is exactly what it must survive.
+        fixture = (
+            'suite_version: "0.0.0"\n\ntools:\n'
+            "  - name: vsnp_gui\n"
+            "    repo: https://example.invalid/vsnp_gui.git\n"
+            "    version: v0.1.0\n"
+            "    updates: install\n"
+            "    packages: [bioconda::vsnp3=3.35]\n")
         with tempfile.TemporaryDirectory() as tmp:
+            manifest_path = Path(tmp) / "tools.yml"
+            manifest_path.write_text(fixture)
+            # packages.py captures BDTOOLS_MANIFEST at import, so load a fresh
+            # copy of the module under the fixture.
+            with mock.patch.dict(os.environ,
+                                 {"BDTOOLS_MANIFEST": str(manifest_path)}):
+                pkg = load("bdtools_packages_fixture", ROOT / "bin/lib/packages.py")
             meta = Path(tmp) / "conda-meta"
             meta.mkdir()
             (meta / "vsnp3-3.35-hdfd78af_0.json").touch()
-            with mock.patch.object(PKG, "env_dir_for", return_value=tmp), \
-                 mock.patch.object(PKG, "latest_version", return_value="3.36"), \
-                 mock.patch.object(PKG, "unsatisfiable_here", return_value={}), \
-                 mock.patch.object(PKG, "_save_cache", lambda cache: None):
-                records = PKG.report(["vsnp_gui"], use_network=True)
+            with mock.patch.object(pkg, "env_dir_for", return_value=tmp), \
+                 mock.patch.object(pkg, "latest_version", return_value="3.36"), \
+                 mock.patch.object(pkg, "unsatisfiable_here", return_value={}), \
+                 mock.patch.object(pkg, "_save_cache", lambda cache: None):
+                records = pkg.report(["vsnp_gui"], use_network=True)
         vsnp = next(r for r in records if r["package"] == "vsnp3")
         self.assertEqual(vsnp["installed"], "3.35")
         self.assertEqual(vsnp["latest"], "3.36")
         self.assertTrue(vsnp["update_available"])
         self.assertIn("3.36", vsnp["status"])
-        # tools.yml pins 3.35 and 3.35 is installed: no drift.
+        # The fixture pins 3.35 and 3.35 is installed: no drift.
         self.assertFalse(vsnp["pin_drift"])
 
     def test_a_tool_with_no_env_is_reported_not_installed(self):

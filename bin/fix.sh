@@ -59,6 +59,7 @@ fix_class() {
   case "${c}" in
     *"rm -rf"*)                 echo manual;;   # destructive, never
     *"setup-databases"*)        echo auto;;     # fetches reference data
+    "ln -sfn "*)                echo auto;;     # (re)points a symlink — additive: creates or repoints a link doctor derived from what is actually on disk (the sibling-env case); worst case is a link doctor flags again. Anchored to the START so a compound command that merely contains ln -sfn is not swept in.
     *"deploy/install.sh"*)      echo auto;;     # fetches a vendored payload (kSNP4)
     *"conda install"*)          echo manual;;   # a conda transaction on a live env: small, but it CHANGES analysis software — propose it, never unattended. Checked before the pip case because a combined remedy (missing web layer AND a missing analysis package) contains both.
     *"conda update"*)           echo manual;;   # doctor's remedy for an installed-but-broken import (allel -> dask -> numpy): it MOVES a package version, so it is proposed like every other env change. Stated rather than left to the default so reordering these cases cannot silently automate it.

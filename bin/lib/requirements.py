@@ -108,7 +108,17 @@ REQUIREMENTS = {
     "amr_plus_gui": {"modules": _WEB_AIO, "binaries": ["amrfinder"],
                      "sibling_tools": ["mlst_gui", "kraken_id_parse_gui"]},
     "genoflu_gui": {"modules": _WEB_AIO, "binaries": ["seqkit"]},
-    "irma_gui":   {"modules": _WEB_AIO, "binaries": ["IRMA", "seqkit"],
+    # plotly is REQUIRED, not a nicety: html_report.py wraps its import in a
+    # broad except, so an env without it still writes a report — just with every
+    # Coverage & Variants chart silently missing. That degradation looked like a
+    # broken update to the person reading the report; the module check is where
+    # it becomes a named, fixable finding. weasyprint stays optional because the
+    # report REPLACES it (reportlab fallback) and says so in the log; blat is
+    # required because IRMA's read-matching stage silently classifies nothing
+    # without it (the run "succeeds" with zero segments).
+    "irma_gui":   {"modules": _WEB_AIO + ["plotly"],
+                   "optional_imports": ["weasyprint"],
+                   "binaries": ["IRMA", "seqkit", "blat"],
                    "sibling_tools": ["genoflu_gui"]},
     # kSNP4 is NOT a conda package — deploy/install.sh downloads the kSNP4.1
     # package for the host OS from SourceForge into vendor/kSNP4-bin and prepends

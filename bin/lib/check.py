@@ -78,6 +78,7 @@ CONDA_MODULES = {
     "numpy": "numpy",
     "openpyxl": "openpyxl",
     "pandas": "pandas",
+    "plotly": "plotly",
     "pysam": "pysam",
     "svgwrite": "svgwrite",
     "yaml": "pyyaml",

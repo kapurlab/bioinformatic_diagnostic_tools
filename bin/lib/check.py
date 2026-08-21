@@ -642,6 +642,147 @@ def _packages_owning(envdir, relpaths):
     return owners
 
 
+def script_interpreter(path):
+    """Interpreter a script's shebang names: (name, is_env_form), or None.
+
+    `#!/usr/bin/env perl` -> ("perl", True)  — resolved through PATH at run time
+    `#!/abs/path/perl -w` -> ("/abs/path/perl", False)
+    """
+    try:
+        with open(path, "rb") as fh:
+            first = fh.readline(512)
+    except OSError:
+        return None
+    if not first.startswith(b"#!"):
+        return None
+    try:
+        parts = first[2:].decode("utf-8", "replace").strip().split()
+    except Exception:
+        return None
+    if not parts:
+        return None
+    if os.path.basename(parts[0]) == "env":
+        rest = [p for p in parts[1:] if not p.startswith("-") and "=" not in p]
+        return (rest[0], True) if rest else None
+    return (parts[0], False)
+
+
+def interpreter_findings(envdir, env_bin, binaries, extra_dirs=()):
+    """[(label, fix, note)] for script interpreters that will not resolve inside
+    this env.
+
+    WHY THIS EXISTS. Existence checks pass on the SCRIPT; what runs it is a
+    different file entirely. bioconda ships kraken2 as a perl script whose
+    shebang is `#!/usr/bin/env perl`, so the perl that executes it is decided by
+    PATH at run time — it is not necessarily the env's own perl, and doctor had
+    no opinion about it. The live case (2026-08-21): every check was green,
+    every program "found", and kraken2 died at launch because `env perl` landed
+    in a DIFFERENT conda env whose perl binary and perl module tree disagreed
+    about architecture:
+
+        Can't load '.../envs/kraken_id_parse/lib/perl5/.../Cwd.bundle':
+        (mach-o file, but is an incompatible architecture
+         (have 'arm64', need 'x86_64'))
+
+    An env whose scripts borrow an interpreter from outside is fragile even when
+    it happens to work: it depends on PATH order and on the health of an
+    environment nobody is grading. So report it, name what it resolved to, and
+    prefer the remedy that makes the env self-contained.
+    """
+    subdir = env_conda_subdir(envdir)
+    want = _SUBDIR_TARGET.get(subdir)
+    # Group by interpreter so kraken2 and ktImportText report once, not twice.
+    users = {}
+    owned = [os.path.realpath(p) for p in ([envdir] + [d for d in extra_dirs if d])]
+    for name in binaries:
+        path = find_binary(name, env_bin, extra_dirs)
+        if not path:
+            continue                      # absence is the existence check's job
+        # Judge only scripts this deployment OWNS — inside the env, or in a
+        # vendored asset dir. A program found on the ambient PATH (a system
+        # samtools, a module-loaded tool) brings its own interpreter with it by
+        # definition, and flagging that would fire on every healthy machine
+        # whose tools are not all conda-installed.
+        real_path = os.path.realpath(path)
+        if not any(real_path == o or real_path.startswith(o + os.sep) for o in owned):
+            continue
+        got = script_interpreter(path)
+        if not got:
+            continue                      # a compiled binary, not a script
+        interp, env_form = got
+        # An absolute shebang pointing inside this env is self-contained by
+        # construction — conda writes those and PATH cannot divert them.
+        if not env_form and os.path.realpath(interp).startswith(
+                os.path.realpath(envdir) + os.sep):
+            continue
+        users.setdefault((interp, env_form), []).append(name)
+
+    out = []
+    for (interp, env_form), scripts in sorted(users.items()):
+        who = ", ".join(sorted(set(scripts)))
+        name = os.path.basename(interp)
+        install = (f'CONDA_SUBDIR={subdir} conda install -y -p "{envdir}" '
+                   f'-c conda-forge {name}' if subdir else
+                   f'conda install -y -p "{envdir}" -c conda-forge {name}')
+        if env_form:
+            # `#!/usr/bin/env X`: PATH decides, so resolve it the way the
+            # launcher's PATH would (env bin first, then vendored dirs, then
+            # the ambient PATH).
+            resolved = find_binary(name, env_bin, extra_dirs)
+        else:
+            resolved = interp if os.path.exists(interp) else None
+        if not resolved:
+            out.append((
+                f"{who} run under '{interp}', which is not in this env or on PATH",
+                install, None))
+            continue
+        real = os.path.realpath(resolved)
+        if real.startswith(os.path.realpath(envdir) + os.sep):
+            continue                      # self-contained: nothing to say
+
+        target = _binary_target(real)
+        arch_bad = bool(want and target and target[1] != "universal"
+                        and target != want)
+        foreign_env = os.path.dirname(os.path.dirname(real))
+        borrowed = os.path.isdir(os.path.join(foreign_env, "conda-meta"))
+        # An OS interpreter (/bin/bash, /usr/bin/perl) is not a defect: it is
+        # present on every machine, it is universal on macOS, and conda's own
+        # wrapper scripts name it deliberately. Only three things are worth a
+        # finding — an interpreter that is MISSING (handled above), one BORROWED
+        # from another conda env (the 2026-08 incident: PATH order and that
+        # env's health silently decide whether this tool runs), or one that
+        # cannot execute in this env's architecture. Anything else would fire on
+        # every healthy machine and teach people to ignore doctor.
+        if not borrowed and not arch_bad:
+            continue
+
+        detail = f"{who} run under {resolved}, which is OUTSIDE this env"
+        note = None
+        if borrowed:
+            other_subdir = env_conda_subdir(foreign_env)
+            detail += f" (it belongs to another conda env: {foreign_env})"
+            if target and target[1] != "universal" and other_subdir:
+                other_want = _SUBDIR_TARGET.get(other_subdir)
+                if other_want and target != other_want:
+                    note = (f"cause: {resolved} is {target[0]}/{target[1]} while the "
+                            f"env it belongs to records {other_subdir} — that env is "
+                            f"itself split between its records and its files, so the "
+                            f"interpreter and the modules it loads disagree about "
+                            f"architecture. This is the failure that reaches the user "
+                            f"as an 'incompatible architecture' error at run time.")
+            if note is None:
+                note = (f"cause: this tool's scripts depend on PATH order and on an "
+                        f"environment nothing here grades; giving this env its own "
+                        f"{name} makes the tool self-contained.")
+        if arch_bad:
+            detail += (f" and is {target[0]}/{target[1]}, which cannot run in "
+                       f"this {subdir} env")
+        fix = (f"{install}   # give this env its own {name} so the shebang "
+               f"stops resolving outside it")
+        out.append((detail, fix, note))
+    return out
+
+
 def resolve_asset_dirs(tool, tool_dir, asset_dirs):
     """Resolve a spec's `asset_dirs` the same way the launcher builds PATH.
 
@@ -924,6 +1065,21 @@ def run_checks(tool, env_py, scope, tool_dir=None):
     elif _SUBDIR_TARGET.get(env_subdir):
         lines.append((OK, f"on-disk binaries match the env platform "
                           f"({env_subdir})", None))
+
+    # Script interpreters: what RUNS the tool's scripts, not just that the
+    # scripts are there. A `#!/usr/bin/env perl` shebang is resolved by PATH at
+    # run time, so a green existence check says nothing about it — see
+    # interpreter_findings for the run-time failure this catches.
+    interp_bad = interpreter_findings(
+        envdir, env_bin, spec.get("binaries", []), found_assets)
+    for label, fix, why in interp_bad:
+        lines.append((BAD, label, fix))
+        issues.append({"label": label, "fix": fix or ""})
+        if why:
+            lines.append((SKIP, why, None))
+            notes.append(why)
+    if not interp_bad and spec.get("binaries"):
+        lines.append((OK, "script interpreters resolve inside this env", None))
 
     optional_missing = [
         b for b in spec.get("optional_binaries", [])

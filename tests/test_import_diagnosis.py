@@ -476,6 +476,183 @@ class BinaryArchAuditTests(unittest.TestCase):
                       " | ".join(t for _s, t, _f in lines))
 
 
+class ScriptInterpreterTests(unittest.TestCase):
+    """What RUNS a script matters as much as the script being there.
+
+    bioconda ships kraken2 as a perl script with `#!/usr/bin/env perl`, so PATH
+    decides which perl executes it. On 2026-08-21 doctor reported "all 9
+    installed tool(s) ready" — kraken2 present, every module importing, the
+    on-disk audit green — and the run died instantly because `env perl` landed
+    in a DIFFERENT conda env whose perl binary was x86_64 while its perl module
+    tree was arm64:
+
+        Can't load '.../envs/kraken_id_parse/lib/perl5/.../Cwd.bundle':
+        (mach-o file, but is an incompatible architecture
+         (have 'arm64', need 'x86_64'))
+
+    Nothing doctor had could see it: the existence check passes on the script,
+    the import probe covers python and not perl, and the arch audit grades the
+    env the tool launches from — not the one its shebang wanders into.
+    """
+
+    X86 = b"\xcf\xfa\xed\xfe" + (0x01000007).to_bytes(4, "little") + b"\x00" * 16
+    ARM = b"\xcf\xfa\xed\xfe" + (0x0100000C).to_bytes(4, "little") + b"\x00" * 16
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.env = self.tmp / "env"
+        (self.env / "bin").mkdir(parents=True)
+        (self.env / "conda-meta").mkdir()
+
+    def _pkg(self, envdir, name, subdir):
+        import json
+        (envdir / "conda-meta" / f"{name}-1.0-h0_0.json").write_text(json.dumps(
+            {"name": name, "version": "1.0", "subdir": subdir,
+             "channel": f"https://conda.anaconda.org/conda-forge/{subdir}"}))
+
+    def _script(self, envdir, name, shebang):
+        p = envdir / "bin" / name
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(f"{shebang}\nprint 1;\n")
+        p.chmod(0o755)
+        return p
+
+    def _binary(self, envdir, name, payload):
+        p = envdir / "bin" / name
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(payload)
+        p.chmod(0o755)
+        return p
+
+    def _find(self, findings, needle):
+        return [f for f in findings if needle in f[0]]
+
+    def test_an_interpreter_inside_the_env_is_silent(self):
+        self._pkg(self.env, "python", "osx-64")
+        self._script(self.env, "kraken2", "#!/usr/bin/env perl")
+        self._binary(self.env, "perl", self.X86)
+        self.assertEqual(
+            CHECK.interpreter_findings(str(self.env), str(self.env / "bin"),
+                                       ["kraken2"]), [])
+
+    def test_the_other_macs_failure_is_named_end_to_end(self):
+        # Exact layout: an osx-64 checkout env with NO perl of its own, and a
+        # legacy env earlier on PATH whose perl is x86_64 under osx-arm64
+        # records — the records/disk split, in the env doctor does not grade.
+        self._pkg(self.env, "python", "osx-64")
+        self._script(self.env, "kraken2", "#!/usr/bin/env perl")
+        legacy = self.tmp / "miniconda3/envs/kraken_id_parse"
+        (legacy / "conda-meta").mkdir(parents=True)
+        self._pkg(legacy, "perl", "osx-arm64")
+        self._binary(legacy, "perl", self.X86)
+        findings = CHECK.interpreter_findings(
+            str(self.env), str(self.env / "bin"), ["kraken2"],
+            extra_dirs=[str(legacy / "bin")])
+        self.assertEqual(len(findings), 1, findings)
+        label, fix, note = findings[0]
+        self.assertIn("kraken2", label)
+        self.assertIn("OUTSIDE this env", label)
+        self.assertIn(str(legacy / "bin/perl"), label)
+        # the remedy makes the tool's own env self-contained
+        self.assertIn("CONDA_SUBDIR=osx-64", fix)
+        self.assertIn("perl", fix)
+        # and the note explains the foreign env's own records/disk split
+        self.assertIsNotNone(note)
+        self.assertIn("osx-arm64", note)
+        self.assertIn("incompatible architecture", note)
+
+    def test_a_missing_interpreter_is_reported_with_an_install(self):
+        self._pkg(self.env, "python", "linux-64")
+        self._script(self.env, "kraken2", "#!/usr/bin/env nosuchinterp")
+        findings = CHECK.interpreter_findings(
+            str(self.env), str(self.env / "bin"), ["kraken2"])
+        self.assertEqual(len(findings), 1)
+        self.assertIn("not in this env or on PATH", findings[0][0])
+        self.assertIn("nosuchinterp", findings[0][1])
+
+    def test_scripts_sharing_an_interpreter_report_once(self):
+        self._pkg(self.env, "python", "osx-64")
+        self._script(self.env, "kraken2", "#!/usr/bin/env perl")
+        self._script(self.env, "ktImportText", "#!/usr/bin/env perl")
+        legacy = self.tmp / "other"
+        (legacy / "conda-meta").mkdir(parents=True)
+        self._pkg(legacy, "perl", "osx-64")
+        self._binary(legacy, "perl", self.X86)
+        findings = CHECK.interpreter_findings(
+            str(self.env), str(self.env / "bin"), ["kraken2", "ktImportText"],
+            extra_dirs=[str(legacy / "bin")])
+        self.assertEqual(len(findings), 1, "one interpreter, one finding")
+        self.assertIn("kraken2, ktImportText", findings[0][0])
+
+    def test_a_system_interpreter_is_not_a_defect(self):
+        # /bin/bash is on every machine, universal on macOS, and named
+        # deliberately by conda's own wrapper scripts. The first live run of
+        # this check flagged IRMA, picard, kSNP4 and medaka_consensus for it —
+        # four false positives whose remedy would have been `conda install
+        # bash`. A check that cries wolf is a check people learn to ignore.
+        self._pkg(self.env, "python", "osx-64")
+        for name, shebang in (("IRMA", "#!/bin/bash"), ("picard", "#!/bin/sh"),
+                              ("kSNP4", "#!/usr/bin/env bash")):
+            self._script(self.env, name, shebang)
+        self.assertEqual(
+            CHECK.interpreter_findings(str(self.env), str(self.env / "bin"),
+                                       ["IRMA", "picard", "kSNP4"]), [])
+
+    def test_a_system_interpreter_of_the_wrong_arch_is_still_a_defect(self):
+        # The exception to the rule above: "outside the env" is tolerable,
+        # "cannot execute here" never is.
+        self._pkg(self.env, "python", "osx-arm64")
+        self._script(self.env, "tool", "#!/usr/bin/env oddterp")
+        sysdir = self.tmp / "usr"
+        self._binary(sysdir, "oddterp", self.X86)      # x86_64 under arm64 env
+        findings = CHECK.interpreter_findings(
+            str(self.env), str(self.env / "bin"), ["tool"],
+            extra_dirs=[str(sysdir / "bin")])
+        self.assertEqual(len(findings), 1)
+        self.assertIn("cannot run in this osx-arm64 env", findings[0][0])
+
+    def test_an_absolute_in_env_shebang_and_compiled_binaries_are_silent(self):
+        self._pkg(self.env, "python", "osx-64")
+        self._binary(self.env, "perl", self.X86)
+        self._script(self.env, "picard", f"#!{self.env}/bin/perl")
+        self._binary(self.env, "samtools", self.X86)     # not a script at all
+        self.assertEqual(
+            CHECK.interpreter_findings(str(self.env), str(self.env / "bin"),
+                                       ["picard", "samtools"]), [])
+
+    def test_shebang_parsing_handles_flags_and_absolutes(self):
+        p = self._script(self.env, "a", "#!/usr/bin/env -S perl -w")
+        self.assertEqual(CHECK.script_interpreter(str(p)), ("perl", True))
+        p = self._script(self.env, "b", "#!/opt/bin/perl -w")
+        self.assertEqual(CHECK.script_interpreter(str(p)), ("/opt/bin/perl", False))
+        b = self._binary(self.env, "c", self.X86)
+        self.assertIsNone(CHECK.script_interpreter(str(b)))
+
+    def test_run_checks_fails_the_tool_and_prints_the_remedy(self):
+        self._pkg(self.env, "python", "osx-64")
+        self._binary(self.env, "python", self.X86)
+        self._script(self.env, "kraken2", "#!/usr/bin/env perl")
+        legacy = self.tmp / "miniconda3/envs/kraken_id_parse"
+        (legacy / "conda-meta").mkdir(parents=True)
+        self._pkg(legacy, "perl", "osx-arm64")
+        self._binary(legacy, "perl", self.X86)
+        from unittest import mock
+        with mock.patch.object(CHECK, "check_modules", return_value={}):
+            with mock.patch.object(
+                    CHECK, "resolve_asset_dirs",
+                    return_value=([str(legacy / "bin")], [])):
+                status, _lines, issues, notes = CHECK.run_checks(
+                    "kraken_id_parse_gui", str(self.env / "bin/python"), "env",
+                    tool_dir=str(self.tmp))
+        self.assertEqual(status, "issues",
+                         "a tool whose scripts borrow a broken interpreter is "
+                         "not ready, however green everything else looks")
+        labels = " | ".join(i["label"] for i in issues)
+        self.assertIn("OUTSIDE this env", labels)
+        self.assertIn("perl", " | ".join(i.get("fix", "") for i in issues))
+
+
 @unittest.skipUnless(BASH, "bash is required")
 class FixAutomationTests(unittest.TestCase):
     """`bdtools fix` must not run the new remedy unattended.

@@ -208,6 +208,24 @@ tools:
     # 2023.3.0 cannot import under numpy 2: see the paragraph above. Raise the
     # floor, never pin it exactly — any newer dask is fine.
     constraints: [dask>=2024.8]
+    # PLATFORM RECORD (2026-08-21, Apple Silicon). An install-time bug (two env
+    # resolvers disagreeing — fixed, see install-local.sh resolve_env_prefix)
+    # linked one osx-64 openssl into this tool's osx-arm64 env. Two facts from
+    # that incident worth keeping:
+    #   1. The repair REQUIRES a subdir-qualified spec:
+    #        CONDA_SUBDIR=osx-arm64 conda install -p <env> --no-deps \
+    #          --force-reinstall "conda-forge/osx-arm64::openssl"
+    #      A bare `--force-reinstall openssl` is already satisfied by the
+    #      foreign build, so conda re-links the same wrong package from its
+    #      cache and reports success — a convincing false negative. doctor now
+    #      prints the qualified form (check.py shared_lib_fix).
+    #   2. That machine now runs this tool's env fully NATIVE osx-arm64 with
+    #      every program resolving — evidence against the installer's
+    #      osx-64-under-Rosetta default (its premise: bioconda's assembler/blat
+    #      toolchain lacks arm64 builds) for THIS tool's dependency set. Policy
+    #      unchanged: an existing env always keeps its platform, and a --fresh
+    #      on Apple Silicon still builds osx-64 unless BDTOOLS_NATIVE_ARM=1. If
+    #      arm64 keeps proving out here, consider a per-tool subdir field.
 
   # No `packages`: kSNP4 is not a conda package. It is a vendored SourceForge zip
   # unpacked into the checkout, so its version travels with the tool release.

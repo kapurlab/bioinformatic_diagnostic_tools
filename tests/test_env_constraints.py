@@ -103,7 +103,7 @@ class EnforceConstraintsTests(unittest.TestCase):
     def _install(self, pkg, version):
         (self.env / f"conda-meta/{pkg}-{version}-py310h0.json").write_text("{}")
 
-    def _run(self, constraints="dask>=2024.8"):
+    def _run(self, constraints="dask>=2024.8", subdir=""):
         """Run the real function with conda and the manifest stubbed out.
 
         A stub `detect_conda` + `_conda_step` records whether a transaction
@@ -119,6 +119,7 @@ PYBIN=python3
 TOOL=faketool
 manifest_get() {{ printf '%s' "{constraints}"; }}
 resolve_env_prefix() {{ printf '%s' "{self.env}"; }}
+env_conda_subdir() {{ printf '%s' "{subdir}"; }}
 ok()   {{ echo "OK $*"; }}
 info() {{ echo "INFO $*"; }}
 warn() {{ echo "WARN $*"; }}
@@ -149,6 +150,16 @@ enforce_env_constraints
         # The floor must be passed to conda as a floor, not as an exact pin:
         # pinning would move machines that are already fine.
         self.assertNotIn("dask=2024.8 ", out)
+
+    def test_the_raise_states_the_envs_own_platform_on_the_command(self):
+        # The 2026-08 macOS incident: the floor-raise `conda install` inherited
+        # an ambient CONDA_SUBDIR derived from a DIFFERENT prefix and linked an
+        # osx-64 openssl into an osx-arm64 env. The mutation must carry the
+        # platform of the env it is about to change on the command itself.
+        self._install("dask", "2023.3.0")
+        out = self._run(subdir="osx-arm64")
+        conda_line = [l for l in out.splitlines() if "CONDA_RAN" in l][0]
+        self.assertIn("CONDA_SUBDIR=osx-arm64", conda_line)
 
     def test_a_package_the_env_does_not_have_is_left_alone(self):
         # No dask installed: this env does not use it. Adding packages a tool

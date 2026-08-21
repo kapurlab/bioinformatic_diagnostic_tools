@@ -209,6 +209,129 @@ class ImportDiagnosisTests(unittest.TestCase):
                          "a tool that cannot import its analysis module is not ready")
 
 
+class SharedLibraryDiagnosisTests(unittest.TestCase):
+    """A dlopen failure names the conda package that owns the library.
+
+    The 2026-08 macOS incident: ONE osx-64 openssl linked into an osx-arm64 env
+    broke `import ssl`, and doctor reported fastapi, uvicorn and pysam as three
+    separate python-package problems — blaming their import chains ("the
+    incompatibility is between the packages named above") and prescribing a full
+    env rebuild, which failed twice without touching the defect. The accurate
+    report is one line: libssl.3.dylib belongs to openssl, reinstall openssl for
+    the env's own platform.
+
+    The remedy must carry a channel/subdir-QUALIFIED spec: on the affected
+    machine a bare `--force-reinstall openssl` was already satisfied by the
+    foreign build, so conda re-linked the same x86_64 package from its cache and
+    reported a successful transaction — a convincing false negative.
+    """
+
+    # The real error, squashed to one line the way the import probe reports it.
+    MAC_ERR = ("ImportError: dlopen(/e/lib/python3.10/lib-dynload/"
+               "_ssl.cpython-310-darwin.so, 0x0002): Library not loaded: "
+               "@rpath/libssl.3.dylib Referenced from: <UUID> /e/lib/python3.10/"
+               "lib-dynload/_ssl.cpython-310-darwin.so Reason: tried: "
+               "'/e/lib/libssl.3.dylib' (mach-o file, but is an incompatible "
+               "architecture (have 'x86_64', need 'arm64'))")
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        envbin = self.tmp / "env/bin"
+        envbin.mkdir(parents=True)
+        self.env_py = envbin / "python"
+        self.env_py.write_text("#!/bin/sh\n")
+        self.meta = self.tmp / "env/conda-meta"
+        self.meta.mkdir()
+
+    def _pkg(self, name, version, subdir, files=(), channel=None):
+        import json
+        (self.meta / f"{name}-{version}-h0_0.json").write_text(json.dumps({
+            "name": name, "version": version, "subdir": subdir,
+            "channel": channel or f"https://conda.anaconda.org/conda-forge/{subdir}",
+            "files": list(files),
+        }))
+
+    def _mixed_env(self):
+        # Majority osx-arm64, one foreign osx-64 openssl — the incident's shape.
+        self._pkg("python", "3.10.14", "osx-arm64")
+        self._pkg("samtools", "1.20", "osx-arm64")
+        self._pkg("pysam", "0.22", "osx-arm64")
+        self._pkg("openssl", "3.6.3", "osx-64",
+                  files=["lib/libssl.3.dylib", "lib/libcrypto.3.dylib"])
+
+    def test_the_owner_is_named_and_the_spec_is_qualified(self):
+        self._mixed_env()
+        info = {"absent": False, "error": self.MAC_ERR,
+                "chain": ["fastapi", "anyio"]}
+        fix, why = CHECK.shared_lib_fix(str(self.env_py), "fastapi", info)
+        self.assertIsNotNone(fix)
+        self.assertIn("CONDA_SUBDIR=osx-arm64", fix)
+        self.assertIn("--force-reinstall", fix)
+        self.assertIn("--no-deps", fix)
+        self.assertIn('"conda-forge/osx-arm64::openssl"', fix,
+                      "an unqualified spec is already satisfied by the foreign "
+                      "build and re-links it — the observed false negative")
+        self.assertIn("libssl.3.dylib", why)
+        self.assertIn("openssl", why)
+        self.assertIn("mixed-architecture", why)
+        self.assertNotIn("\n", fix)
+        self.assertNotIn("\t", fix)
+
+    def test_a_linux_loader_error_is_recognised_too(self):
+        self._pkg("python", "3.10.14", "linux-64")
+        self._pkg("openssl", "3.6.3", "linux-64", files=["lib/libssl.so.3"])
+        info = {"absent": False, "error":
+                "ImportError: libssl.so.3: cannot open shared object file: "
+                "No such file or directory", "chain": ["pysam"]}
+        fix, why = CHECK.shared_lib_fix(str(self.env_py), "pysam", info)
+        self.assertIsNotNone(fix)
+        self.assertIn('"conda-forge/linux-64::openssl"', fix)
+        self.assertIn("openssl", why)
+
+    def test_a_plain_python_error_is_left_to_the_chain_heuristic(self):
+        self._mixed_env()
+        info = {"absent": False, "chain": ["allel", "dask", "numpy"],
+                "error": "AttributeError: `np.round_` was removed in NumPy 2.0"}
+        fix, why = CHECK.shared_lib_fix(str(self.env_py), "allel", info)
+        self.assertIsNone(fix)
+        self.assertIsNone(why)
+
+    def test_an_unowned_library_gets_no_invented_remedy(self):
+        self._pkg("python", "3.10.14", "osx-arm64")   # nobody ships libssl here
+        info = {"absent": False, "error": self.MAC_ERR, "chain": ["fastapi"]}
+        fix, why = CHECK.shared_lib_fix(str(self.env_py), "fastapi", info)
+        self.assertIsNone(fix)
+        self.assertIn("libssl.3.dylib", why,
+                      "even with no remedy, the note must say what failed to "
+                      "load rather than blaming the import chain")
+
+    def test_run_checks_reports_the_library_not_the_import_chain(self):
+        self._mixed_env()
+        from unittest import mock
+        failures = {"fastapi": {"absent": False, "error": self.MAC_ERR,
+                                "chain": ["fastapi", "anyio"]}}
+        with mock.patch.object(CHECK, "check_modules", return_value=failures):
+            with mock.patch.object(CHECK, "has_binary", return_value=True):
+                with mock.patch.object(CHECK, "resolve_asset_dirs",
+                                       return_value=([], [])):
+                    status, _lines, issues, notes = CHECK.run_checks(
+                        "kraken_id_parse_gui", str(self.env_py), "env",
+                        tool_dir=str(self.tmp))
+        self.assertEqual(status, "issues")
+        joined = " ".join(notes)
+        self.assertIn("openssl", joined)
+        self.assertNotIn("incompatibility is between the packages named above",
+                         joined,
+                         "the chain note is the confidently wrong diagnosis "
+                         "this replaces for loader failures")
+        fixes = " | ".join(i.get("fix", "") for i in issues)
+        self.assertIn("conda-forge/osx-arm64::openssl", fixes)
+        self.assertNotIn("--fresh", fixes,
+                         "the rebuild failed twice on the real incident; the "
+                         "one-package reinstall is the fix")
+
+
 @unittest.skipUnless(BASH, "bash is required")
 class FixAutomationTests(unittest.TestCase):
     """`bdtools fix` must not run the new remedy unattended.
@@ -231,6 +354,15 @@ class FixAutomationTests(unittest.TestCase):
         self.assertEqual(
             self._fix_class('CONDA_SUBDIR=osx-64 conda update -y -p "/x/env" '
                             '-c conda-forge -c bioconda dask'),
+            "manual")
+
+    def test_the_shared_library_reinstall_is_never_automatic(self):
+        # Small and targeted, but still a conda transaction on a live env:
+        # proposed with an accurate explanation, never run unattended.
+        self.assertEqual(
+            self._fix_class('CONDA_SUBDIR=osx-arm64 conda install -y -p "/x/env" '
+                            '--no-deps --force-reinstall '
+                            '"conda-forge/osx-arm64::openssl"'),
             "manual")
 
     def test_the_existing_classifications_are_unchanged(self):

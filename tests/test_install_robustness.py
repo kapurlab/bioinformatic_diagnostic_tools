@@ -116,10 +116,13 @@ class EnvPlatformTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             envdir = Path(td) / "checkout" / "env"
             meta(envdir, [("python", "osx-64")])
+            # A usable env, not just conda-meta: the resolver deliberately
+            # ignores a python-less prefix (see the divergence test below).
+            write(envdir / "bin/python", "#!/bin/sh\n", mode=0o755)
             script = f'''
               DIR="{Path(td) / 'checkout'}"; TOOL=faketool; ENV_NAME=fake
-              # the function under test, lifted from install-local.sh
-              eval "$(sed -n '/^_env_prefix_for_subdir()/,/^}}/p;/^ensure_conda_subdir()/,/^}}/p' "{ROOT}/bin/install-local.sh")"
+              # the functions under test, lifted from install-local.sh
+              eval "$(sed -n '/^resolve_env_prefix()/,/^}}/p;/^ensure_conda_subdir()/,/^}}/p' "{ROOT}/bin/install-local.sh")"
               CONDA_SUBDIR=osx-arm64 ensure_conda_subdir
               echo "SUBDIR=${{CONDA_SUBDIR}}"
             '''
@@ -127,6 +130,62 @@ class EnvPlatformTests(unittest.TestCase):
             self.assertEqual(r.returncode, 0, r.stderr)
             self.assertIn("SUBDIR=osx-64", r.stdout)
             self.assertIn("was built for osx-64", r.stderr)
+
+    def test_subdir_decision_and_mutation_target_cannot_diverge(self):
+        # THE 2026-08 macOS incident, exactly: <checkout>/env is the corpse of a
+        # dead osx-64 create (conda-meta, no python) while the tool actually
+        # runs from a NAMED osx-arm64 env. The old code read CONDA_SUBDIR off
+        # the corpse through one resolver and ran `conda install` on the named
+        # env through another — one foreign openssl later, the env was mixed
+        # and unrepairable. The invariant: the platform pinned for the build
+        # equals the platform of the prefix the mutations will target.
+        with tempfile.TemporaryDirectory() as td:
+            checkout = Path(td) / "checkout"
+            meta(checkout / "env", [("openssl", "osx-64")])       # corpse: no bin/python
+            named = Path(td) / "base/envs/kraken_id_parse"
+            meta(named, [("python", "osx-arm64"), ("openssl", "osx-arm64")])
+            write(named / "bin/python", "#!/bin/sh\n", mode=0o755)
+            conda_stub = write(Path(td) / "stub/conda", f'''\
+                #!/bin/sh
+                case "$1" in
+                  env) echo "kraken_id_parse  {named}";;
+                  run) echo "{named}";;
+                esac
+                ''', mode=0o755)
+            script = f'''
+              DIR="{checkout}"; TOOL=faketool; ENV_NAME=kraken_id_parse
+              detect_conda() {{ printf '%s' "{conda_stub}"; }}
+              eval "$(sed -n '/^resolve_env_prefix()/,/^}}/p;/^ensure_conda_subdir()/,/^}}/p' "{ROOT}/bin/install-local.sh")"
+              ensure_conda_subdir
+              target="$(resolve_env_prefix)"
+              echo "TARGET=${{target}}"
+              echo "SUBDIR=${{CONDA_SUBDIR:-unset}}"
+              echo "TARGET_SUBDIR=$(env_conda_subdir "${{target}}")"
+            '''
+            r = sh(script)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn(f"TARGET={named}", r.stdout,
+                          "the mutations' resolver must find the named env")
+            self.assertIn("SUBDIR=osx-arm64", r.stdout,
+                          "the corpse's osx-64 conda-meta must get no vote")
+            # the invariant itself:
+            self.assertIn("TARGET_SUBDIR=osx-arm64", r.stdout)
+
+    def test_a_pythonless_prefix_is_not_an_env(self):
+        # conda-meta alone is what a dead `conda env create` leaves behind. If
+        # the resolver called that an env, the corpse would anchor platform
+        # decisions again (the divergence test above shows what that cost).
+        with tempfile.TemporaryDirectory() as td:
+            checkout = Path(td) / "checkout"
+            meta(checkout / "env", [("openssl", "osx-64")])
+            script = f'''
+              DIR="{checkout}"; TOOL=faketool; ENV_NAME=""
+              eval "$(sed -n '/^resolve_env_prefix()/,/^}}/p' "{ROOT}/bin/install-local.sh")"
+              echo "PREFIX=[$(resolve_env_prefix)]"
+            '''
+            r = sh(script)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("PREFIX=[]", r.stdout)
 
 
 class FreshRebuildTests(unittest.TestCase):
@@ -216,6 +275,50 @@ class FreshRebuildTests(unittest.TestCase):
                                 "kraken_id_parse_gui", flag, "--dry-run"],
                                capture_output=True, text=True)
             self.assertNotIn("unknown option", r.stdout + r.stderr, flag)
+
+
+class FreshGateTests(unittest.TestCase):
+    """generic_build under --fresh must never no-op on an adoptable external env.
+
+    --fresh means START OVER. When the tool's env lives outside the checkout and
+    (for any reason) was not set aside, the adopt-the-external-env branch used to
+    print "left as it is" and return 0 — a silent no-op that then reached
+    build_state_ok and CLEARED the failed-build record, so `bdtools update`
+    reported a build finished that had built nothing (2026-08, macOS).
+    """
+
+    def _build(self, fresh, external):
+        with tempfile.TemporaryDirectory() as td:
+            checkout = Path(td) / "checkout"
+            write(checkout / "conda_setup/environment.yml", "name: fake\n")
+            script = f'''
+              DIR="{checkout}"; TOOL=faketool; ENV_NAME=fake
+              REBUILD=0; FRESH={fresh}; FRESH_ORIG=""
+              detect_conda() {{ printf 'fake-conda'; }}
+              resolve_env_prefix() {{ printf '%s' "{external}"; }}
+              with_progress() {{ echo "WOULD_BUILD: $*"; }}
+              _conda_step() {{ :; }}
+              harden_conda_hooks() {{ :; }}
+              ensure_env_java() {{ :; }}
+              _note_fresh_relocation() {{ :; }}
+              _clear_partial_checkout_env() {{ :; }}
+              eval "$(sed -n '/^generic_build()/,/^}}/p' "{ROOT}/bin/install-local.sh")"
+              generic_build
+            '''
+            return sh(script)
+
+    def test_without_fresh_an_external_env_is_adopted(self):
+        r = self._build(fresh=0, external="/somewhere/envs/fake")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("using this machine's existing", r.stdout)
+        self.assertNotIn("WOULD_BUILD", r.stdout)
+
+    def test_with_fresh_the_env_is_actually_built(self):
+        r = self._build(fresh=1, external="/somewhere/envs/fake")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("WOULD_BUILD", r.stdout,
+                      "--fresh must build, not adopt and report success")
+        self.assertNotIn("left as it is", r.stdout)
 
 
 class HookHardeningTests(unittest.TestCase):
@@ -586,6 +689,47 @@ class CondaStepGuardTests(unittest.TestCase):
                         'eval "echo $v=\\${CONDA_BACKUP_$v?MISSING}"; done\'')
         self.assertNotIn("MISSING", got.stdout + got.stderr, got.stderr)
 
+    # ---- the platform invariant ---------------------------------------------
+    # A conda operation must solve for the platform of the prefix it changes.
+    # The 2026-08 macOS incident: CONDA_SUBDIR=osx-64, inherited from a subdir
+    # decision made against a DIFFERENT prefix, linked an osx-64 openssl into an
+    # osx-arm64 env — a mixed env nothing additive could repair.
+
+    def test_a_mutation_that_contradicts_the_envs_platform_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            env = Path(tmp) / "env"
+            meta(env, [("python", "osx-arm64"), ("openssl", "osx-arm64")])
+            got = self._run(f'_conda_step "{env}" echo SHOULD_NOT_RUN',
+                            env={"CONDA_SUBDIR": "osx-64"})
+            self.assertNotEqual(got.returncode, 0,
+                                "a contradictory subdir must refuse to run")
+            self.assertNotIn("SHOULD_NOT_RUN", got.stdout)
+            # both values, so the message is actionable
+            self.assertIn("osx-64", got.stdout + got.stderr)
+            self.assertIn("osx-arm64", got.stdout + got.stderr)
+
+    def test_a_matching_subdir_runs_and_an_absent_one_is_pinned(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            env = Path(tmp) / "env"
+            meta(env, [("python", "osx-arm64")])
+            got = self._run(f'_conda_step "{env}" echo RAN',
+                            env={"CONDA_SUBDIR": "osx-arm64"})
+            self.assertEqual(got.returncode, 0, got.stderr)
+            self.assertIn("RAN", got.stdout)
+            # No ambient subdir: the prefix's own platform is pinned, so the
+            # solve can never default to the host's.
+            got = self._run(f'_conda_step "{env}" bash -c '
+                            '\'echo "PINNED=${CONDA_SUBDIR:-none}"\'')
+            self.assertEqual(got.returncode, 0, got.stderr)
+            self.assertIn("PINNED=osx-arm64", got.stdout)
+
+    def test_a_prefix_that_does_not_exist_yet_is_not_guarded(self):
+        # `conda env create` runs before there is anything to contradict.
+        got = self._run('_conda_step /nonexistent-env echo CREATED',
+                        env={"CONDA_SUBDIR": "osx-64"})
+        self.assertEqual(got.returncode, 0, got.stderr)
+        self.assertIn("CREATED", got.stdout)
+
     # ---- what a FAILED build may and may not delete -------------------------
     # Run for real rather than asserted against the source text: the old version
     # of this test checked that the guards were present, and they were — they were
@@ -593,7 +737,7 @@ class CondaStepGuardTests(unittest.TestCase):
     # update of an EXISTING env leaves behind, so the cleanup deleted the user's
     # env and every retry then failed with nothing to fall back on. That is what
     # cost a working kraken_id_parse_gui on macOS.
-    def _retry_harness(self, envdir, extra=""):
+    def _retry_harness(self, envdir, extra="", tries=2):
         src = (ROOT / "bin/install-local.sh").read_text(encoding="utf-8")
         def chunk(start, end):
             return src[src.index(start):src.index(end)]
@@ -602,7 +746,7 @@ class CondaStepGuardTests(unittest.TestCase):
                 + chunk("with_progress() {", "_conda_step() {"))
         script = (f'set -uo pipefail\nsource "{ROOT}/bin/lib/common.sh"\n'
                   f'DIR="{envdir}/.."\nENV_NAME=test\nTOOL=testtool\n'
-                  f'BDTOOLS_BUILD_TRIES=2\nBDTOOLS_HEARTBEAT_SECS=1\n'
+                  f'BDTOOLS_BUILD_TRIES={tries}\nBDTOOLS_HEARTBEAT_SECS=1\n'
                   f'{body}\n'
                   # Stand in for _conda_step: with_progress keys its cleanup on the
                   # payload being "_conda_step <envdir> ...", so the name matters.
@@ -610,8 +754,12 @@ class CondaStepGuardTests(unittest.TestCase):
                   f'[[ -x "$1/bin/python" ]] && _ENV_PREEXISTING=1; return 1; }}\n'
                   f'{extra}\n'
                   f'with_progress "build" _conda_step "{envdir}" || true\n')
+        # BDTOOLS_HOME pinned inside the sandbox: with_progress writes the build
+        # log under it, and a test must not touch the real one.
         return subprocess.run(["bash", "-c", script], capture_output=True, text=True,
-                              env={**os.environ, "DRY_RUN": "0"}, timeout=120)
+                              env={**os.environ, "DRY_RUN": "0",
+                                   "BDTOOLS_HOME": str(Path(envdir).parent)},
+                              timeout=120)
 
     def test_a_failed_build_never_deletes_an_env_that_was_already_there(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -639,3 +787,47 @@ class CondaStepGuardTests(unittest.TestCase):
             self.assertFalse(env.exists(),
                              "a partially-created prefix should be cleared before "
                              "the retry")
+
+    def test_the_final_failure_leaves_no_partial_prefix_behind(self):
+        # Between-attempt cleanup existed; give-up cleanup did not — so the last
+        # failed attempt's corpse (conda-meta, no python) survived the run. That
+        # corpse is what a later build's subdir decision mistook for an existing
+        # env, seeding the 2026-08 mixed-architecture macOS incident.
+        with tempfile.TemporaryDirectory() as tmp:
+            env = Path(tmp) / "env"
+            r = self._retry_harness(str(env), extra=(
+                '_conda_step() { _ENV_PREEXISTING=0; mkdir -p "$1/conda-meta"; '
+                'return 1; }'))
+            self.assertIn("giving up", r.stdout + r.stderr)
+            self.assertFalse(env.exists(),
+                             "the corpse of the final failed attempt must not "
+                             "survive to vote on a later build's platform")
+
+    def test_the_final_failure_still_never_deletes_a_preexisting_env(self):
+        # Same protection at give-up as between attempts: an env that was here
+        # before the step is never ours to delete, however broken it looks.
+        with tempfile.TemporaryDirectory() as tmp:
+            env = Path(tmp) / "env"
+            (env / "bin").mkdir(parents=True)
+            py = env / "bin/python"
+            py.write_text("#!/bin/sh\n")
+            py.chmod(0o755)
+            self._retry_harness(str(env), tries=1)
+            self.assertTrue(py.exists(),
+                            "a final failure deleted a pre-existing env")
+
+    def test_a_failed_build_names_its_log(self):
+        # Two failed rebuilds on a Mac once produced no diagnosable information
+        # at all: with_progress showed only exit codes and the output lived in
+        # scrollback. A failed step must leave its output at a stated path.
+        with tempfile.TemporaryDirectory() as tmp:
+            env = Path(tmp) / "env"
+            r = self._retry_harness(str(env), extra=(
+                '_conda_step() { _ENV_PREEXISTING=0; echo "SOLVE DIED: fake"; '
+                'return 1; }'), tries=1)
+            out = r.stdout + r.stderr
+            log = Path(tmp) / "state/build-logs/testtool.log"
+            self.assertIn(str(log), out, "the give-up warning must name the log")
+            self.assertTrue(log.exists())
+            self.assertIn("SOLVE DIED: fake", log.read_text(),
+                          "the payload's output must be captured, not discarded")

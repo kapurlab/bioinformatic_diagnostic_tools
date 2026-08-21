@@ -177,43 +177,78 @@ with_progress() {
     echo "  [dry-run] ${label}: ${shown[*]:-}"
     return 0
   fi
+  # Keep every step's full output in a per-tool log. A failed build's output IS
+  # the diagnosis, and it used to exist only in scrollback: two failed rebuilds
+  # of kraken_id_parse_gui on a Mac left nothing to read but an exit code, so
+  # the actual defect (a solve dying for one platform) stayed unknown through
+  # both. Truncated once per install run, appended per step; _run_watched tees
+  # into it (a local, so dynamic scoping hands it down). Best-effort: a machine
+  # where the log cannot be written still builds.
+  local _BUILD_LOG=""
+  if [[ -n "${BDTOOLS_HOME:-}" ]]; then
+    _BUILD_LOG="${BDTOOLS_HOME}/state/build-logs/${TOOL:-step}.log"
+    if mkdir -p "${_BUILD_LOG%/*}" 2>/dev/null; then
+      if [[ -z "${_BUILD_LOG_STARTED:-}" ]]; then
+        { : > "${_BUILD_LOG}"; } 2>/dev/null && _BUILD_LOG_STARTED=1 || _BUILD_LOG=""
+      fi
+    else
+      _BUILD_LOG=""
+    fi
+  fi
   local tries="${BDTOOLS_BUILD_TRIES:-2}" attempt=1 rc=0
   while :; do
     [[ "${tries}" -gt 1 ]] && log "${label} — attempt ${attempt}/${tries}"
+    [[ -n "${_BUILD_LOG}" ]] && printf '\n===== %s — attempt %s — %s =====\n' \
+      "${label}" "${attempt}/${tries}" "$(date '+%Y-%m-%d %H:%M:%S')" >> "${_BUILD_LOG}" 2>/dev/null
     rc=0; _run_watched "${label}" "$@" || rc=$?
     [[ ${rc} -eq 0 ]] && return 0
     if [[ ${attempt} -ge ${tries} ]]; then
       warn "${label} — giving up after ${attempt} attempt(s) (exit ${rc})"
+      # The final failure must not leave a partial prefix behind either: a
+      # corpse that outlives the run is what a later build's subdir decision
+      # mistook for an existing env (see _discard_partial_env_prefix).
+      [[ "${1:-}" == "_conda_step" ]] && _discard_partial_env_prefix "${2:-}"
+      [[ -n "${_BUILD_LOG}" ]] && info "  the step's full output is saved at: ${_BUILD_LOG}"
       return ${rc}
     fi
-    # A conda create that fails is rolled back, but the rollback is not perfect:
-    # __pycache__ files conda did not track are left behind, and the retry then dies
-    # in a storm of "ClobberError: path already exists in the target prefix ... may
-    # have been created by another package manager". Clear a PARTIAL prefix first so
-    # attempt 2 starts clean.
-    #
-    # ONLY a prefix THIS STEP CREATED. The old guard was "no working python", which
-    # is exactly the state a rolled-back update of an EXISTING env leaves behind —
-    # so a rebuild that hit an upstream post-link bug deleted a working install and
-    # then failed identically on every retry, with nothing left to fall back to.
-    # That cost a working kraken_id_parse_gui on macOS. An env that was here before
-    # the step is never ours to delete, however broken it now looks: it can be
-    # restored from the snapshot (see restore_env_hint), and it may still run.
-    if [[ "${1:-}" == "_conda_step" ]]; then
-      local _envdir="${2:-}"
-      if [[ -n "${_envdir}" && "${_envdir}" == /* && -d "${_envdir}" \
-            && "${_ENV_PREEXISTING:-0}" -eq 0 \
-            && ! -x "${_envdir}/bin/python" \
-            && ( "${_envdir}" == */env || "${_envdir}" == */envs/* ) ]]; then
-        warn "  removing the partially-created env before retrying: ${_envdir}"
-        rm -rf "${_envdir}"
-      elif [[ -n "${_envdir}" && "${_ENV_PREEXISTING:-0}" -eq 1 ]]; then
-        info "  keeping the existing env as it is: ${_envdir}"
-      fi
-    fi
+    # Clear a partial prefix so attempt 2 starts clean — conda's rollback leaves
+    # untracked __pycache__ behind, and the retry otherwise dies in a storm of
+    # "ClobberError: path already exists in the target prefix".
+    [[ "${1:-}" == "_conda_step" ]] && _discard_partial_env_prefix "${2:-}"
     warn "${label} — failed/stalled (exit ${rc}); retrying in 5s…"
     sleep 5; attempt=$(( attempt + 1 ))
   done
+}
+
+# _discard_partial_env_prefix ENVDIR — remove the partial prefix a FAILED
+# _conda_step left at ENVDIR, if — and only if — that step created it.
+#
+# Why it cannot stay: a dead `conda env create` leaves a conda-meta/ directory
+# with no bin/python. Between attempts that corpse ClobberErrors the retry; left
+# after the FINAL attempt it survives to the next run, where anything that reads
+# an env's platform off conda-meta can mistake it for an existing env. That is
+# the seed of the 2026-08 mixed-architecture macOS incident: a leftover
+# ${DIR}/env said osx-64, the subdir decision believed it, and the mutations ran
+# CONDA_SUBDIR=osx-64 against the real osx-arm64 named env — one foreign openssl
+# later, no additive operation could repair kraken_id_parse_gui.
+#
+# ONLY a prefix THIS STEP CREATED (_ENV_PREEXISTING=0). "No working python"
+# alone was the old guard, and it is exactly the state a rolled-back update of
+# an EXISTING env leaves behind — deleting on that alone once cost a working
+# kraken_id_parse_gui. An env that was here before the step is never ours to
+# delete, however broken it now looks: it can be restored from the snapshot
+# (see restore_env_hint), and it may still run.
+_discard_partial_env_prefix() {
+  local _envdir="${1:-}"
+  [[ -n "${_envdir}" && "${_envdir}" == /* && -d "${_envdir}" ]] || return 0
+  if [[ "${_ENV_PREEXISTING:-0}" -eq 0 && ! -x "${_envdir}/bin/python" \
+        && ( "${_envdir}" == */env || "${_envdir}" == */envs/* ) ]]; then
+    warn "  removing the partially-created env (it is not a usable environment): ${_envdir}"
+    rm -rf "${_envdir}"
+  elif [[ "${_ENV_PREEXISTING:-0}" -eq 1 ]]; then
+    info "  keeping the existing env as it is: ${_envdir}"
+  fi
+  return 0
 }
 
 # _run_watched: one attempt — launch, monitor CPU+disk progress, kill on stall.
@@ -230,10 +265,17 @@ _run_watched() {
   # step looks wedged even while curl is writing steadily — which is exactly how
   # that download got stall-killed at 300s, twice, on a machine with a fine network.
   watch+=("${DIR}/env" "${DIR}/frontend/node_modules" "${DIR}/frontend/dist" "${DIR}/vendor")
-  local t0 last cpu0 disk0 cpu disk now e idle rc=0
+  local t0 last cpu0 disk0 cpu disk now e idle rc=0 cmd
   t0="$(date +%s)"; last="${t0}"
   log "${label} — started $(date '+%H:%M:%S')  (heartbeat ${secs}s; stall-kill after ${idle_max}s of no progress)"
-  "$@" & local cmd=$!
+  if [[ -n "${_BUILD_LOG:-}" ]]; then
+    # Tee the payload's output into the build log. The payload stays the DIRECT
+    # background job (process substitution, not a pipeline): $! must be the
+    # payload's own pid or the CPU-progress watcher below would be watching tee.
+    "$@" > >(tee -a "${_BUILD_LOG}" 2>/dev/null) 2>&1 & cmd=$!
+  else
+    "$@" & cmd=$!
+  fi
   cpu0="$(_tree_cpu_ticks "${cmd}")"; disk0="$(_watched_bytes "${watch[@]}")"
   while kill -0 "${cmd}" 2>/dev/null; do
     sleep "${secs}"
@@ -355,6 +397,25 @@ ensure_env_java() {
 # hook the failed attempt left behind, so the retry can actually succeed.
 _conda_step() {
   local envdir="$1"; shift
+  # THE PLATFORM INVARIANT: a conda operation must solve for the platform of the
+  # prefix it is about to change. If the prefix records one (conda-meta) and the
+  # ambient CONDA_SUBDIR says otherwise, running would link foreign-architecture
+  # binaries into it — the 2026-08 macOS incident: a subdir read off a leftover
+  # half-built prefix (osx-64) was inherited by a `conda install` into the real
+  # osx-arm64 env, and the resulting mixed env was unrepairable by any additive
+  # operation. Refusing here makes that class of bug impossible to reintroduce
+  # from any caller. When nothing contradicts, pin the prefix's own platform so
+  # a solve can never default to the host's.
+  local _want; _want="$(env_conda_subdir "${envdir}" 2>/dev/null || true)"
+  if [[ -n "${_want}" ]]; then
+    if [[ -n "${CONDA_SUBDIR:-}" && "${CONDA_SUBDIR}" != "${_want}" ]]; then
+      die "refusing to run conda against ${envdir}: CONDA_SUBDIR=${CONDA_SUBDIR}, but that prefix was built for ${_want}.
+       Mixing platforms in one prefix produces binaries that cannot run (this exact
+       mismatch built the mixed-architecture kraken env on macOS, 2026-08).
+       To rebuild the env for ${CONDA_SUBDIR} instead:  CONDA_SUBDIR=${CONDA_SUBDIR} bin/bdtools install ${TOOL:-<tool>} --fresh"
+    fi
+    export CONDA_SUBDIR="${_want}"
+  fi
   # Was there a working env here BEFORE this step? Two things depend on the answer:
   # whether a failed attempt may delete the prefix (it may not), and whether there
   # is anything worth snapshotting. Exported so with_progress's retry can see it.
@@ -477,6 +538,38 @@ _CONDA_BACKUP_VARS="CC CXX CPP FC F77 F90 GCC GXX GFORTRAN CLANG CLANGXX
   DEBUG_CPPFLAGS HOST BUILD CONDA_BUILD_SYSROOT CMAKE_ARGS CMAKE_PREFIX_PATH
   MESON_ARGS _CONDA_PYTHON_SYSCONFIGDATA_NAME"
 
+# A leftover ${DIR}/env with no usable python is the corpse of a build that died
+# mid-create. Going forward _discard_partial_env_prefix removes those at the
+# moment of failure, but corpses predate that fix, and a delegated
+# deploy/install.sh that dies can still leave one. `conda env create` refuses an
+# existing prefix, and the corpse's conda-meta is exactly what a platform
+# decision must never read (the 2026-08 mixed-architecture incident). Set it
+# aside rather than delete: this code did not create it, so it is not ours to
+# destroy — and the message says when it is safe to remove.
+_clear_partial_checkout_env() {
+  [[ -d "${DIR}/env" && ! -x "${DIR}/env/bin/python" ]] || return 0
+  local aside="${DIR}/env.partial-$(date +%Y%m%d%H%M%S)"
+  if [[ "${DRY_RUN:-0}" -eq 1 ]]; then
+    echo "  [dry-run] mv ${DIR}/env ${aside}  (leftover partial env, no usable python)"
+    return 0
+  fi
+  if mv "${DIR}/env" "${aside}" 2>/dev/null; then
+    warn "found a leftover partial env at ${DIR}/env (no usable python) — moved to ${aside}"
+    info "  delete it once the new build works:  rm -rf ${aside}"
+  else
+    warn "could not move the leftover partial env at ${DIR}/env aside — the create below may refuse the existing prefix"
+  fi
+  return 0
+}
+
+# When --fresh set the old env aside from somewhere OTHER than where the new one
+# is built (a legacy named env being replaced by a checkout env), say so — a
+# silent relocation reads as a lost environment.
+_note_fresh_relocation() {
+  [[ -n "${FRESH_ORIG:-}" && "${FRESH_ORIG}" != "${DIR}/env" ]] || return 0
+  info "--fresh: the old env was set aside from ${FRESH_ORIG}; the new one is built at ${DIR}/env (launches prefer the checkout env)"
+}
+
 generic_build() {
   local conda; conda="$(detect_conda)" || die "conda/mamba not found. Install miniforge first."
   ok "conda: ${conda}"
@@ -492,15 +585,22 @@ generic_build() {
     else
       ok "env present: ${DIR}/env"
     fi
-  elif [[ -n "$(resolve_env_prefix)" ]]; then
+  elif [[ ${FRESH} -eq 0 && -n "$(resolve_env_prefix)" ]]; then
     # An env this tool already runs from, kept outside the checkout (a shared
     # site env, a sandbox's own conda env). Building a second one here would
     # solve for minutes and then be ignored by every launch, which is what
     # `resolve_python` would still pick. Same reasoning as build_vsnp_local.
+    #
+    # Skipped under --fresh: "start over" must never resolve to "keep whatever
+    # is here and report success". That silent no-op returned 0, reached
+    # build_state_ok, and CLEARED the failed-build record — so `bdtools update`
+    # then called a build finished that had built nothing (2026-08, macOS).
     ok "using this machine's existing ${TOOL} env: $(resolve_env_prefix)"
     info "  (managed outside the checkout — left as it is)"
     return 0
   elif [[ -f "${env_file}" ]]; then
+    _clear_partial_checkout_env
+    _note_fresh_relocation
     with_progress "${TOOL}: creating conda env (solve can take several minutes)" \
       _conda_step "${DIR}/env" "${conda}" env create -p "${DIR}/env" -f "${env_file}"
   else
@@ -539,15 +639,43 @@ generic_build() {
   fi
 }
 
-# _env_prefix_for_subdir — the env this build will operate on: the in-checkout
-# prefix env, or the named --personal env a delegated deploy/install.sh builds.
-# Echoes nothing when neither exists yet (a fresh build).
-_env_prefix_for_subdir() {
-  local cbase
-  [[ -d "${DIR}/env/conda-meta" ]] && { printf '%s' "${DIR}/env"; return 0; }
-  cbase="$(conda_base_dir 2>/dev/null || true)"
-  [[ -n "${cbase}" && -n "${ENV_NAME:-}" && -d "${cbase}/envs/${ENV_NAME}/conda-meta" ]] \
-    && printf '%s' "${cbase}/envs/${ENV_NAME}"
+# resolve_env_prefix — the env prefix this tool runs from and this build
+# operates on, or "" when it has none yet. THE suite-side resolver, singular on
+# purpose: the subdir decision (ensure_conda_subdir), every mutation
+# (enforce_package_pins, enforce_env_constraints, generic_build,
+# build_vsnp_local) and the launch (resolve_python) all read this one answer.
+# Precedence: <checkout>/env wins, else the conda env NAMED by the manifest's
+# `env:` — asked of conda itself, never guessed from a base path.
+#
+# Two rules, both with a history:
+#
+# * ONE resolver for deciding and for mutating. Until 2026-08 the subdir
+#   decision read the env through a SEPARATE resolver whose in-checkout test was
+#   `-d env/conda-meta` while the mutations required `-x env/bin/python`. A
+#   half-built ${DIR}/env — conda-meta but no python, what a dead `conda env
+#   create` leaves — satisfied one and failed the other, so the build read
+#   CONDA_SUBDIR=osx-64 off the corpse and ran its installs against the real
+#   osx-arm64 NAMED env. One foreign openssl later, kraken_id_parse_gui was a
+#   mixed-architecture env that no additive operation could repair. Two
+#   resolvers answering "which env" is the whole defect; do not add another.
+#
+# * A usable env means `-x bin/python`, never merely a directory: a prefix
+#   without a python can neither launch the tool nor anchor a platform
+#   decision, and treating one as an env is how the corpse above got a vote.
+#
+# Adopting an existing EXTERNAL env (rather than building a second one) is also
+# load-bearing: `bdtools update` on a deployment whose env lives outside the
+# checkout (an OOD sandbox env, a shared site env) used to see no <checkout>/env,
+# decide the tool had no environment, and start a multi-minute solve for an env
+# nothing would ever launch — one HPC ran that for 46 minutes before it was
+# killed as a runaway, all to create an env every launch would then ignore.
+resolve_env_prefix() {
+  if [[ -x "${DIR}/env/bin/python" ]]; then echo "${DIR}/env"; return 0; fi
+  local conda p; conda="$(detect_conda 2>/dev/null || true)"
+  [[ -n "${conda}" && -n "${ENV_NAME}" ]] || return 0
+  "${conda}" env list 2>/dev/null | awk '{print $1}' | grep -qxF "${ENV_NAME}" || return 0
+  p="$("${conda}" run -n "${ENV_NAME}" sh -c 'echo $CONDA_PREFIX' 2>/dev/null)"
+  [[ -n "${p}" && -x "${p}/bin/python" ]] && echo "${p}"
   return 0
 }
 
@@ -571,7 +699,10 @@ _env_prefix_for_subdir() {
 # what is already on disk rather than a preference.
 ensure_conda_subdir() {
   local envdir existing host
-  envdir="$(_env_prefix_for_subdir)"
+  # The SAME resolver every mutation reads (see resolve_env_prefix): the subdir
+  # is pinned from the env the installs will actually target, so the two can
+  # never disagree about which env that is.
+  envdir="$(resolve_env_prefix)"
   existing="$(env_conda_subdir "${envdir}")"
   if [[ -n "${existing}" ]]; then
     if [[ -n "${CONDA_SUBDIR:-}" && "${CONDA_SUBDIR}" != "${existing}" ]]; then
@@ -631,6 +762,14 @@ build_vsnp_local() {
   #    ENVP, so an update refreshes the env in use rather than provisioning a
   #    parallel one nothing launches.
   local ENVP; ENVP="$(resolve_env_prefix)"
+  if [[ ${FRESH} -eq 1 && -n "${ENVP}" && "${ENVP}" != "${DIR}/env" ]]; then
+    # --fresh means START OVER. An external env the resolver still finds was not
+    # (or could not be) set aside — adopting it would quietly turn --fresh into
+    # a refresh of the very env the user asked to replace (generic_build makes
+    # the same argument for its skip branch).
+    info "--fresh: not adopting the external env at ${ENVP} — building a new one at ${DIR}/env"
+    ENVP=""
+  fi
   if [[ -n "${ENVP}" ]]; then
     if [[ "${ENVP}" == "${DIR}/env" ]]; then
       ok "env present: ${ENVP}"
@@ -640,6 +779,8 @@ build_vsnp_local() {
     fi
   else
     ENVP="${DIR}/env"
+    _clear_partial_checkout_env
+    _note_fresh_relocation
     # Create the env AT the manifest pins, not open-ended.
     #
     # `conda create ... vsnp3 snp-dists` looks harmless and is not: with no
@@ -911,7 +1052,7 @@ build() {
   # Guard the existing env's activation hooks before anything runs conda —
   # including a delegated deploy/install.sh, whose own conda calls hit the same
   # upstream CONDA_BACKUP_* bug (see harden_conda_hooks).
-  harden_conda_hooks "$(_env_prefix_for_subdir)"
+  harden_conda_hooks "$(resolve_env_prefix)"
   if [[ -x "${DIR}/deploy/install.sh" ]]; then
     log "delegating env+frontend build to ${TOOL}/deploy/install.sh"
     local args=(); [[ ${DRY_RUN} -eq 1 ]] && args+=(--dry-run)
@@ -1048,8 +1189,16 @@ enforce_env_constraints() {
     warn "${TOOL}: cannot enforce constraints (${wanted[*]}) — conda not found"
     return 0
   fi
+  # Solve for THIS prefix's platform, stated on the command itself — never
+  # inherited from the ambient environment. check.py::_conda_cmd has always done
+  # this for the remedies it PRINTS; the command that RUNS must match it: an
+  # inherited CONDA_SUBDIR (2026-08, read off a leftover half-built prefix) is
+  # how one osx-64 openssl got linked into this tool's osx-arm64 env.
+  # _conda_step additionally refuses a contradictory ambient subdir outright.
+  local sub; sub="$(env_conda_subdir "${envdir}" 2>/dev/null || true)"
+  local subdir_env=(); [[ -n "${sub}" ]] && subdir_env=(env "CONDA_SUBDIR=${sub}")
   with_progress "${TOOL}: raising dependency floors (${wanted[*]})" \
-    _conda_step "${envdir}" "${conda}" install -y -p "${envdir}" \
+    _conda_step "${envdir}" ${subdir_env[@]+"${subdir_env[@]}"} "${conda}" install -y -p "${envdir}" \
       -c conda-forge -c bioconda "${wanted[@]}" \
     || { warn "${TOOL}: could not satisfy ${wanted[*]}."
          info "  The env is built, but a package it needs is older than this tool can use."
@@ -1097,8 +1246,12 @@ enforce_package_pins() {
     warn "${TOOL}: cannot enforce package pins (${wanted[*]}) — conda not found"
     return 0
   fi
+  # Same platform statement as enforce_env_constraints, for the same incident:
+  # a mutation solves for the prefix it is about to change, said on the command.
+  local sub; sub="$(env_conda_subdir "${envdir}" 2>/dev/null || true)"
+  local subdir_env=(); [[ -n "${sub}" ]] && subdir_env=(env "CONDA_SUBDIR=${sub}")
   with_progress "${TOOL}: pinning analysis packages (${wanted[*]})" \
-    _conda_step "${envdir}" "${conda}" install -y -p "${envdir}" \
+    _conda_step "${envdir}" ${subdir_env[@]+"${subdir_env[@]}"} "${conda}" install -y -p "${envdir}" \
       -c conda-forge -c bioconda "${wanted[@]}" \
     || { warn "${TOOL}: could not install the pinned versions (${wanted[*]})."
          info "  The env is usable, but not the version tools.yml records."
@@ -1112,46 +1265,23 @@ enforce_package_pins() {
   fi
 }
 
-# Non-dying check: is a usable python env already present?
+# Non-dying check: is a usable python env already present? Same single answer
+# as resolve_env_prefix — a second opinion here is how a "present" env could
+# differ from the one the build just targeted.
 have_python() {
-  [[ -x "${DIR}/env/bin/python" ]] && return 0
-  local conda; conda="$(detect_conda 2>/dev/null || true)"
-  [[ -n "${conda}" && -n "${ENV_NAME}" ]] \
-    && "${conda}" env list 2>/dev/null | awk '{print $1}' | grep -qxF "${ENV_NAME}"
+  [[ -n "$(resolve_env_prefix)" ]]
 }
 
 # --------------------------------------------------------------------------
 # 3. launch
 # --------------------------------------------------------------------------
-# The env prefix this tool will ACTUALLY run from, or "" if it has none yet.
-#
-# Same precedence as resolve_python below — <checkout>/env wins, else a conda env
-# named after the manifest's `env:` — so a build targets the env a launch will
-# use. Without this the two disagreed on every deployment that keeps its env
-# outside the checkout (an OOD sandbox whose env is ~/miniforge3/envs/vsnp3, a
-# site install sharing one env across tools): `bdtools update` saw no
-# <checkout>/env, decided the tool had no environment, and started building a
-# SECOND one from scratch — a multi-minute solve that on one HPC ran 46 minutes,
-# was killed as a runaway, retried, and failed the update. All to create an env
-# that would then have sat unused, because launch keeps preferring the existing
-# one. Adopting it instead makes an update on those machines what the user asked
-# for: move the code, leave the working environment alone.
-resolve_env_prefix() {
-  if [[ -x "${DIR}/env/bin/python" ]]; then echo "${DIR}/env"; return; fi
-  local conda p; conda="$(detect_conda 2>/dev/null || true)"
-  [[ -n "${conda}" && -n "${ENV_NAME}" ]] || return 0
-  "${conda}" env list 2>/dev/null | awk '{print $1}' | grep -qxF "${ENV_NAME}" || return 0
-  p="$("${conda}" run -n "${ENV_NAME}" sh -c 'echo $CONDA_PREFIX' 2>/dev/null)"
-  [[ -n "${p}" && -x "${p}/bin/python" ]] && echo "${p}"
-}
-
+# The interpreter inside resolve_env_prefix's answer (the resolver is defined
+# above the build section, because the build reads it too). Dies — with the
+# names of both places it looked — when nothing resolves, which is the right
+# behavior at launch and only at launch.
 resolve_python() {
-  if [[ -x "${DIR}/env/bin/python" ]]; then echo "${DIR}/env/bin/python"; return; fi
-  local conda; conda="$(detect_conda 2>/dev/null || true)"
-  if [[ -n "${conda}" && -n "${ENV_NAME}" ]] \
-     && "${conda}" env list 2>/dev/null | awk '{print $1}' | grep -qxF "${ENV_NAME}"; then
-    "${conda}" run -n "${ENV_NAME}" sh -c 'echo $CONDA_PREFIX/bin/python'; return
-  fi
+  local p; p="$(resolve_env_prefix)"
+  [[ -n "${p}" ]] && { echo "${p}/bin/python"; return 0; }
   die "no usable python env for ${TOOL} (looked for ${DIR}/env and conda env '${ENV_NAME}')"
 }
 

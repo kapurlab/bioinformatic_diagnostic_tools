@@ -315,6 +315,101 @@ def broken_import_fix(env_py, module, info):
             f'-c conda-forge -c bioconda {pkgs}{why}')
 
 
+def _shared_lib_from_error(err):
+    """Basename of the native library a failed import could not load, or ''.
+
+    Covers the three shapes a dynamic-linker failure reaches python with:
+    macOS `dlopen(...): Library not loaded: @rpath/libssl.3.dylib`, macOS
+    `tried: '...' (mach-o file, but is an incompatible architecture ...)`, and
+    Linux `libssl.so.3: cannot open shared object file`."""
+    m = re.search(r"Library not loaded:\s*'?(\S+?)'?(?:\s|$|\))", err)
+    if m:
+        return os.path.basename(m.group(1).strip("'\""))
+    m = re.search(r"([A-Za-z0-9_.+-]+\.so(?:\.[0-9.]+)*)\s*:\s*cannot open shared object",
+                  err)
+    if m:
+        return m.group(1)
+    m = re.search(r"tried:\s*'([^']+)'[^']*incompatible architecture", err)
+    if m:
+        return os.path.basename(m.group(1))
+    return ""
+
+
+def _conda_pkg_owning(envdir, libname):
+    """(name, version, subdir, channel) of the installed conda package that
+    ships `libname`, read from conda-meta's per-package file lists."""
+    needle = "/" + libname
+    for meta in Path(envdir, "conda-meta").glob("*.json"):
+        try:
+            rec = json.loads(meta.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        for f in rec.get("files") or []:
+            if f == libname or f.endswith(needle):
+                return (rec.get("name", ""), rec.get("version", ""),
+                        rec.get("subdir", ""), rec.get("channel", ""))
+    return ("", "", "", "")
+
+
+def _channel_name(channel):
+    """'conda-forge' from either 'conda-forge' or a full channel URL with a
+    trailing platform component."""
+    parts = [p for p in (channel or "").split("/") if p and p not in ("https:", "http:")]
+    if parts and re.fullmatch(r"noarch|linux-\w+|osx-\w+|win-\w+", parts[-1]):
+        parts = parts[:-1]
+    return parts[-1] if parts else "conda-forge"
+
+
+def shared_lib_fix(env_py, module, info):
+    """(fix, why) when an import died loading a NATIVE library, else (None, None).
+
+    A dlopen failure is not a python-package conflict, and reasoning about it
+    with the import-chain heuristic produced confidently wrong output: on the
+    2026-08 macOS incident, ONE osx-64 openssl inside an osx-arm64 env broke
+    `import ssl`, doctor reported fastapi, uvicorn and pysam as three separate
+    package problems, blamed their import chains, and prescribed a full env
+    rebuild — which failed twice without touching the actual defect. The
+    accurate report is one line: name the library, name the conda package that
+    owns it, and reinstall that package for the env's own platform.
+
+    The remedy's spec is deliberately channel/subdir-QUALIFIED
+    (`conda-forge/osx-arm64::openssl`): a bare `--force-reinstall openssl` is
+    already satisfied by the foreign build, so conda re-links the same wrong
+    package out of its cache and reports success — a convincing false negative,
+    observed on the machine this was written for.
+
+    Kept to ONE line — `bdtools fix` carries remedies through a tab-separated
+    plan, and a newline truncates the plan silently.
+    """
+    err = info.get("error") or ""
+    lib = _shared_lib_from_error(err)
+    if not lib:
+        return None, None
+    envdir = str(Path(env_py).parent.parent)
+    name, version, pkg_subdir, channel = _conda_pkg_owning(envdir, lib)
+    if not name:
+        return None, (f"cause: the shared library {lib} failed to load — a "
+                      f"native-library problem, not a conflict between the python "
+                      f"packages in the import chain; no installed conda package "
+                      f"ships that file, so only a rebuild can restore it")
+    env_subdir = env_conda_subdir(envdir)
+    spec_subdir = env_subdir or pkg_subdir
+    spec = f"{_channel_name(channel)}/{spec_subdir}::{name}" if spec_subdir else name
+    if env_subdir and pkg_subdir and pkg_subdir != env_subdir:
+        why = (f"cause: {lib} belongs to {name} {version}, installed as {pkg_subdir} "
+               f"inside an {env_subdir} env — a mixed-architecture install; "
+               f"reinstalling {name} for {env_subdir} repairs it in place")
+    else:
+        why = (f"cause: {lib} belongs to {name} {version} — its files are broken "
+               f"or unloadable, so reinstall that one package, not the modules "
+               f"that stumbled over it")
+    pre = f"CONDA_SUBDIR={env_subdir} " if env_subdir else ""
+    fix = (f'{pre}conda install -y -p "{envdir}" --no-deps --force-reinstall "{spec}"'
+           f'   # {lib} -> {name}; the qualified spec matters: a bare "{name}" is '
+           f'already satisfied and re-links the same broken build')
+    return fix, why
+
+
 def has_binary(name, env_bin, extra_dirs=()):
     """Is `name` runnable? Searches <env>/bin, any vendored asset dirs, then PATH.
 
@@ -615,10 +710,18 @@ def run_checks(tool, env_py, scope, tool_dir=None):
         label = (f"python module {mod} is installed but fails to import — "
                  f"{info.get('error') or 'no error reported'}")
         chain = [c for c in (info.get("chain") or []) if c]
-        bfix = broken_import_fix(env_py, mod, info)
+        # A native-library failure first: it is the more specific diagnosis, and
+        # the chain heuristic reads it exactly wrong (the chain names the python
+        # packages that STUMBLED over the broken dylib, not the conda package
+        # that ships it — see shared_lib_fix).
+        sfix, swhy = shared_lib_fix(env_py, mod, info)
+        bfix = sfix or broken_import_fix(env_py, mod, info)
         lines.append((BAD, label, bfix))
         issues.append({"label": label, "fix": bfix or ""})
-        if len(chain) > 1:
+        if swhy:
+            lines.append((SKIP, swhy, None))
+            notes.append(swhy)
+        elif len(chain) > 1:
             why = ("cause: import chain " + " → ".join(chain)
                    + f" — {mod} is present, so installing it changes nothing; "
                      "the incompatibility is between the packages named above.")

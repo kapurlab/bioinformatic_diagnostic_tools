@@ -40,6 +40,14 @@
 #   --with-dev   (server only) ALSO install the developer branch-picker card(s).
 #                Developers only — keep off for routine diagnostic sites.
 #
+# Something broken? Run these in order; stop when it's fixed:
+#   1. bdtools status              every tool at its pin?  (mismatch -> bdtools update <tool>)
+#   2. bdtools doctor              what is wrong + the exact fix command per finding
+#   3. bdtools fix --apply         auto-runs the safe fixes (DB fetches, web layer, links);
+#                                  env-changing fixes are printed for you to run yourself
+#   4. run the command doctor/fix printed for anything left
+#   5. bdtools test <tool>         prove it on a known sample
+#
 # Common options: --prefix DIR, --site-conf PATH (server/site-init), --dry-run, -h|--help
 set -euo pipefail
 
@@ -56,7 +64,7 @@ done
 _bdt_dir="$(cd -P "$(dirname "${_bdt_src}")" && pwd)"
 source "${_bdt_dir}/lib/common.sh"
 
-usage() { sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,51p' "$0" | sed 's/^# \{0,1\}//'; }
 
 cmd_list() {
   printf '%-22s %-26s %s\n' "TOOL" "VERSION (pinned)" "OOD APP(S)"

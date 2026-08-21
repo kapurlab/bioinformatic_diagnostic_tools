@@ -225,6 +225,27 @@ if [[ ${APPLY} -eq 1 ]]; then
   done < <(targets)
   if [[ ${#REPORT_ONLY[@]} -gt 0 ]]; then
     echo
+    if [[ "${TARGET}" != "all" ]]; then
+      # The user NAMED this tool: "you asked, nothing changed" must not be a
+      # green exit. The live case: yesterday's policy flipped every tool to
+      # `updates: install` on GitHub, a user on another machine (the Ames HPC)
+      # ran the advised `bdtools update irma_gui`, and THIS machine's stale
+      # tools.yml still said report-only — the command printed a calm green
+      # "left alone" and the user reasonably concluded the update was applied.
+      # A named refusal now says exactly which manifest decided, how old it
+      # is, and both remedies — and exits nonzero so nothing downstream can
+      # read it as success.
+      warn "NOT UPDATED: ${REPORT_ONLY[*]} — this machine's tools.yml says report-only."
+      info "  The policy is read from: ${MANIFEST}"
+      _mf_age="$(git -C "${KT_BIN_DIR}/.." log -1 --format='%ci (%h)' -- tools.yml 2>/dev/null || true)"
+      [[ -n "${_mf_age}" ]] && info "  That file last changed here: ${_mf_age}"
+      info "  If the policy was changed upstream (e.g. the 2026-08-20 flip to"
+      info "  updates: install for every tool), this clone has not pulled it:"
+      info "      git -C ${KT_BIN_DIR}/.. pull        # then re-run this update"
+      info "  Or act on the named tool deliberately without pulling:"
+      info "      bin/bdtools update ${REPORT_ONLY[*]} --allow-report-only"
+      exit 2
+    fi
     ok "left alone (report-only in tools.yml): ${REPORT_ONLY[*]}"
     info "  Their versions are still reported; nothing about them was changed."
   fi
@@ -241,6 +262,16 @@ if [[ ${APPLY} -eq 1 ]]; then
     info "      bin/bdtools update ${FAILED[*]}"
     info "  To see what an env is missing:  bin/bdtools doctor ${FAILED[*]}"
     exit 1
+  fi
+  # For a NAMED tool that got this far, close with what is actually on disk.
+  # "update ran, nothing changed, nothing said" is the failure shape that cost a
+  # day of confusion on the HPC — the last line of a named update is now the
+  # ground truth a user can read (and paste) instead of inferring success.
+  if [[ "${TARGET}" != "all" ]]; then
+    _dir="$(tool_dir "${TARGET}")"
+    _now="$(git -C "${_dir}" describe --tags --always 2>/dev/null || echo '?')"
+    echo
+    ok "verified: ${TARGET} checkout is now at ${_now}"
   fi
 else
   while read -r n; do [[ -n "$n" ]] && report_one "$n"; done < <(targets)

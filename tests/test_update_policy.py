@@ -139,6 +139,58 @@ class ShellGateTests(unittest.TestCase):
         self.assertNotEqual(self.gate("no_such_tool").returncode, 0)
 
 
+class NamedRefusalIsLoudTests(unittest.TestCase):
+    """check-updates.sh --apply <named tool>: a report-only refusal must not
+    exit green.
+
+    The live failure this guards: the policy flip to `updates: install`
+    (2026-08-20) landed on GitHub, a user on the Ames HPC ran the advised
+    `bdtools update irma_gui`, and that machine's un-pulled tools.yml still said
+    report-only. The command printed a calm green "left alone (report-only)"
+    and exited 0 — read, reasonably, as "update applied". The tool stayed at a
+    version that cannot write report.html, and the user lost a day to a
+    success-shaped refusal. A NAMED tool's refusal now exits 2 and says which
+    manifest decided, how old it is, and both remedies. An `all` sweep keeps
+    the quiet summary and exit 0 — skipping frozen tools is a sweep working as
+    designed, not a failure.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.fixture = _write_fixture()
+
+    @classmethod
+    def tearDownClass(cls):
+        os.unlink(cls.fixture)
+
+    def apply(self, target):
+        env = dict(os.environ)
+        env["BDTOOLS_MANIFEST"] = self.fixture
+        return subprocess.run(
+            ["bash", str(ROOT / "bin/check-updates.sh"), "--apply", target],
+            capture_output=True, text=True, timeout=120, env=env)
+
+    def test_a_named_report_only_tool_exits_nonzero(self):
+        proc = self.apply("frozen_gui")
+        self.assertEqual(proc.returncode, 2,
+                         f"stdout={proc.stdout} stderr={proc.stderr}")
+
+    def test_the_refusal_names_the_manifest_and_both_remedies(self):
+        out_all = self.apply("frozen_gui")
+        out = out_all.stdout + out_all.stderr
+        self.assertIn("NOT UPDATED", out)
+        self.assertIn(self.fixture, out,
+                      "the deciding manifest's path is the diagnostic payload")
+        self.assertIn("pull", out)
+        self.assertIn("--allow-report-only", out)
+
+    def test_it_cannot_be_read_as_success(self):
+        out_all = self.apply("frozen_gui")
+        self.assertNotIn("left alone", out_all.stdout + out_all.stderr,
+                         "the sweep-style summary is the success-shaped text "
+                         "this guard exists to keep away from named updates")
+
+
 class DashboardAgreesWithTheGateTests(unittest.TestCase):
     """The buttons on screen must match what the CLI will actually do."""
 

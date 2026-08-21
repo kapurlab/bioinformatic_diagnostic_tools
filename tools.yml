@@ -219,13 +219,21 @@ tools:
     #      foreign build, so conda re-links the same wrong package from its
     #      cache and reports success — a convincing false negative. doctor now
     #      prints the qualified form (check.py shared_lib_fix).
-    #   2. That machine now runs this tool's env fully NATIVE osx-arm64 with
-    #      every program resolving — evidence against the installer's
-    #      osx-64-under-Rosetta default (its premise: bioconda's assembler/blat
-    #      toolchain lacks arm64 builds) for THIS tool's dependency set. Policy
-    #      unchanged: an existing env always keeps its platform, and a --fresh
-    #      on Apple Silicon still builds osx-64 unless BDTOOLS_NATIVE_ARM=1. If
-    #      arm64 keeps proving out here, consider a per-tool subdir field.
+    #   2. Records can lie about the disk. Hours after the openssl repair, the
+    #      same env still had an x86_64 bin/perl under a coherent set of
+    #      osx-arm64 conda-meta records (an interrupted transaction leaves
+    #      files from two extractions; the rollback restores the records), so
+    #      doctor's record-level check passed while kraken2 — a perl script —
+    #      died at run time. doctor now audits on-disk binary architectures
+    #      against the env's platform (check.py foreign_arch_files); the
+    #      remedy is the same qualified force-reinstall, naming the owner.
+    #   3. Once repaired, that machine runs this tool's env native osx-arm64 —
+    #      evidence against the installer's osx-64-under-Rosetta default (its
+    #      premise: bioconda's assembler/blat toolchain lacks arm64 builds) for
+    #      THIS tool's dependency set. Policy unchanged: an existing env always
+    #      keeps its platform, and a --fresh on Apple Silicon still builds
+    #      osx-64 unless BDTOOLS_NATIVE_ARM=1. If arm64 keeps proving out
+    #      here, consider a per-tool subdir field.
 
   # No `packages`: kSNP4 is not a conda package. It is a vendored SourceForge zip
   # unpacked into the checkout, so its version travels with the tool release.

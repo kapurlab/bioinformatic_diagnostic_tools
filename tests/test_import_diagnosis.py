@@ -332,6 +332,150 @@ class SharedLibraryDiagnosisTests(unittest.TestCase):
                          "one-package reinstall is the fix")
 
 
+class BinaryArchAuditTests(unittest.TestCase):
+    """doctor reads binary architectures off the DISK, never just conda-meta.
+
+    The failure this pins (2026-08-21, the same Mac as the openssl incident,
+    hours later): bin/perl on disk was x86_64 while its conda-meta record — and
+    every other record — said osx-arm64. An interrupted transaction had left
+    files from two extractions in one prefix and the rollback restored only the
+    records. Every import check passed (python is not perl), every existence
+    check passed (the kraken2 script was there), doctor printed "all 9 installed
+    tool(s) ready" — and kraken2, a perl script, died at run time loading an
+    arm64 Cwd.bundle into an x86_64 perl:
+
+        Can't load '.../auto/Cwd/Cwd.bundle' for module Cwd: ...
+        (mach-o file, but is an incompatible architecture
+         (have 'arm64', need 'x86_64'))
+
+    Nothing record-level can see that. The audit reads magic bytes.
+    """
+
+    # Minimal Mach-O headers: magic + cputype (offset 4, uint32 LE), padded past
+    # the 20-byte floor _binary_target requires.
+    X86 = b"\xcf\xfa\xed\xfe" + (0x01000007).to_bytes(4, "little") + b"\x00" * 16
+    ARM = b"\xcf\xfa\xed\xfe" + (0x0100000C).to_bytes(4, "little") + b"\x00" * 16
+    FAT = b"\xca\xfe\xba\xbe" + b"\x00" * 20                    # universal
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.env = self.tmp / "env"
+        (self.env / "bin").mkdir(parents=True)
+        (self.env / "conda-meta").mkdir()
+        # env_py exists so run_checks-level tests get past the presence gate.
+        (self.env / "bin/python").write_bytes(b"#!/bin/sh\n" + b"\x00" * 16)
+
+    def _pkg(self, name, subdir, files=()):
+        import json
+        (self.env / "conda-meta" / f"{name}-1.0-h0_0.json").write_text(json.dumps({
+            "name": name, "version": "1.0", "subdir": subdir,
+            "channel": f"https://conda.anaconda.org/conda-forge/{subdir}",
+            "files": list(files)}))
+
+    def _write(self, rel, payload):
+        p = self.env / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(payload)
+        return p
+
+    def _arm64_records(self):
+        self._pkg("python", "osx-arm64")
+        self._pkg("samtools", "osx-arm64")
+        self._pkg("perl", "osx-arm64", files=["bin/perl"])
+
+    def test_a_foreign_binary_is_found_where_records_look_clean(self):
+        self._arm64_records()                       # records: coherent arm64
+        self._write("bin/perl", self.X86)           # disk: the x86_64 leftover
+        self._write("bin/samtools", self.ARM)
+        got = CHECK.foreign_arch_files(str(self.env))
+        self.assertEqual(got, [("bin/perl", "macos/x86_64")])
+
+    def test_native_libraries_under_lib_are_audited_too(self):
+        self._arm64_records()
+        self._write("lib/perl5/5.32/vendor_perl/auto/Cwd/Cwd.bundle", self.ARM)
+        self._write("lib/libssl.3.dylib", self.X86)     # the openssl shape
+        got = CHECK.foreign_arch_files(str(self.env))
+        self.assertEqual(got, [("lib/libssl.3.dylib", "macos/x86_64")])
+
+    def test_scripts_and_universal_binaries_are_not_flagged(self):
+        self._arm64_records()
+        self._write("bin/kraken2", b"#!/usr/bin/env perl\nuse Cwd;\n" + b" " * 8)
+        self._write("bin/universal-tool", self.FAT)
+        self.assertEqual(CHECK.foreign_arch_files(str(self.env)), [])
+
+    def test_a_coherent_rosetta_env_is_not_flagged(self):
+        # The rule is env-relative, never host-relative: an all-osx-64 env on
+        # Apple Silicon runs whole under Rosetta and is healthy.
+        self._pkg("python", "osx-64")
+        self._pkg("perl", "osx-64", files=["bin/perl"])
+        self._write("bin/perl", self.X86)
+        self.assertEqual(CHECK.foreign_arch_files(str(self.env)), [])
+
+    def test_deliberate_per_platform_payloads_are_not_flagged(self):
+        # ont-fast5-api ships one plugin per platform side by side and picks at
+        # run time. The first live run of this audit flagged all three — a
+        # false positive that would have cost doctor its credibility.
+        elf_arm = b"\x7fELF" + b"\x00" * 14 + (0xB7).to_bytes(2, "little") + b"\x00" * 4
+        elf_x86 = b"\x7fELF" + b"\x00" * 14 + (0x3E).to_bytes(2, "little") + b"\x00" * 4
+        self._pkg("python", "osx-64")
+        base = "lib/python3.10/site-packages/ont_fast5_api/vbz_plugin"
+        self._write(f"{base}/libvbz_hdf_plugin_m1.dylib", self.ARM)
+        self._write(f"{base}/libvbz_hdf_plugin_aarch64.so", elf_arm)
+        self._write(f"{base}/libvbz_hdf_plugin_x86_64.so", elf_x86)
+        # ...and an arch-tagged vendored file OUTSIDE the python tree.
+        self._write("lib/vendor/libplugin_arm64.dylib", self.ARM)
+        self.assertEqual(CHECK.foreign_arch_files(str(self.env)), [])
+
+    def test_the_python_tree_is_the_import_probes_jurisdiction(self):
+        # A wrong-arch .so under lib/python* is real breakage, but the import
+        # probe already catches it with the loader's own error (and
+        # shared_lib_fix names the owner) — the audit must not double-report
+        # the tree where deliberate multi-platform vendoring also lives.
+        self._arm64_records()
+        self._write("lib/python3.10/lib-dynload/_ssl.cpython-310-darwin.so",
+                    self.X86)
+        self.assertEqual(CHECK.foreign_arch_files(str(self.env)), [])
+
+    def test_run_checks_names_the_file_the_package_and_the_qualified_fix(self):
+        self._arm64_records()
+        self._write("bin/perl", self.X86)
+        from unittest import mock
+        with mock.patch.object(CHECK, "check_modules", return_value={}):
+            with mock.patch.object(CHECK, "has_binary", return_value=True):
+                with mock.patch.object(CHECK, "resolve_asset_dirs",
+                                       return_value=([], [])):
+                    status, _lines, issues, notes = CHECK.run_checks(
+                        "kraken_id_parse_gui", str(self.env / "bin/python"),
+                        "env", tool_dir=str(self.tmp))
+        self.assertEqual(status, "issues",
+                         "a tool whose analysis binary cannot exec is not ready")
+        labels = " | ".join(i["label"] for i in issues)
+        self.assertIn("bin/perl is macos/x86_64", labels)
+        fixes = " | ".join(i.get("fix", "") for i in issues)
+        self.assertIn("CONDA_SUBDIR=osx-arm64", fixes)
+        self.assertIn("--force-reinstall", fixes)
+        self.assertIn('"conda-forge/osx-arm64::perl"', fixes)
+        joined = " ".join(notes)
+        self.assertIn("conda-meta still records", joined)
+        self.assertIn("perl", joined)
+
+    def test_a_clean_env_reports_the_audit_green(self):
+        self._arm64_records()
+        self._write("bin/perl", self.ARM)
+        from unittest import mock
+        with mock.patch.object(CHECK, "check_modules", return_value={}):
+            with mock.patch.object(CHECK, "has_binary", return_value=True):
+                with mock.patch.object(CHECK, "resolve_asset_dirs",
+                                       return_value=([], [])):
+                    status, lines, issues, _notes = CHECK.run_checks(
+                        "kraken_id_parse_gui", str(self.env / "bin/python"),
+                        "env", tool_dir=str(self.tmp))
+        self.assertEqual(status, "ok", issues)
+        self.assertIn("on-disk binaries match the env platform (osx-arm64)",
+                      " | ".join(t for _s, t, _f in lines))
+
+
 @unittest.skipUnless(BASH, "bash is required")
 class FixAutomationTests(unittest.TestCase):
     """`bdtools fix` must not run the new remedy unattended.

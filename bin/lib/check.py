@@ -544,6 +544,104 @@ def check_binary_format(name, env_bin, extra_dirs=()):
     return False, (f"{name} is {bin_arch} but this host is {host_arch} ({path})")
 
 
+# subdir -> the (os, arch) every native binary in such an env must target.
+# Platforms with no entry (win-*, ppc) skip the audit rather than invent a rule.
+_SUBDIR_TARGET = {"osx-64": ("macos", "x86_64"), "osx-arm64": ("macos", "arm64"),
+                  "linux-64": ("linux", "x86_64"), "linux-aarch64": ("linux", "arm64")}
+
+# A basename that names a platform is a package selecting per-platform payloads
+# on purpose, not a broken install — see foreign_arch_files.
+_ARCH_TAGGED_NAME = re.compile(
+    r"(?:^|[-_.])(?:aarch64|arm64|x86[-_]?64|amd64|i[36]86|ppc64(?:le)?|s390x|"
+    r"armv\d+|m1|win(?:32|64)|universal2?|manylinux\w*|musllinux\w*)(?=[-_.]|$)",
+    re.IGNORECASE)
+
+
+def foreign_arch_files(envdir):
+    """[(relpath, "os/arch")] of on-disk binaries that cannot run in this env.
+
+    Judged against the ENV's platform (conda-meta majority), never the host's:
+    an all-osx-64 env on Apple Silicon is fine — Rosetta runs the whole prefix —
+    but a single x86_64 file inside an osx-arm64 prefix is dead on arrival,
+    because everything it links against is arm64.
+
+    WHY THIS EXISTS when the record-level check (env_foreign_subdirs) already
+    reads conda-meta: records can lie about the disk. An interrupted conda
+    transaction leaves files from TWO extractions in one prefix while the
+    rollback restores the RECORDS — so every record says the right platform and
+    doctor shows green. The live case (2026-08-21, the same Mac as the openssl
+    incident): bin/perl on disk was x86_64 under an arm64 perl record. Every
+    import check passed (python is not perl), every existence check passed (the
+    kraken2 script was there), doctor said "all 9 tools ready" — and kraken2, a
+    perl script, died at run time loading an arm64 Cwd.bundle into an x86_64
+    perl. The disk is the authority; read it.
+
+    Scope: <env>/bin plus native libraries under <env>/lib, EXCEPT the
+    lib/python* tree. Two reasons that tree is out of scope, both learned from
+    the first machine this ran on: (1) it is already proven the strong way —
+    check_modules imports it in the env's own interpreter, so a wrong-arch .so
+    there fails with the exact loader error and shared_lib_fix names the owner;
+    (2) it is where packages DELIBERATELY vendor one plugin per platform
+    (ont-fast5-api ships _m1.dylib, _aarch64.so and _x86_64.so side by side and
+    picks at run time) — flagging those is a false positive that costs doctor
+    its credibility. Basenames carrying an explicit platform tag are skipped
+    everywhere for the same vendoring reason; the incident class this audit
+    exists for (perl, openssl, libdb) always wears neutral names. Scripts and
+    data files are skipped by the magic-byte check itself; symlinks are skipped
+    so a target is judged once, where it lives.
+    """
+    subdir = env_conda_subdir(envdir)
+    want = _SUBDIR_TARGET.get(subdir)
+    if not want:
+        return []
+    env = Path(envdir)
+    candidates = []
+    bindir = env / "bin"
+    if bindir.is_dir():
+        candidates += [p for p in bindir.iterdir()
+                       if p.is_file() and not p.is_symlink()]
+    libdir = env / "lib"
+    if libdir.is_dir():
+        for child in libdir.iterdir():
+            if child.name.startswith("python"):
+                continue                      # the import probe's jurisdiction
+            if child.is_file() and not child.is_symlink():
+                if child.suffix in (".so", ".dylib", ".bundle") or ".so." in child.name:
+                    candidates.append(child)
+                continue
+            if not child.is_dir() or child.is_symlink():
+                continue
+            for pat in ("*.so", "*.so.*", "*.dylib", "*.bundle"):
+                candidates += [p for p in child.rglob(pat)
+                               if p.is_file() and not p.is_symlink()]
+    bad = []
+    for p in candidates:
+        if _ARCH_TAGGED_NAME.search(p.name):
+            continue                          # honest multi-platform vendoring
+        target = _binary_target(str(p))
+        if target is None or target[1] == "universal":
+            continue
+        if target != want:
+            bad.append((str(p.relative_to(env)), "%s/%s" % target))
+    return sorted(set(bad))
+
+
+def _packages_owning(envdir, relpaths):
+    """{relpath: (name, channel)} for the conda packages shipping these files."""
+    want = set(relpaths)
+    owners = {}
+    for meta in Path(envdir, "conda-meta").glob("*.json"):
+        try:
+            rec = json.loads(meta.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        for f in want.intersection(rec.get("files") or []):
+            owners[f] = (rec.get("name", ""), rec.get("channel", ""))
+        if len(owners) == len(want):
+            break
+    return owners
+
+
 def resolve_asset_dirs(tool, tool_dir, asset_dirs):
     """Resolve a spec's `asset_dirs` the same way the launcher builds PATH.
 
@@ -785,6 +883,47 @@ def run_checks(tool, env_py, scope, tool_dir=None):
     elif spec.get("binary_format_probes") and not real_missing:
         lines.append((OK, f"vendored binaries match this host "
                           f"({platform.system()}/{platform.machine()})", None))
+
+    # On-disk architecture audit — the disk, not the records (see
+    # foreign_arch_files). This is the check that was missing when doctor said
+    # "all 9 tools ready" over an env whose bin/perl could not run.
+    envdir = str(Path(env_py).parent.parent)
+    env_subdir = env_conda_subdir(envdir)
+    foreign_files = foreign_arch_files(envdir)
+    if foreign_files:
+        owners = _packages_owning(envdir, [rp for rp, _ in foreign_files])
+        pkg_chan = {}
+        for name, chan in owners.values():
+            if name:
+                pkg_chan.setdefault(name, chan)
+        shown = ", ".join(f"{rp} is {arch}" for rp, arch in foreign_files[:5])
+        if len(foreign_files) > 5:
+            shown += f", … ({len(foreign_files) - 5} more)"
+        label = f"binaries on disk cannot run in this {env_subdir} env: {shown}"
+        fix = None
+        if pkg_chan:
+            specs = " ".join(
+                f'"{_channel_name(chan)}/{env_subdir}::{name}"'
+                for name, chan in sorted(pkg_chan.items()))
+            fix = (f'CONDA_SUBDIR={env_subdir} conda install -y -p "{envdir}" '
+                   f'--no-deps --force-reinstall {specs}'
+                   f'   # re-links every file of the named package(s) for '
+                   f'{env_subdir}; a bare spec is already satisfied and re-links '
+                   f'the same broken build')
+        lines.append((BAD, label, fix))
+        issues.append({"label": label, "fix": fix or ""})
+        why = ("cause: an interrupted conda transaction left files from two "
+               "extractions in one prefix — conda-meta still records "
+               f"{env_subdir}, so record-level checks pass while the files "
+               "above cannot load"
+               + (f"; they belong to: {', '.join(sorted(pkg_chan))}" if pkg_chan
+                  else "; no installed conda package claims them, so rebuild: "
+                       + default_fix))
+        lines.append((SKIP, why, None))
+        notes.append(why)
+    elif _SUBDIR_TARGET.get(env_subdir):
+        lines.append((OK, f"on-disk binaries match the env platform "
+                          f"({env_subdir})", None))
 
     optional_missing = [
         b for b in spec.get("optional_binaries", [])

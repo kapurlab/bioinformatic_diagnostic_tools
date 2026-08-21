@@ -200,8 +200,51 @@ def stale_python_trees(env_py):
     return cur, [t for t in trees if t != cur]
 
 
+# The probe that runs INSIDE the tool's env interpreter. It reports why each
+# import failed, not just that it did — see check_modules.
+_IMPORT_PROBE = r'''
+import json, sys
+out = {}
+for m in sys.argv[1:]:
+    try:
+        __import__(m)
+    except BaseException as e:
+        # Record the distinct top-level packages the import passed through. The
+        # DEEPEST frame is not the culprit: when `allel` failed on macOS the
+        # deepest frame was numpy raising AttributeError, while the package that
+        # actually needed updating was dask, one frame above it. A chain shows
+        # that relationship instead of guessing a single name.
+        chain, tb = [], e.__traceback__
+        while tb is not None:
+            parts = tb.tb_frame.f_code.co_filename.replace("\\", "/").split("/")
+            for i, part in enumerate(parts):
+                if part in ("site-packages", "dist-packages") and i + 1 < len(parts):
+                    top = parts[i + 1]
+                    if top.endswith(".py"):
+                        top = top[:-3]
+                    if top and (not chain or chain[-1] != top):
+                        chain.append(top)
+                    break
+            tb = tb.tb_next
+        name = getattr(e, "name", "") or ""
+        out[m] = {
+            # "absent" = nothing to import. Anything else is INSTALLED and
+            # broken, which needs a different remedy entirely.
+            "absent": bool(isinstance(e, ModuleNotFoundError)
+                           and name in (m, m.split(".")[0])),
+            "error": "%s: %s" % (type(e).__name__, " ".join(str(e).split())[:300]),
+            "chain": chain,
+        }
+print(json.dumps(out))
+'''
+
+
 def check_modules(env_py, modules):
-    """Return the subset of modules that fail to import in the tool's env.
+    """Which of `modules` fail to import in the tool's env, and WHY.
+
+    Returns a dict, in spec order, {module: {"absent": bool, "error": str,
+    "chain": [pkg, ...]}} — empty when every import works. Falsy-empty either
+    way, so callers guard on it exactly as they did when this returned a list.
 
     Actually imports each module in the env interpreter (a real "does it work"
     test, not just "is it discoverable"). Each import is guarded independently so
@@ -210,29 +253,65 @@ def check_modules(env_py, modules):
     but `import importlib` does not expose the `util` submodule — it raised
     AttributeError, so the check silently passed while testing nothing, and could
     flip to "all missing" when the interpreter path wasn't runnable.)
+
+    WHY THE REASON IS KEPT. This used to `except Exception` and append only the
+    module name, so "not installed" and "installed but raises on import" arrived
+    at the screen identically — and the remedy was chosen from the install
+    tables, which answers only the first. The live case: scikit-allel was
+    present and correct, `import allel` died inside dask on numpy 2's removal of
+    `np.round_`, and the dashboard offered `conda install scikit-allel`, which
+    conda answers with "All requested packages already installed". A dead end on
+    every platform, with the one useful fact — the traceback — discarded here.
     """
     if not modules:
-        return []
-    code = (
-        "import sys\n"
-        "bad=[]\n"
-        "for m in sys.argv[1:]:\n"
-        "    try:\n"
-        "        __import__(m)\n"
-        "    except Exception:\n"
-        "        bad.append(m)\n"
-        "print('\\n'.join(bad))\n"
-    )
+        return {}
+    unknown = {m: {"absent": True, "error": "", "chain": []} for m in modules}
     try:
-        out = subprocess.run([env_py, "-c", code, *modules],
+        out = subprocess.run([env_py, "-c", _IMPORT_PROBE, *modules],
                              capture_output=True, text=True, timeout=120)
         # If the interpreter couldn't even start the script (nonzero exit with no
         # output), we can't say which imports failed — report all as missing.
         if out.returncode != 0 and not out.stdout.strip():
-            return list(modules)
-        return [m for m in out.stdout.split() if m]
+            return unknown
+        data = json.loads(out.stdout.strip().splitlines()[-1])
     except Exception:
-        return list(modules)  # can't even run the interpreter -> all "missing"
+        return unknown  # can't even run the interpreter -> all "missing"
+    # Preserve the spec's order, not the JSON's, so messages read the same way
+    # every run.
+    return {m: data[m] for m in modules if m in data}
+
+
+def broken_import_fix(env_py, module, info):
+    """Remedy for a module that is INSTALLED but raises on import, or None.
+
+    An import that dies partway through a chain (allel -> dask -> numpy) is two
+    installed packages disagreeing, not a missing one. The package to move is
+    the CALLER in that chain — the stale one reaching for something its
+    dependency has removed — never the module itself (present already) and never
+    the deepest package (it is the one that dropped the API; downgrading it is
+    how you get an env nobody can reproduce).
+
+    Returns None when the chain says nothing useful; then the error text is the
+    whole answer, which is still infinitely better than a no-op install.
+
+    Kept to ONE line — `bdtools fix` carries remedies through a tab-separated
+    plan, and a newline truncates the plan silently.
+    """
+    chain = [c for c in (info.get("chain") or []) if c]
+    top = module.split(".")[0]
+    # Drop the module's own package and the deepest frame; what's left is the
+    # caller(s) between them.
+    middle = [c for c in chain[:-1] if c != top]
+    if not middle:
+        return None
+    envdir = str(Path(env_py).parent.parent)
+    subdir = env_conda_subdir(envdir)
+    pre = f"CONDA_SUBDIR={subdir} " if subdir else ""
+    pkgs = " ".join(sorted(set(middle)))
+    deepest = chain[-1] if chain else ""
+    why = f" # {pkgs} is too old for the {deepest} in this env" if deepest else ""
+    return (f'{pre}conda update -y -p "{envdir}" '
+            f'-c conda-forge -c bioconda {pkgs}{why}')
 
 
 def has_binary(name, env_bin, extra_dirs=()):
@@ -503,7 +582,15 @@ def run_checks(tool, env_py, scope, tool_dir=None):
     env_bin = str(Path(env_py).parent)
     lines.append((OK, "environment present", None))
 
-    missing = check_modules(env_py, spec.get("modules", []))
+    failures = check_modules(env_py, spec.get("modules", []))
+    # Two different faults wear the same symptom, and they need opposite
+    # remedies. ABSENT: the package isn't there, install it. BROKEN: it is
+    # installed and raises on import — an install is a no-op ("All requested
+    # packages already installed"), so report the actual error and move the
+    # stale caller instead. Splitting them is what stops the pane printing a
+    # command that cannot work.
+    missing = [m for m, i in failures.items() if i.get("absent", True)]
+    broken = [m for m, i in failures.items() if not i.get("absent", True)]
     if missing:
         # Install what is missing, in the env that is already here. The rebuild
         # remedy is the fallback for modules nothing here can name — not the
@@ -520,7 +607,28 @@ def run_checks(tool, env_py, scope, tool_dir=None):
                    "modules above.")
             lines.append((SKIP, why, None))
             notes.append(why)
-    elif spec.get("modules"):
+    for mod in broken:
+        info = failures[mod]
+        # The error text is the payload: it is the one thing that told a human
+        # what to do when this happened for real, and it used to be discarded.
+        label = (f"python module {mod} is installed but fails to import — "
+                 f"{info.get('error') or 'no error reported'}")
+        chain = [c for c in (info.get("chain") or []) if c]
+        bfix = broken_import_fix(env_py, mod, info)
+        lines.append((BAD, label, bfix))
+        issues.append({"label": label, "fix": bfix or ""})
+        if len(chain) > 1:
+            why = ("cause: import chain " + " → ".join(chain)
+                   + f" — {mod} is present, so installing it changes nothing; "
+                     "the incompatibility is between the packages named above.")
+            lines.append((SKIP, why, None))
+            notes.append(why)
+        if not bfix:
+            why = ("no remedy can be derived from that traceback — rebuild only "
+                   f"if the error is unclear: {default_fix}")
+            lines.append((SKIP, why, None))
+            notes.append(why)
+    if not failures and spec.get("modules"):
         lines.append((OK, f"python modules ({len(spec['modules'])}) import", None))
 
     # Vendored payloads (kSNP4's SourceForge package) live outside the conda env

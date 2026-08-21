@@ -61,6 +61,7 @@ fix_class() {
     *"setup-databases"*)        echo auto;;     # fetches reference data
     *"deploy/install.sh"*)      echo auto;;     # fetches a vendored payload (kSNP4)
     *"conda install"*)          echo manual;;   # a conda transaction on a live env: small, but it CHANGES analysis software — propose it, never unattended. Checked before the pip case because a combined remedy (missing web layer AND a missing analysis package) contains both.
+    *"conda update"*)           echo manual;;   # doctor's remedy for an installed-but-broken import (allel -> dask -> numpy): it MOVES a package version, so it is proposed like every other env change. Stated rather than left to the default so reordering these cases cannot silently automate it.
     *" -m pip install "*)       echo auto;;     # adds the web layer into the EXISTING env — no conda re-solve, no analysis version change
     *"update-packages"*)        echo manual;;   # changes the analysis version
     *"bdtools update"*)         echo manual;;   # rebuilds the env

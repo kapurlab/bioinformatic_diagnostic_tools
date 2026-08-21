@@ -967,6 +967,94 @@ build() {
     exit 3
   fi
   enforce_package_pins
+  enforce_env_constraints
+}
+
+# _version_ge A B — is version A >= version B?  (numeric-aware, no dependencies)
+#
+# `2025.5.1` vs `2024.8` cannot be compared as strings ("10" < "9") and sort -V
+# is GNU-only, so it is absent on macOS and on some minimal OOD images. Delegate
+# to the python that already reads tools.yml: available everywhere by definition,
+# because nothing here runs without it.
+_version_ge() {
+  "${PYBIN}" -c '
+import sys
+def key(v):
+    out = []
+    for part in v.replace("-", ".").replace("_", ".").split("."):
+        out.append((0, int(part), "") if part.isdigit() else (1, 0, part))
+    return out
+sys.exit(0 if key(sys.argv[1]) >= key(sys.argv[2]) else 1)
+' "$1" "$2" 2>/dev/null
+}
+
+# The manifest's `constraints:` floors, applied to the env we just built.
+#
+# WHY THIS EXISTS. `packages:` states the versions a diagnostic result depends
+# on. This states the versions the env merely has to be ABLE TO RUN — library
+# floors that each tool's own environment.yml leaves open, where the open
+# version is not a free upgrade but a latent break. The case it was written for
+# (2026-08-21, macOS, but nothing about it is macOS-specific): a --fresh
+# kraken_id_parse_gui solved to numpy 2.2.6 with dask 2023.3.0, and `import
+# allel` died inside dask on numpy 2's removal of `np.round_`. Every package in
+# `packages:` was present and correct, so nothing here noticed, and since the
+# solve is deterministic per spec+channel a rebuild landed in the same place.
+#
+# A FLOOR, NOT A PIN, and that difference is the point: `dask>=2024.8` is
+# satisfied by anything newer, so a machine that already solved to a good
+# version is left completely alone — no solve, no download, no divergence
+# between two machines that are both fine. Only an env that is actually below
+# the floor is touched. Same cheap conda-meta guard as enforce_package_pins for
+# the same reason: a satisfied `conda install` still costs a full solve, and
+# minutes on every build is how a safety check gets removed.
+#
+# Never fatal. A floor that cannot be met is a loud warning on an otherwise
+# working install — doctor will name the resulting import failure precisely
+# (bin/lib/check.py), which is the backstop for exactly this case.
+enforce_env_constraints() {
+  local specs; specs="$(manifest_get "${TOOL}" constraints 2>/dev/null || true)"
+  [[ -n "${specs}" ]] || return 0
+  local envdir; envdir="$(resolve_env_prefix)"
+  [[ -n "${envdir}" && -x "${envdir}/bin/python" ]] || return 0
+
+  local wanted=() spec pkg req have
+  for spec in ${specs}; do
+    # Only `pkg>=version` is supported, deliberately: a floor is the one
+    # constraint shape that cannot make two machines disagree about what is
+    # installed. Anything else is skipped loudly rather than half-honoured.
+    if [[ "${spec}" != *">="* ]]; then
+      warn "${TOOL}: ignoring constraint '${spec}' — only 'package>=version' floors are supported"
+      continue
+    fi
+    pkg="${spec%%>=*}"; req="${spec##*>=}"
+    have="$(ls "${envdir}/conda-meta" 2>/dev/null \
+            | sed -n "s/^${pkg}-\([^-]*\)-[^-]*\.json$/\1/p" | head -1)"
+    if [[ -z "${have}" ]]; then
+      # Not installed at all. Not this function's job to add packages the tool
+      # never asked for — the env simply does not use it.
+      continue
+    fi
+    if _version_ge "${have}" "${req}"; then
+      ok "${TOOL}: ${pkg} ${have} (>= ${req})"
+    else
+      info "  ${TOOL}: ${pkg} ${have} is below the ${req} floor this env needs"
+      wanted+=("${spec}")
+    fi
+  done
+  [[ ${#wanted[@]} -gt 0 ]] || return 0
+
+  local conda; conda="$(detect_conda 2>/dev/null || true)"
+  if [[ -z "${conda}" ]]; then
+    warn "${TOOL}: cannot enforce constraints (${wanted[*]}) — conda not found"
+    return 0
+  fi
+  with_progress "${TOOL}: raising dependency floors (${wanted[*]})" \
+    _conda_step "${envdir}" "${conda}" install -y -p "${envdir}" \
+      -c conda-forge -c bioconda "${wanted[@]}" \
+    || { warn "${TOOL}: could not satisfy ${wanted[*]}."
+         info "  The env is built, but a package it needs is older than this tool can use."
+         info "  Check what breaks:  bin/bdtools doctor ${TOOL}"
+         return 0; }
 }
 
 # The manifest's `packages:` pins, applied to the env we just built.

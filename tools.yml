@@ -22,6 +22,14 @@
 #   packages_held  packages that a newer release exists for but THIS env cannot
 #             take (another package in the same env holds perl/zlib/libcurl down).
 #             Still shown, never offered as an update.               (optional)
+#   constraints  version FLOORS for packages that are not analysis software but
+#             whose absence of a floor lets a build solve to a combination that
+#             cannot run — `[dask>=2024.8]`. Not shown by `bdtools versions`
+#             (these are not results-affecting versions and claiming otherwise
+#             would clutter provenance); enforced after the env is built, on
+#             every platform. Unlike `packages`, a floor is deliberately NOT an
+#             exact pin: the requirement is "new enough", so a machine that
+#             already has something newer is left alone.        (optional)
 #   updates   whether bdtools may CHANGE this tool:
 #               install — offered in the dashboard, and `bdtools update` /
 #                         `update-packages` will act on it
@@ -79,6 +87,21 @@
 # Pinning each package to the newest on its channel independently does NOT work in
 # a coupled env, and produced exactly that failure here: ncbi-amrfinderplus=4.2.7
 # with kraken2=2.17.1 and mlst=2.35.0 is unsatisfiable at any version of anything.
+#
+# AN UNPINNED PAIR IS A LATENT BREAK, NOT A FREE UPGRADE. Each tool's own
+# environment.yml leaves most library versions open, and two of them drifting
+# apart is enough to make a freshly built env unusable. The live case, on macOS
+# 2026-08-21: kraken_id_parse_gui's spec declares bare `numpy` and bare `dask`,
+# a --fresh build solved to numpy 2.2.6 with dask 2023.3.0, and dask that old
+# decorates with `np.round_`, which NumPy 2.0 removed. `import allel` therefore
+# died three packages deep while every package named in `packages:` was present
+# and correct — and because the solve is deterministic per spec+channel, a
+# rebuild reproduced it rather than repairing it. Nothing about that failure is
+# macOS-specific: the same spec on Linux, WSL or OOD lands in the same place.
+# `constraints:` is where the suite states the floor its own tools' specs omit,
+# so no platform has to discover it the hard way. Prefer fixing the tool's
+# environment.yml too — this is the suite-side answer that works today, on every
+# machine, without waiting for a tool release.
 #
 # All tools carry a baseline tag (vsnp_gui v0.2.0; the rest v0.1.0, cut
 # 2026-06-16). Bump a pin with `bdtools update <tool>` once newer tags exist.
@@ -181,6 +204,10 @@ tools:
     # (BDTOOLS_SIBLING_ENV_KRAKEN_ID_PARSE_GUI) — bumping it moves both tools
     # together.
     packages: [bioconda::kraken2=2.17.1, bioconda::krakentools=1.2.1]
+    # dask is a scikit-allel dependency, not analysis software. Floored because
+    # 2023.3.0 cannot import under numpy 2: see the paragraph above. Raise the
+    # floor, never pin it exactly — any newer dask is fine.
+    constraints: [dask>=2024.8]
 
   # No `packages`: kSNP4 is not a conda package. It is a vendored SourceForge zip
   # unpacked into the checkout, so its version travels with the tool release.

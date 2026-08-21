@@ -787,7 +787,14 @@ async function controlFetch(url,options={}){
 function setupBlock(t){
   // Installed but not runnable yet: list what's missing + the fix commands.
   if(!t.installed || t.ready!==false || !(t.issues&&t.issues.length)) return '';
-  const items = t.issues.map(i=>`<div>• ${esc(i.label)} — <code>${esc(i.fix)}</code></div>`).join('');
+  // Not every finding has a command. An installed-but-broken import whose
+  // traceback names no package to move is diagnosed by its label alone (the
+  // error text IS the answer), and rendering an empty <code> for it looked like
+  // a fix that had gone missing.
+  const items = t.issues.map(i=>{
+    const label = `• ${esc(i.label)}`;
+    return `<div>${i.fix ? `${label} — <code>${esc(i.fix)}</code>` : label}</div>`;
+  }).join('');
   return `<div class="setup"><b>Needs setup before it can run:</b>${items}</div>`;
 }
 function noteBlock(t){

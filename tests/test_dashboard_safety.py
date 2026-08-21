@@ -425,7 +425,7 @@ class StateFileTests(unittest.TestCase):
                 "BDTOOLS_HOME": str(root / "bdtools-home"),
                 "BDTOOLS_VENDOR_ROOT": str(root / "no-such-vendor-root"),
             }, clear=False):
-                with mock.patch.object(CHECK, "check_modules", return_value=[]):
+                with mock.patch.object(CHECK, "check_modules", return_value={}):
                     status, _lines, issues, _notes = CHECK.run_checks(
                         "ksnp_gui", str(env_py), "env", tool_dir=str(tool_dir))
         self.assertEqual(status, "issues")
@@ -583,7 +583,16 @@ class StateFileTests(unittest.TestCase):
     }
     # Paths under a *named person's* home are never a defensible fallback — that
     # account may not exist, and its home is usually unreadable to everyone else.
-    _OTHER_HOME_BUDGET = {"mhc_gui": 6}
+    #
+    # vsnp_gui's 1 is not a fallback and must stay verbatim: it is a member of
+    # refs.py's UPSTREAM_SHIPPED_PATHS, the set of the upstream author's own
+    # paths that vsnp_gui RECOGNIZES IN ORDER TO REMOVE them from a fresh
+    # install's reference registry. Matching is by exact string, so rewriting it
+    # to something portable would stop it matching and put the author's paths
+    # back in every new Reference Editor. A budget with a reason is the intended
+    # escape hatch here (see mhc_gui); a permanently-red guard just teaches
+    # people to ignore the suite's own signal.
+    _OTHER_HOME_BUDGET = {"mhc_gui": 6, "vsnp_gui": 1}
 
     @staticmethod
     def _count_site_paths(tool_dir):
@@ -594,6 +603,11 @@ class StateFileTests(unittest.TestCase):
         files = itertools.chain((tool_dir / "backend/app").glob("*.py"),
                                (tool_dir / "bin").glob("*.py"))
         for f in files:
+            # A tool's own tests are not deployed paths: their fixtures say
+            # "/home/someone/..." precisely BECAUSE it is nobody's real home,
+            # and counting those diluted the signal this budget exists to give.
+            if f.name.startswith("test_") or f.name.endswith("_test.py"):
+                continue
             try:
                 src = f.read_text(encoding="utf-8", errors="replace")
             except OSError:

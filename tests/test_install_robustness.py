@@ -277,6 +277,64 @@ class FreshRebuildTests(unittest.TestCase):
             self.assertNotIn("unknown option", r.stdout + r.stderr, flag)
 
 
+class LaunchPathTests(unittest.TestCase):
+    """The env that provides a tool's python must provide its PATH.
+
+    The 2026-08-21 macOS failure, third of the same family and the one that
+    actually stopped analyses: `launch()` took its python from
+    resolve_env_prefix (the checkout env) and its PATH from tool_launch's
+    PATH_PREPEND, which had resolved a LEGACY personal conda env of the same
+    manifest name. kraken2 — a perl script shebanged `#!/usr/bin/env perl` —
+    was found correctly by absolute path and then executed by the legacy env's
+    perl, which loaded that env's arm64 perl modules into an x86_64 interpreter:
+
+        Can't load '.../envs/kraken_id_parse/.../Cwd.bundle': (mach-o file, but
+        is an incompatible architecture (have 'arm64', need 'x86_64'))
+
+    Every pre-flight check passed — they all name absolute paths — and doctor
+    was green, because nothing graded the PATH the tool would actually launch
+    with.
+    """
+
+    def _merge(self, envbin, prepend):
+        r = sh(f'''
+          eval "$(sed -n '/^merge_launch_path()/,/^}}/p' "{ROOT}/bin/install-local.sh")"
+          merge_launch_path "{envbin}" "{prepend}"
+        ''')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return r.stdout.strip()
+
+    def test_the_launch_env_bin_always_comes_first(self):
+        # tool_launch pointing at a different env must not displace it.
+        got = self._merge("/checkouts/kraken_id_parse_gui/env/bin",
+                          "/home/miniconda3/envs/kraken_id_parse/bin")
+        self.assertEqual(
+            got, "/checkouts/kraken_id_parse_gui/env/bin:"
+                 "/home/miniconda3/envs/kraken_id_parse/bin")
+        self.assertTrue(got.startswith("/checkouts/kraken_id_parse_gui/env/bin"),
+                        "python and PATH must come from the same env")
+
+    def test_vendored_asset_dirs_are_kept_after_the_env(self):
+        # ksnp_gui's kSNP4 payload lives outside the env and must stay on PATH —
+        # this is what PATH_PREPEND is legitimately for.
+        got = self._merge("/checkouts/ksnp_gui/env/bin",
+                          "/checkouts/ksnp_gui/env/bin:/vendor/kSNP4-bin")
+        self.assertEqual(got, "/checkouts/ksnp_gui/env/bin:/vendor/kSNP4-bin")
+
+    def test_the_env_bin_is_not_duplicated(self):
+        got = self._merge("/e/bin", "/e/bin")
+        self.assertEqual(got, "/e/bin")
+
+    def test_no_prepend_is_just_the_env_bin(self):
+        self.assertEqual(self._merge("/e/bin", ""), "/e/bin")
+
+    def test_empty_segments_are_dropped(self):
+        # An empty PATH entry means "the current directory" to the shell —
+        # never something a tool launch should introduce.
+        self.assertEqual(self._merge("/e/bin", "::/vendor/bin:"),
+                         "/e/bin:/vendor/bin")
+
+
 class FreshGateTests(unittest.TestCase):
     """generic_build under --fresh must never no-op on an adoptable external env.
 

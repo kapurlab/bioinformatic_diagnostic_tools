@@ -1285,6 +1285,40 @@ resolve_python() {
   die "no usable python env for ${TOOL} (looked for ${DIR}/env and conda env '${ENV_NAME}')"
 }
 
+# merge_launch_path ENVBIN PREPEND — the PATH prefix a tool launches with.
+#
+# THE INVARIANT: the env that provides the tool's python must also provide its
+# PATH. This used to be "PATH_PREPEND, or ENVBIN if there is none", which let
+# the two come from DIFFERENT envs. tool_launch resolves an env its own way
+# (sandbox -> shared sibling -> checkout -> a personal conda env named by the
+# manifest), resolve_env_prefix resolves it another, and on a machine with BOTH
+# a checkout env and a legacy personal env of the same name they disagree. The
+# tool then runs python from env A with PATH from env B, and everything that
+# resolves through PATH — every `#!/usr/bin/env <interp>` shebang — silently
+# comes from the wrong environment.
+#
+# Not hypothetical (2026-08-21, macOS). kraken2 is a perl script shebanged
+# `#!/usr/bin/env perl`. Launched with the checkout env's python but the legacy
+# env's bin first on PATH, the SCRIPT resolved correctly (the tool finds it
+# relative to its own python) and was then executed by the LEGACY env's perl,
+# which loaded that env's perl modules and died on an architecture mismatch:
+#
+#   Can't load '.../envs/kraken_id_parse/.../Cwd.bundle' ... (have 'arm64',
+#   need 'x86_64') ... Compilation failed in require at <checkout>/env/bin/kraken2
+#
+# Every pre-flight check passed — each names an absolute path — and no analysis
+# could start. So: ENVBIN always first, and PATH_PREPEND's other entries (the
+# vendored asset dirs, e.g. ksnp_gui's kSNP4-bin) after it.
+merge_launch_path() {
+  local envbin="$1" prepend="${2:-}" out="$1" p
+  local IFS=:
+  for p in ${prepend}; do
+    [[ -z "${p}" || "${p}" == "${envbin}" ]] && continue
+    out="${out}:${p}"
+  done
+  printf '%s' "${out}"
+}
+
 launch() {
   local py envbin; py="$(resolve_python)"; envbin="$(dirname "${py}")"
   # Universal self-heal: ensure java resolves for any tool that needs it (covers
@@ -1364,7 +1398,18 @@ PY
   _pp="$(printf '%s' "${_tl_show}" | "${PYBIN}" -c 'import json,sys
 try: print(json.load(sys.stdin)["env_overrides"].get("PATH_PREPEND",""))
 except Exception: print("")' 2>/dev/null)"
-  [[ -n "${_pp}" ]] && launch_path="${_pp}"
+  launch_path="$(merge_launch_path "${envbin}" "${_pp}")"
+  # A disagreement between the two resolvers is worth saying out loud: it means
+  # tool_launch would run this tool from an env other than the one being
+  # launched, and the next person to debug PATH here should not have to
+  # rediscover that. The launch itself is already safe (envbin is first).
+  if [[ -n "${_pp}" && ":${_pp}:" != *":${envbin}:"* ]]; then
+    warn "${TOOL}: tool_launch resolves a different env than this launch."
+    info "  launching with: ${envbin}"
+    info "  tool_launch says: ${_pp}"
+    info "  Using this env's bin FIRST, so its scripts run under its own interpreters."
+    info "  Check for a stale duplicate env:  bin/bdtools doctor ${TOOL}"
+  fi
 
   # Hand the tool this deployment's resolved roots, exactly as the proxy dashboard
   # does through tool_launch. Without this, `bdtools local` (and the legacy

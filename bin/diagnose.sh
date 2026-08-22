@@ -160,7 +160,38 @@ PY
       else
         echo "    perl loads Cwd (native module): FAILS -> $("${e}/bin/perl" -MCwd -e 1 2>&1 | head -2 | tr '\n' ' ')"
       fi
-      if [[ "$(uname -s)" == "Darwin" ]] && file -b "${e}/bin/perl" 2>/dev/null | grep -q universal; then
+      # THE CHAIN THAT MATTERS. The GUI does not run perl from a shell — a
+    # python process spawns it. If a spawn picks a different slice than an
+    # interactive shell does, that difference IS the bug, and only running
+    # both shows it.
+    if [[ -x "${e}/bin/python" && -x "${e}/bin/perl" ]]; then
+      if PATH="${e}/bin:${PATH}" "${e}/bin/python" -c \
+           'import subprocess,sys; sys.exit(subprocess.run(["perl","-MCwd","-e","1"]).returncode)' \
+           >/dev/null 2>&1; then
+        echo "    python -> perl -> Cwd (the GUI's chain): OK"
+      else
+        echo "    python -> perl -> Cwd (the GUI's chain): FAILS  <-- a spawn picks a different slice than the shell does"
+      fi
+      # Test the pin the LAUNCHER would actually apply for this env, not a
+      # guess: on an osx-64 env the right pin is -x86_64, and testing -arm64
+      # there fails for a reason that has nothing to do with the bug.
+      _sub="$(env_conda_subdir "${e}")"
+      case "${_sub}" in
+        osx-arm64) _pin=arm64;;
+        osx-64)    _pin=x86_64;;
+        *)         _pin="";;
+      esac
+      if [[ -n "${_pin}" && "$(uname -s)" == "Darwin" && -x /usr/bin/arch ]]; then
+        if PATH="${e}/bin:${PATH}" /usr/bin/arch -"${_pin}" "${e}/bin/python" -c \
+             'import subprocess,sys; sys.exit(subprocess.run(["perl","-MCwd","-e","1"]).returncode)' \
+             >/dev/null 2>&1; then
+          echo "    same chain under 'arch -${_pin}' (this env's platform): OK  <-- pinning the launch fixes it"
+        else
+          echo "    same chain under 'arch -${_pin}' (this env's platform): FAILS <-- pinning the launch is NOT enough"
+        fi
+      fi
+    fi
+    if [[ "$(uname -s)" == "Darwin" ]] && file -b "${e}/bin/perl" 2>/dev/null | grep -q universal; then
         for a in arm64 x86_64; do
           if /usr/bin/arch -"${a}" "${e}/bin/perl" -MCwd -e 1 >/dev/null 2>&1; then
             echo "      slice ${a}: Cwd OK"
@@ -222,7 +253,15 @@ if [[ -z "${pids}" ]]; then
   echo "  (no tool backend running — start the tool, reproduce the failure, then re-run this)"
 else
   for pid in ${pids}; do
-    echo "  pid ${pid}: $(ps -o command= -p "${pid}" 2>/dev/null | cut -c1-160)"
+    cmdline="$(ps -o command= -p "${pid}" 2>/dev/null)"
+    echo "  pid ${pid}: $(printf '%s' "${cmdline}" | cut -c1-160)"
+    if [[ "$(uname -s)" == "Darwin" && "${cmdline}" != /usr/bin/arch* ]]; then
+      echo "    NOTE: this backend was NOT launched with an architecture pin."
+      echo "          Current code pins it (install-local.sh arch_prefix), so this"
+      echo "          process predates the running code — a stale backend survives"
+      echo "          Ctrl-C on the dashboard (start_new_session). Restart it:"
+      echo "            pkill -f 'uvicorn app.main:app' && bdtools dashboard"
+    fi
     ps eww -o command= -p "${pid}" 2>/dev/null | tr ' ' '\n' | grep -E '^(PATH|PERL5LIB|PYTHONPATH)=' \
       | sed 's/^/    /' | while IFS= read -r l; do
           printf '%s\n' "${l}" | sed 's/:/\n        /g'

@@ -22,6 +22,7 @@ CLI (used by tests / a bash shim):
 """
 import json
 import os
+import platform
 import shlex
 import sys
 import time
@@ -430,8 +431,9 @@ def resolve(tool, port, host="127.0.0.1"):
             if _k in env:
                 env_overrides[_k] = env[_k]
 
-    argv = [python, "-m", "uvicorn", spec["app"],
-            "--host", host, "--port", str(port), "--log-level", "info"]
+    argv = _arch_prefix(env_dir) + [python, "-m", "uvicorn", spec["app"],
+                                    "--host", host, "--port", str(port),
+                                    "--log-level", "info"]
     return {
         "tool": tool,
         "argv": argv,
@@ -443,6 +445,57 @@ def resolve(tool, port, host="127.0.0.1"):
         "dir": d,
         "warnings": warnings,
     }
+
+
+def _env_subdir(envdir):
+    """The conda platform an env was built for (majority of its packages)."""
+    counts = {}
+    try:
+        metas = os.listdir(os.path.join(envdir, "conda-meta"))
+    except OSError:
+        return ""
+    for m in metas:
+        if not m.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(envdir, "conda-meta", m)) as fh:
+                sd = json.load(fh).get("subdir", "")
+        except Exception:
+            continue
+        if sd and sd != "noarch":
+            counts[sd] = counts.get(sd, 0) + 1
+    return max(counts, key=counts.get) if counts else ""
+
+
+def _arch_prefix(env_dir):
+    """['/usr/bin/arch', '-arm64'] etc — pin this launch to the env's platform.
+
+    macOS decides which slice of a UNIVERSAL binary to run from the launching
+    process tree's inherited preference, not from anything on disk. A conda env
+    can hold a universal interpreter next to single-architecture extension
+    modules, and then that inherited preference decides whether the tool runs at
+    all. Live case (2026-08-22): an osx-arm64 kraken env whose perl was
+    universal (x86_64 + arm64) with arm64-only XS bundles — launched from a tree
+    preferring x86_64, perl took its x86_64 slice and died loading its own Cwd,
+    while the identical command from an arm64 shell worked.
+
+    Kept in lock-step with install-local.sh's arch_prefix: the proxy dashboard
+    launches through here and `bdtools local` launches through there, and two
+    launchers disagreeing about the environment is a failure mode this suite has
+    already paid for more than once.
+    """
+    if platform.system() != "Darwin" or not env_dir or env_dir == "(base)":
+        return []
+    if not os.path.exists("/usr/bin/arch"):
+        return []
+    sub = _env_subdir(env_dir)
+    if sub == "osx-arm64" and platform.machine() == "arm64":
+        return ["/usr/bin/arch", "-arm64"]
+    if sub == "osx-64":
+        # The deliberate Rosetta case; pin it too, so a universal binary there
+        # cannot pick an arm64 slice its neighbours are not built for.
+        return ["/usr/bin/arch", "-x86_64"]
+    return []
 
 
 def reproduce_command(plan):

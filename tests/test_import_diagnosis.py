@@ -562,6 +562,59 @@ class ScriptInterpreterTests(unittest.TestCase):
         self.assertIn("osx-arm64", note)
         self.assertIn("incompatible architecture", note)
 
+    def test_an_interpreter_that_is_another_envs_is_caught(self):
+        # The 2026-08-22 failure, exactly. <checkout>/env/bin/perl EXISTS, is
+        # executable, is first on PATH, and every path-based check passes — but
+        # running it prints the LEGACY env as $^X and loads that env's @INC,
+        # because the binary carries another prefix baked in. PATH cannot reach
+        # that, which is why three PATH fixes changed nothing. Only asking the
+        # interpreter where its libraries are finds it.
+        self._pkg(self.env, "python", "osx-arm64")
+        self._pkg(self.env, "perl", "osx-arm64")
+        self._script(self.env, "kraken2", "#!/usr/bin/env perl")
+        legacy = self.tmp / "miniconda3/envs/kraken_id_parse"
+        # A perl that answers with the legacy env's @INC, like the real one did.
+        fake = self.env / "bin/perl"
+        fake.write_text("#!/bin/sh\n"
+                        f'echo "{legacy}/lib/perl5/5.32/vendor_perl"\n'
+                        f'echo "{legacy}/lib/perl5/core_perl"\n')
+        fake.chmod(0o755)
+        findings = CHECK.interpreter_findings(
+            str(self.env), str(self.env / "bin"), ["kraken2"])
+        self.assertEqual(len(findings), 1, findings)
+        label, fix, note = findings[0]
+        self.assertIn("inside this env but loads its libraries from", label)
+        self.assertIn(str(legacy), label)
+        self.assertIn("--force-reinstall", fix)
+        self.assertIn("perl", fix)
+        self.assertIn("CONDA_SUBDIR=osx-arm64", fix)
+        self.assertIn("PATH cannot redirect it", note)
+
+    def test_an_interpreter_that_owns_its_libraries_is_silent(self):
+        # The healthy shape, verified against a real conda env: @INC inside the
+        # env. This must stay quiet or the check is noise.
+        self._pkg(self.env, "python", "osx-arm64")
+        self._script(self.env, "kraken2", "#!/usr/bin/env perl")
+        good = self.env / "bin/perl"
+        good.write_text("#!/bin/sh\n"
+                        f'echo "{self.env}/lib/perl5/5.32/vendor_perl"\n')
+        good.chmod(0o755)
+        self.assertEqual(
+            CHECK.interpreter_findings(str(self.env), str(self.env / "bin"),
+                                       ["kraken2"]), [])
+
+    def test_an_interpreter_that_cannot_be_probed_is_not_accused(self):
+        # No probe for this name, or the probe fails: absence of evidence is not
+        # evidence of breakage.
+        self._pkg(self.env, "python", "osx-64")
+        self._script(self.env, "tool", "#!/usr/bin/env oddterp")
+        broken = self.env / "bin/oddterp"
+        broken.write_text("#!/bin/sh\nexit 3\n")
+        broken.chmod(0o755)
+        self.assertEqual(
+            CHECK.interpreter_findings(str(self.env), str(self.env / "bin"),
+                                       ["tool"]), [])
+
     def test_a_missing_interpreter_is_reported_with_an_install(self):
         self._pkg(self.env, "python", "linux-64")
         self._script(self.env, "kraken2", "#!/usr/bin/env nosuchinterp")

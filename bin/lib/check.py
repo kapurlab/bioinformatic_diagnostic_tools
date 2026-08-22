@@ -667,6 +667,46 @@ def script_interpreter(path):
     return (parts[0], False)
 
 
+# How to ask an interpreter where IT thinks its library root is. An interpreter
+# can sit inside the env and still be another env's interpreter — see
+# interpreter_library_root.
+_LIBROOT_PROBE = {
+    "perl":    ['-e', 'print join("\n", grep { $_ ne "." } @INC)'],
+    "python":  ['-c', 'import sys; print(sys.prefix)'],
+    "python3": ['-c', 'import sys; print(sys.prefix)'],
+    "ruby":    ['-e', 'puts $LOAD_PATH'],
+}
+
+
+def interpreter_library_root(path, name):
+    """Directories an interpreter will load its libraries from, or [].
+
+    WHY ASKING IS NECESSARY. That an interpreter FILE lives inside the env says
+    nothing about which libraries it loads. A conda interpreter carries its
+    library root baked into the binary, written at install time; if the file was
+    hardlinked in from another prefix (or its prefix rewrite did not happen),
+    the binary is that other env's interpreter wearing this env's path. PATH is
+    powerless over it, and so is every check that only looks at where files are.
+
+    The live case (2026-08-22): <checkout>/env/bin/perl existed, was executable,
+    was first on PATH, and passed every check here — and `env perl` running it
+    printed the LEGACY env's perl as $^X and loaded that env's @INC. kraken2, a
+    perl script, therefore ran an x86_64 interpreter against arm64 modules and
+    died at launch, while doctor reported the tool ready.
+    """
+    probe = _LIBROOT_PROBE.get(name)
+    if not probe:
+        return []
+    try:
+        out = subprocess.run([path, *probe], capture_output=True, text=True,
+                             timeout=30)
+    except Exception:
+        return []
+    if out.returncode != 0:
+        return []
+    return [ln.strip() for ln in out.stdout.splitlines() if ln.strip()]
+
+
 def interpreter_findings(envdir, env_bin, binaries, extra_dirs=()):
     """[(label, fix, note)] for script interpreters that will not resolve inside
     this env.
@@ -737,8 +777,39 @@ def interpreter_findings(envdir, env_bin, binaries, extra_dirs=()):
                 install, None))
             continue
         real = os.path.realpath(resolved)
-        if real.startswith(os.path.realpath(envdir) + os.sep):
-            continue                      # self-contained: nothing to say
+        env_real = os.path.realpath(envdir)
+        if real.startswith(env_real + os.sep):
+            # Inside the env by PATH — but is it this env's interpreter? Ask it
+            # where its libraries are; a mis-prefixed or hardlinked-in binary
+            # answers with another prefix and no PATH fix can reach it.
+            roots = interpreter_library_root(real, name)
+            # realpath BOTH sides: an interpreter reports the paths it was
+            # configured with, and on macOS an env under /tmp or /var reports
+            # /var/... against a realpath of /private/var/... . Comparing those
+            # raw flags every healthy env behind a symlinked parent — the same
+            # cry-wolf failure the /bin/bash rule above exists to avoid.
+            real_roots = [os.path.realpath(r) for r in roots]
+            if roots and not any(r == env_real or r.startswith(env_real + os.sep)
+                                 for r in real_roots):
+                owner, chan = _packages_owning(envdir, [f"bin/{name}"]).get(
+                    f"bin/{name}", (name, ""))
+                spec = (f'"{_channel_name(chan)}/{subdir}::{owner or name}"'
+                        if subdir else (owner or name))
+                out.append((
+                    f"{who} run under {resolved}, which is inside this env but "
+                    f"loads its libraries from {roots[0]} — it is another env's "
+                    f"{name}",
+                    f'CONDA_SUBDIR={subdir} conda install -y -p "{envdir}" '
+                    f'--no-deps --force-reinstall {spec}   # give this env a '
+                    f'real {name} of its own' if subdir else
+                    f'conda install -y -p "{envdir}" --no-deps '
+                    f'--force-reinstall {spec}',
+                    f"cause: the file is in this env, so every path check passes, "
+                    f"but the binary carries another prefix baked in (hardlinked "
+                    f"in, or its prefix rewrite never happened). PATH cannot "
+                    f"redirect it: scripts shebanged '#!/usr/bin/env {name}' load "
+                    f"{roots[0]} whatever PATH says."))
+            continue
 
         target = _binary_target(real)
         arch_bad = bool(want and target and target[1] != "universal"

@@ -29,7 +29,12 @@ SKIP_TOOLS=(vsnp_gui)
 # stylesheet and uses only variables both App.css and vsnp_gui's styles.css
 # define, so unlike the Results pane it drops into vsnp_gui unchanged — and
 # "cite the tool that produced this result" has to hold for vSNP too.
-SHARED_ALL=(Citations.jsx Citations.css)
+# CopyLogButton is in the EVERY-TOOL set for the same reason Citations is: it
+# carries no stylesheet of its own (it reuses the .ghost button class every tool
+# already defines) and it answers a need every tool's log pane has — getting the
+# whole log onto the clipboard to paste into an email. vsnp_gui included, where
+# it is wired into all three of its log views.
+SHARED_ALL=(Citations.jsx Citations.css CopyLogButton.jsx)
 
 ROOT=""
 while [[ $# -gt 0 ]]; do

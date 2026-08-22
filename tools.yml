@@ -227,7 +227,20 @@ tools:
     #      died at run time. doctor now audits on-disk binary architectures
     #      against the env's platform (check.py foreign_arch_files); the
     #      remedy is the same qualified force-reinstall, naming the owner.
-    #   3. Once repaired, that machine runs this tool's env native osx-arm64 —
+    #   3. RESOLVED 2026-08-22, and the cause was none of the above. That env's
+    #      perl is a UNIVERSAL binary (x86_64 + arm64) while its XS bundles are
+    #      arm64-only. macOS picks which slice runs from the launching process
+    #      tree's inherited preference, so the same kraken2 worked from an arm64
+    #      shell and died under the dashboard, loading arm64 modules into an
+    #      x86_64 interpreter. A fat binary matches every host and every env by
+    #      construction, which is why architecture-on-disk, conda records,
+    #      library roots and PATH order all read healthy while nothing ran.
+    #      Fixed by pinning the launch to the env's platform (install-local.sh
+    #      arch_prefix / tool_launch._arch_prefix): kraken2 now classifies.
+    #      Still unexplained: which ancestor introduced the x86_64 preference —
+    #      the base python is arm64. The pin overrides it either way, and
+    #      `bdtools diagnose` now tests the spawn chain that exposed it.
+    #   4. Once repaired, that machine runs this tool's env native osx-arm64 —
     #      evidence against the installer's osx-64-under-Rosetta default (its
     #      premise: bioconda's assembler/blat toolchain lacks arm64 builds) for
     #      THIS tool's dependency set. Policy unchanged: an existing env always

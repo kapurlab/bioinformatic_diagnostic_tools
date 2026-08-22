@@ -936,6 +936,107 @@ def interpreter_findings(envdir, env_bin, binaries, extra_dirs=()):
     return out
 
 
+# A dynamic-loader failure, in the words each platform uses. These are the
+# messages that mean "the file is right there and still cannot execute" —
+# distinct from a program that ran and disliked its arguments.
+_LOADER_ERRORS = re.compile(
+    r"incompatible architecture"          # macOS: wrong slice / wrong arch
+    r"|Library not loaded"                # macOS: missing dylib
+    r"|image not found"                   # macOS: missing dylib (older wording)
+    r"|Bad CPU type"                      # macOS: no slice this host can run
+    r"|cannot open shared object file"    # Linux: missing .so
+    r"|wrong ELF class"                   # Linux: 32/64 mismatch
+    r"|Exec format error"                 # Linux/WSL: wrong-arch or wrong-OS binary
+    r"|cannot execute binary file",       # the shell's version of the same
+    re.IGNORECASE)
+
+# Arguments that make a program start up and exit immediately. Tried in order;
+# the FIRST one that produces output or a clean-ish exit is enough, because we
+# are not testing the program — only that the process can get off the ground.
+_SMOKE_ARGS = (["--version"], ["-v"], ["--help"], [])
+
+
+def _arch_pin(envdir):
+    """['/usr/bin/arch', '-arm64'] etc, matching what the launcher will use.
+
+    Doctor must probe the way production runs, or it certifies a configuration
+    nobody uses. This is the whole lesson of 2026-08-22: from a terminal every
+    binary in that env ran perfectly, while the same binaries launched by the
+    dashboard could not start, because the launching process's architecture
+    decides which slice of a universal binary runs. A check that does not pin
+    the same way the launcher pins is testing a different program.
+    """
+    if platform.system() != "Darwin" or not os.path.exists("/usr/bin/arch"):
+        return []
+    sub = env_conda_subdir(envdir)
+    if sub == "osx-arm64":
+        return ["/usr/bin/arch", "-arm64"]
+    if sub == "osx-64":
+        return ["/usr/bin/arch", "-x86_64"]
+    return []
+
+
+def loader_smoke_findings(envdir, env_bin, binaries, extra_dirs=()):
+    """[(label, fix, note)] for declared programs that cannot START.
+
+    WHY EXISTENCE IS NOT ENOUGH. Every check that came before this one asked
+    where a file is, what its bytes claim, or what the package records say. A
+    program can satisfy all three and still fail the instant it is executed —
+    a missing shared library, a wrong-architecture payload, or (the case this
+    was written for) a universal binary whose companion modules exist in only
+    one architecture. On the machine that motivated it, kraken2 was present,
+    executable, correctly resolved, in a coherent env, and could not run.
+
+    Deliberately narrow: the program is launched with a harmless flag and the
+    result is inspected ONLY for dynamic-loader errors. A program that starts
+    and complains about its arguments has passed — this is not a test of the
+    tool, it is a test that the process can exist. That narrowness is what
+    makes it safe to run against tools nobody here has argument knowledge of.
+    """
+    pin = _arch_pin(envdir)
+    env_real = os.path.realpath(envdir)
+    out = []
+    for name in binaries:
+        path = find_binary(name, env_bin, extra_dirs)
+        if not path:
+            continue                      # the existence check owns absence
+        real = os.path.realpath(path)
+        owned = real.startswith(env_real + os.sep) or any(
+            real.startswith(os.path.realpath(d) + os.sep) for d in extra_dirs if d)
+        if not owned:
+            continue                      # a system tool brings its own runtime
+        detail = ""
+        for args in _SMOKE_ARGS:
+            try:
+                res = subprocess.run(pin + [path, *args], capture_output=True,
+                                     text=True, timeout=60,
+                                     stdin=subprocess.DEVNULL)
+            except subprocess.TimeoutExpired:
+                break                     # it started; a hang is not a loader fault
+            except Exception:
+                break
+            blob = (res.stderr or "") + (res.stdout or "")
+            if _LOADER_ERRORS.search(blob):
+                detail = " ".join(blob.split())[:300]
+                break
+            if res.returncode == 0 or blob.strip():
+                detail = ""               # it started: nothing more to prove
+                break
+        if detail:
+            pinned = (" (launched as %s, the way the tool is launched)"
+                      % " ".join(pin)) if pin else ""
+            out.append((
+                f"{name} is installed but cannot start{pinned} — {detail}",
+                f'CONDA_SUBDIR={env_conda_subdir(envdir)} conda install -y -p '
+                f'"{envdir}" --no-deps --force-reinstall {name}'
+                if env_conda_subdir(envdir) else "",
+                "cause: the file exists and resolves correctly; the failure is in "
+                "loading it, so no amount of reinstalling paths or rebuilding the "
+                "env layout changes it. Reinstall the package that owns this "
+                "program for this env's platform."))
+    return out
+
+
 def resolve_asset_dirs(tool, tool_dir, asset_dirs):
     """Resolve a spec's `asset_dirs` the same way the launcher builds PATH.
 
@@ -1047,7 +1148,7 @@ def check_db(tool, db, env_bin=""):
     return ok, val
 
 
-def run_checks(tool, env_py, scope, tool_dir=None):
+def run_checks(tool, env_py, scope, tool_dir=None, deep=False):
     """Return (status, lines, issues, notes). status: 'ok'|'issues'|'skip'.
     lines: pretty (symbol, text, fix-or-None) tuples. issues: [{label, fix}]
     (fixable problems). notes: [str] (platform limits, and context explaining a
@@ -1234,6 +1335,19 @@ def run_checks(tool, env_py, scope, tool_dir=None):
     if not interp_bad and spec.get("binaries"):
         lines.append((OK, "script interpreters resolve inside this env", None))
 
+    # Can each declared program actually START? Runs at install time (scope
+    # "env") and on demand (--deep), not on every routine doctor: it launches
+    # every binary, which costs seconds. Install time is the right default —
+    # that is where a fresh machine should discover it cannot run, instead of
+    # discovering it mid-analysis weeks later.
+    if deep or scope == "env":
+        for label, fix, why in loader_smoke_findings(
+                envdir, env_bin, spec.get("binaries", []), found_assets):
+            lines.append((BAD, label, fix or default_fix))
+            issues.append({"label": label, "fix": fix or default_fix})
+            lines.append((SKIP, why, None))
+            notes.append(why)
+
     optional_missing = [
         b for b in spec.get("optional_binaries", [])
         if not has_binary(b, env_bin, found_assets)
@@ -1312,11 +1426,14 @@ def main():
     ap.add_argument("--dir", required=True)
     ap.add_argument("--python", default="")
     ap.add_argument("--scope", choices=["env", "all"], default="all")
+    ap.add_argument("--deep", action="store_true",
+                    help="also launch each program to prove it can start")
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args()
 
     status, lines, issues, notes = run_checks(
-        args.tool, args.python, args.scope, tool_dir=args.dir)
+        args.tool, args.python, args.scope, tool_dir=args.dir,
+        deep=args.deep)
     lines = [(sym, text, absolute_fix(fix)) for sym, text, fix in lines]
     for iss in issues:
         iss["fix"] = absolute_fix(iss.get("fix", ""))

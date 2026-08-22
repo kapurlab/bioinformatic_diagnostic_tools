@@ -70,6 +70,23 @@ echo "tools:         ${TOOLS[*]:-none}"
 
 sec "HOST"
 echo "uname:      $(uname -a)"
+# Is THIS process translated? On Apple Silicon, a process running under Rosetta
+# reports x86_64 from uname -m, and — the part that matters — every universal
+# binary it launches inherits a preference for the x86_64 slice. That is how an
+# arm64 env's tool ends up running its Intel half, and it is invisible unless
+# asked about directly (2026-08-22).
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  _tr="$(sysctl -n sysctl.proc_translated 2>/dev/null || echo 0)"
+  _native="$(sysctl -n hw.optional.arm64 2>/dev/null || echo 0)"
+  if [[ "${_tr}" == "1" ]]; then
+    echo "TRANSLATED: YES — this shell runs under Rosetta. Universal binaries it"
+    echo "            launches prefer their x86_64 slice. Tools are launched with"
+    echo "            an explicit arch pin so this cannot decide for them."
+  else
+    echo "translated: no (this process runs natively)"
+  fi
+  echo "apple silicon: $([[ "${_native}" == "1" ]] && echo yes || echo no)"
+fi
 echo "arch:       $(uname -m)   host conda subdir: $(host_conda_subdir)"
 [[ "$(uname -s)" == "Darwin" ]] && {
   echo "macOS:      $(sw_vers -productVersion 2>/dev/null)"
@@ -269,8 +286,13 @@ else
   done
 fi
 
-sec "DOCTOR"
-"${KT_BIN_DIR}/doctor.sh" "${TOOLS[@]}" 2>&1 || true
+sec "DOCTOR (deep: every program is launched to prove it can start)"
+for _t in "${TOOLS[@]}"; do
+  _d="$(tool_dir "${_t}")"
+  _py="$(tool_env_python "${_d}" "$(manifest_get "${_t}" env 2>/dev/null || true)" "${_t}")"
+  "${PYBIN}" "${KT_BIN_DIR}/lib/check.py" --tool "${_t}" --dir "${_d}" \
+    --python "${_py}" --scope all --deep 2>&1 || true
+done
 
 hr
 echo "Report written to: ${OUT}"

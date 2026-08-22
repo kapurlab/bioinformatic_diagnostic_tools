@@ -30,6 +30,7 @@ These tests build a real three-package chain on disk and run the real probe
 through a real interpreter.
 """
 import os
+import platform
 import shutil
 import subprocess
 import sys
@@ -761,6 +762,85 @@ class ScriptInterpreterTests(unittest.TestCase):
         labels = " | ".join(i["label"] for i in issues)
         self.assertIn("OUTSIDE this env", labels)
         self.assertIn("perl", " | ".join(i.get("fix", "") for i in issues))
+
+
+class LoaderSmokeTests(unittest.TestCase):
+    """A declared program must be able to START, not merely exist.
+
+    Everything before this check asked where a file is, what its bytes claim,
+    or what conda recorded. On 2026-08-22 a tool passed all of that and could
+    not run: kraken2 was present, executable, correctly resolved, in a coherent
+    env, and died the instant it launched because its interpreter loaded
+    modules of another architecture. The only check that can see that is
+    launching the thing.
+    """
+
+    MAC_ARCH = ("dyld[123]: Library not loaded: @rpath/libssl.3.dylib\n"
+                "Reason: tried: '/e/lib/libssl.3.dylib' (mach-o file, but is an "
+                "incompatible architecture (have 'arm64', need 'x86_64'))")
+    LINUX_SO = "blastn: error while loading shared libraries: libidn.so.11: cannot open shared object file: No such file or directory"
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.env = self.tmp / "env"
+        (self.env / "bin").mkdir(parents=True)
+        (self.env / "conda-meta").mkdir()
+
+    def _prog(self, name, body):
+        p = self.env / "bin" / name
+        p.write_text("#!/bin/sh\n" + body)
+        p.chmod(0o755)
+        return p
+
+    def _find(self, names):
+        return CHECK.loader_smoke_findings(
+            str(self.env), str(self.env / "bin"), names)
+
+    def test_a_loader_failure_is_caught_and_quoted(self):
+        self._prog("kraken2", f'echo "{self.MAC_ARCH}" >&2\nexit 2\n')
+        found = self._find(["kraken2"])
+        self.assertEqual(len(found), 1, found)
+        label, _fix, note = found[0]
+        self.assertIn("cannot start", label)
+        self.assertIn("incompatible architecture", label)
+        self.assertIn("the failure is in loading it", note)
+
+    def test_a_linux_missing_library_is_caught_too(self):
+        # Nothing about this class is macOS-specific: the same check must hold
+        # on Linux and WSL, where the wording differs and the fault does not.
+        self._prog("blastn", f'echo "{self.LINUX_SO}" >&2\nexit 127\n')
+        self.assertEqual(len(self._find(["blastn"])), 1)
+
+    def test_a_program_that_merely_dislikes_its_arguments_passes(self):
+        # The narrowness that makes this safe to run against tools whose
+        # arguments nobody here knows: only loader errors fail.
+        self._prog("picard", 'echo "USAGE: picard <command>" >&2\nexit 1\n')
+        self.assertEqual(self._find(["picard"]), [])
+
+    def test_a_healthy_program_passes(self):
+        self._prog("samtools", 'echo "samtools 1.20"\n')
+        self.assertEqual(self._find(["samtools"]), [])
+
+    def test_a_program_outside_the_env_is_not_judged(self):
+        # A system tool brings its own runtime and is not this env's business.
+        self.assertEqual(self._find(["sh"]), [])
+
+    def test_an_absent_program_is_left_to_the_existence_check(self):
+        self.assertEqual(self._find(["nosuchprogram"]), [])
+
+    def test_the_probe_uses_the_launchers_architecture_pin(self):
+        # Doctor must probe the way production launches, or it certifies a
+        # configuration nobody uses — that mismatch is exactly why a terminal
+        # said healthy while the dashboard could not start the same binary.
+        import json as _json
+        (self.env / "conda-meta" / "python-1.0-h0.json").write_text(_json.dumps(
+            {"name": "python", "version": "1.0", "subdir": "osx-arm64"}))
+        pin = CHECK._arch_pin(str(self.env))
+        if platform.system() == "Darwin":
+            self.assertEqual(pin, ["/usr/bin/arch", "-arm64"])
+        else:
+            self.assertEqual(pin, [], "no arch pinning off macOS")
 
 
 @unittest.skipUnless(BASH, "bash is required")

@@ -489,7 +489,11 @@ def _arch_prefix(env_dir):
     if not os.path.exists("/usr/bin/arch"):
         return []
     sub = _env_subdir(env_dir)
-    if sub == "osx-arm64" and platform.machine() == "arm64":
+    # No host check: platform.machine() returns "x86_64" inside a translated
+    # process, so gating on it switches the pin OFF in the very case it exists
+    # for — a Rosetta-translated dashboard launching an arm64 env's tool. An
+    # osx-arm64 env implies an arm64 host; nothing else needs asserting.
+    if sub == "osx-arm64":
         return ["/usr/bin/arch", "-arm64"]
     if sub == "osx-64":
         # The deliberate Rosetta case; pin it too, so a universal binary there

@@ -1344,9 +1344,15 @@ arch_prefix() {
   [[ "$(uname -s)" == "Darwin" ]] || return 0
   [[ -x /usr/bin/arch ]] || return 0
   sub="$(env_conda_subdir "${envdir}" 2>/dev/null || true)"
-  host="$(uname -m)"
+  # NO host-architecture guard. `uname -m` reports x86_64 inside a translated
+  # process, so a guard like [[ "$(uname -m)" == arm64 ]] is FALSE exactly when
+  # the caller is the Rosetta process whose preference we need to override —
+  # it disabled the pin in the only case that needed it (2026-08-22: `bdtools
+  # local` from an arm64 shell pinned and worked, the dashboard did not pin and
+  # failed, same env). Nothing is lost by dropping it: an osx-arm64 env can only
+  # exist on an arm64 host, and if it somehow does not, `arch` says so plainly.
   case "${sub}" in
-    osx-arm64) [[ "${host}" == "arm64" ]] && printf '%s' "/usr/bin/arch -arm64";;
+    osx-arm64) printf '%s' "/usr/bin/arch -arm64";;
     # An osx-64 env on Apple Silicon is the deliberate Rosetta case
     # (ensure_conda_subdir rule 2); pin it too, so a universal binary there
     # cannot pick an arm64 slice its neighbours are not built for.

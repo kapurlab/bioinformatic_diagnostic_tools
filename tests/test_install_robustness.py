@@ -335,6 +335,85 @@ class LaunchPathTests(unittest.TestCase):
                          "/e/bin:/vendor/bin")
 
 
+class ArchPinTests(unittest.TestCase):
+    """A launch states the env's architecture, and says so even under Rosetta.
+
+    macOS picks which slice of a UNIVERSAL binary to run from the launching
+    process tree's inherited preference. An osx-arm64 env holding a universal
+    perl with arm64-only XS modules therefore runs or dies depending on who
+    started it — the 2026-08-22 failure.
+
+    The subtle half, and why this test exists: the first version guarded the
+    arm64 pin with `[[ "$(uname -m)" == arm64 ]]`. Inside a translated process
+    `uname -m` reports x86_64, so the guard was FALSE exactly when the caller
+    was the Rosetta process whose preference needed overriding. Observed
+    directly: `bdtools local` from an arm64 shell pinned and the tool worked,
+    while the dashboard did not pin and the same env failed the same way it had
+    all week.
+    """
+
+    def _prefix(self, records, fake_uname=False):
+        with tempfile.TemporaryDirectory() as td:
+            envdir = Path(td) / "env"
+            meta(envdir, records)
+            fake = ('uname() { if [[ "${1:-}" == "-m" ]]; then echo x86_64; '
+                    'else echo Darwin; fi; }\n') if fake_uname else ""
+            r = sh(
+                "eval \"$(sed -n '/^arch_prefix()/,/^}/p' "
+                f'"{ROOT}/bin/install-local.sh")"\n'
+                f"{fake}"
+                f'arch_prefix "{envdir}"; echo')
+            self.assertEqual(r.returncode, 0, r.stderr)
+            return r.stdout.strip()
+
+    @unittest.skipUnless(os.uname().sysname == "Darwin", "macOS-only behaviour")
+    def test_an_arm64_env_is_pinned_to_arm64(self):
+        self.assertEqual(self._prefix([("python", "osx-arm64")]),
+                         "/usr/bin/arch -arm64")
+
+    @unittest.skipUnless(os.uname().sysname == "Darwin", "macOS-only behaviour")
+    def test_the_pin_survives_a_translated_caller(self):
+        # THE REGRESSION. A translated caller sees x86_64 from uname -m; the pin
+        # must still be emitted, or it vanishes precisely when it is needed.
+        self.assertEqual(self._prefix([("python", "osx-arm64")], fake_uname=True),
+                         "/usr/bin/arch -arm64")
+
+    @unittest.skipUnless(os.uname().sysname == "Darwin", "macOS-only behaviour")
+    def test_a_rosetta_env_is_pinned_to_x86_64(self):
+        # The deliberate osx-64-under-Rosetta env (ensure_conda_subdir rule 2).
+        self.assertEqual(self._prefix([("python", "osx-64")]),
+                         "/usr/bin/arch -x86_64")
+
+    @unittest.skipUnless(os.uname().sysname == "Darwin", "macOS-only behaviour")
+    def test_an_env_with_no_recorded_platform_is_not_pinned(self):
+        # noarch-only: nothing to assert, so assert nothing.
+        self.assertEqual(self._prefix([("pyyaml", "noarch")]), "")
+
+    @unittest.skipUnless(os.uname().sysname == "Darwin", "macOS-only behaviour")
+    def test_the_two_launchers_agree(self):
+        # bdtools local goes through install-local.sh; the proxy dashboard goes
+        # through tool_launch. They must pin identically — two launchers
+        # disagreeing about a tool's environment is a bug this suite has now
+        # paid for three separate times.
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "tool_launch", ROOT / "bin/lib/tool_launch.py")
+        tl = importlib.util.module_from_spec(spec)
+        try:
+            spec.loader.exec_module(tl)
+        except Exception as exc:
+            self.skipTest(f"tool_launch not importable here: {exc}")
+        with tempfile.TemporaryDirectory() as td:
+            for records, expected in (
+                    ([("python", "osx-arm64")], "/usr/bin/arch -arm64"),
+                    ([("python", "osx-64")], "/usr/bin/arch -x86_64")):
+                envdir = Path(td) / ("env-" + records[0][1])
+                meta(envdir, records)
+                self.assertEqual(" ".join(tl._arch_prefix(str(envdir))), expected,
+                                 "tool_launch and install-local must agree")
+                self.assertEqual(self._prefix(records), expected)
+
+
 class FreshGateTests(unittest.TestCase):
     """generic_build under --fresh must never no-op on an adoptable external env.
 

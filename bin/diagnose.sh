@@ -153,6 +153,22 @@ PY
     if [[ -x "${e}/bin/perl" ]]; then
       echo "    perl reports \$^X: $("${e}/bin/perl" -e 'print $^X' 2>&1 | head -1)"
       echo "    perl reports @INC[0]: $("${e}/bin/perl" -e 'print((grep { $_ ne "." } @INC)[0])' 2>&1 | head -1)"
+      # EXECUTE it: a universal binary matches every host on disk, so only
+      # loading a native module shows which slice actually runs.
+      if "${e}/bin/perl" -MCwd -e 1 >/dev/null 2>&1; then
+        echo "    perl loads Cwd (native module): OK"
+      else
+        echo "    perl loads Cwd (native module): FAILS -> $("${e}/bin/perl" -MCwd -e 1 2>&1 | head -2 | tr '\n' ' ')"
+      fi
+      if [[ "$(uname -s)" == "Darwin" ]] && file -b "${e}/bin/perl" 2>/dev/null | grep -q universal; then
+        for a in arm64 x86_64; do
+          if /usr/bin/arch -"${a}" "${e}/bin/perl" -MCwd -e 1 >/dev/null 2>&1; then
+            echo "      slice ${a}: Cwd OK"
+          else
+            echo "      slice ${a}: Cwd FAILS  <-- this slice cannot run this env's modules"
+          fi
+        done
+      fi
     fi
     if [[ -x "${e}/bin/python" ]]; then
       echo "    python sys.prefix: $("${e}/bin/python" -c 'import sys; print(sys.prefix)' 2>&1 | head -1)"

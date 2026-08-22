@@ -447,6 +447,31 @@ _ELF_MACHINES = {0x03: "i386", 0x3E: "x86_64", 0xB7: "arm64", 0x28: "arm"}
 _MACHO_CPUS = {0x00000007: "i386", 0x01000007: "x86_64", 0x0100000C: "arm64"}
 
 
+def _macho_slices(path):
+    """Architecture names inside a Mach-O file: [] for non-fat, one per slice
+    for a universal binary. A fat file matches every host, which is exactly why
+    it can hide a runtime mismatch — see interpreter_smoke_test."""
+    import struct
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(8)
+            if head[:4] != _MACHO_FAT:
+                return []
+            n = struct.unpack(">I", head[4:8])[0]
+            if not 0 < n < 32:
+                return []
+            names = []
+            for _ in range(n):
+                rec = fh.read(20)
+                if len(rec) < 20:
+                    break
+                cpu = struct.unpack(">i", rec[0:4])[0] & 0xFFFFFFFF
+                names.append(_MACHO_CPUS.get(cpu, "0x%x" % cpu))
+            return names
+    except OSError:
+        return []
+
+
 def _binary_target(path):
     """(os, arch) a binary targets, or None if not a recognised executable."""
     import struct
@@ -707,6 +732,47 @@ def interpreter_library_root(path, name):
     return [ln.strip() for ln in out.stdout.splitlines() if ln.strip()]
 
 
+# A smoke test per interpreter: load a NATIVE (compiled) module that ships with
+# it. Not a formality — see interpreter_smoke_test.
+_SMOKE_TEST = {
+    "perl": (["-MCwd", "-e", "1"], "Cwd"),
+    "python": (["-c", "import ssl, zlib"], "ssl/zlib"),
+    "python3": (["-c", "import ssl, zlib"], "ssl/zlib"),
+}
+
+
+def interpreter_smoke_test(path, name):
+    """(error, module) if the interpreter cannot load its own native module.
+
+    WHY EXECUTION IS THE ONLY HONEST TEST. Every check above reasons about
+    files: where they are, what architecture the bytes claim, what the records
+    say. A universal binary defeats all of it — it contains BOTH architectures,
+    so it matches any host and any env, and macOS decides which slice actually
+    runs from the process tree's inherited preference. That decision is invisible
+    on disk.
+
+    The 2026-08-22 case: an osx-arm64 env whose perl was universal (x86_64 +
+    arm64) while its XS bundles were arm64-only. Run from an arm64 shell it was
+    perfect; run under a tree preferring x86_64 it died loading its own Cwd. The
+    file checks could not see it, because nothing about the FILES was wrong.
+    Loading a native module through the interpreter reproduces it in
+    milliseconds.
+    """
+    probe = _SMOKE_TEST.get(name)
+    if not probe:
+        return None, None
+    args, module = probe
+    try:
+        out = subprocess.run([path, *args], capture_output=True, text=True,
+                             timeout=60)
+    except Exception:
+        return None, None
+    if out.returncode == 0:
+        return None, None
+    err = " ".join((out.stderr or out.stdout or "").split())[:400]
+    return (err or "exited %d with no message" % out.returncode), module
+
+
 def interpreter_findings(envdir, env_bin, binaries, extra_dirs=()):
     """[(label, fix, note)] for script interpreters that will not resolve inside
     this env.
@@ -788,6 +854,22 @@ def interpreter_findings(envdir, env_bin, binaries, extra_dirs=()):
             # /var/... against a realpath of /private/var/... . Comparing those
             # raw flags every healthy env behind a symlinked parent — the same
             # cry-wolf failure the /bin/bash rule above exists to avoid.
+            smoke_err, smoke_mod = interpreter_smoke_test(real, name)
+            if smoke_err:
+                arches = _macho_slices(real)
+                extra = ""
+                if len(arches) > 1:
+                    extra = (f" It is a universal binary ({', '.join(arches)}), so "
+                             f"which slice runs is decided by the process it is "
+                             f"launched from — not by anything on disk.")
+                out.append((
+                    f"{who} cannot run: {resolved} fails to load its own "
+                    f"{smoke_mod} — {smoke_err}",
+                    f"bin/bdtools install {os.path.basename(os.path.dirname(envdir))} --fresh",
+                    f"cause: the interpreter executes but cannot load a native "
+                    f"module that ships with it, so every script above dies at "
+                    f"startup.{extra}"))
+                continue
             real_roots = [os.path.realpath(r) for r in roots]
             if roots and not any(r == env_real or r.startswith(env_real + os.sep)
                                  for r in real_roots):

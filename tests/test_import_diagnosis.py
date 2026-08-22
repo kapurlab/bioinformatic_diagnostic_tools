@@ -615,6 +615,63 @@ class ScriptInterpreterTests(unittest.TestCase):
             CHECK.interpreter_findings(str(self.env), str(self.env / "bin"),
                                        ["tool"]), [])
 
+    def test_an_interpreter_that_cannot_load_its_own_module_is_caught(self):
+        # The 2026-08-22 root cause. Nothing about the FILES was wrong: the env
+        # was one healthy osx-arm64 env, every path resolved into it, and its
+        # perl was a universal binary — which matches every host and every env
+        # by construction. Its XS bundles were arm64-only, so when the x86_64
+        # slice ran (macOS picks the slice from the launching process tree, not
+        # from disk) perl died loading its own Cwd. Only executing it can see
+        # that.
+        self._pkg(self.env, "python", "osx-arm64")
+        self._pkg(self.env, "perl", "osx-arm64")
+        self._script(self.env, "kraken2", "#!/usr/bin/env perl")
+        broken = self.env / "bin/perl"
+        broken.write_text(
+            "#!/bin/sh\n"
+            'if [ "$1" = "-MCwd" ]; then\n'
+            "  echo \"Can't load '.../auto/Cwd/Cwd.bundle' for module Cwd: \"\n"
+            '  echo "(mach-o file, but is an incompatible architecture '
+            '(have arm64, need x86_64))" >&2\n'
+            "  exit 2\n"
+            "fi\n"
+            f'echo "{self.env}/lib/perl5/5.32/vendor_perl"\n')
+        broken.chmod(0o755)
+        findings = CHECK.interpreter_findings(
+            str(self.env), str(self.env / "bin"), ["kraken2"])
+        self.assertEqual(len(findings), 1, findings)
+        label, fix, note = findings[0]
+        self.assertIn("cannot run", label)
+        self.assertIn("Cwd", label)
+        self.assertIn("incompatible architecture", label)
+        self.assertIn("dies at startup", note)
+
+    def test_a_universal_interpreter_is_named_as_such(self):
+        # The slice that runs is not visible on disk, so when the smoke test
+        # fails on a fat binary the report must say so — otherwise the reader
+        # goes hunting for a wrong file, which is what cost four rounds.
+        fat = self.env / "bin/perl"
+        # A fat header declaring x86_64 + arm64, enough for _macho_slices.
+        import struct
+        hdr = struct.pack(">II", 0xcafebabe, 2)
+        for cpu in (0x01000007, 0x0100000C):
+            hdr += struct.pack(">iiIII", cpu, 3, 0, 0, 0)
+        fat.write_bytes(hdr)
+        self.assertEqual(CHECK._macho_slices(str(fat)), ["x86_64", "arm64"])
+
+    def test_a_healthy_interpreter_passes_its_smoke_test(self):
+        # perl that loads Cwd fine must stay silent, or the check is noise.
+        self._pkg(self.env, "python", "osx-arm64")
+        self._script(self.env, "kraken2", "#!/usr/bin/env perl")
+        good = self.env / "bin/perl"
+        good.write_text("#!/bin/sh\n"
+                        'if [ "$1" = "-MCwd" ]; then exit 0; fi\n'
+                        f'echo "{self.env}/lib/perl5/5.32/vendor_perl"\n')
+        good.chmod(0o755)
+        self.assertEqual(
+            CHECK.interpreter_findings(str(self.env), str(self.env / "bin"),
+                                       ["kraken2"]), [])
+
     def test_a_missing_interpreter_is_reported_with_an_install(self):
         self._pkg(self.env, "python", "linux-64")
         self._script(self.env, "kraken2", "#!/usr/bin/env nosuchinterp")

@@ -1319,6 +1319,42 @@ merge_launch_path() {
   printf '%s' "${out}"
 }
 
+# arch_prefix ENVDIR — the `arch` command that pins this launch to the env's
+# platform, as an array (empty when there is nothing to pin).
+#
+# WHY A PROCESS NEEDS AN ARCHITECTURE, not just a PATH. macOS picks which slice
+# of a UNIVERSAL binary to run from the architecture preference it inherits down
+# the process tree. A conda env can legitimately contain a universal interpreter
+# alongside single-architecture extension modules — and then the slice decides
+# whether the tool runs. The 2026-08-22 case: an osx-arm64 kraken env whose perl
+# was universal (x86_64 + arm64) while its XS bundles were arm64-only. Launched
+# from a tree preferring x86_64, perl ran its x86_64 slice and died loading its
+# own modules:
+#
+#   Can't load '.../auto/Cwd/Cwd.bundle' ... (mach-o file, but is an
+#   incompatible architecture (have 'arm64', need 'x86_64'))
+#
+# The same command from an arm64 shell worked, which is what made it look like a
+# PATH problem for four rounds. It never was: every path resolved correctly and
+# the ONE env was healthy. The env's recorded platform is the authority on how
+# its binaries must run, so state it at launch instead of inheriting whatever
+# the caller happened to be.
+arch_prefix() {
+  local envdir="${1:-}" sub host
+  [[ "$(uname -s)" == "Darwin" ]] || return 0
+  [[ -x /usr/bin/arch ]] || return 0
+  sub="$(env_conda_subdir "${envdir}" 2>/dev/null || true)"
+  host="$(uname -m)"
+  case "${sub}" in
+    osx-arm64) [[ "${host}" == "arm64" ]] && printf '%s' "/usr/bin/arch -arm64";;
+    # An osx-64 env on Apple Silicon is the deliberate Rosetta case
+    # (ensure_conda_subdir rule 2); pin it too, so a universal binary there
+    # cannot pick an arm64 slice its neighbours are not built for.
+    osx-64)    printf '%s' "/usr/bin/arch -x86_64";;
+  esac
+  return 0
+}
+
 launch() {
   local py envbin; py="$(resolve_python)"; envbin="$(dirname "${py}")"
   # Universal self-heal: ensure java resolves for any tool that needs it (covers
@@ -1460,8 +1496,14 @@ for k in KEYS:
 
   [[ ${NO_BROWSER} -eq 1 ]] || ( sleep 2; open_url "${url}" ) &
   cd "${DIR}/backend"
+  # Pin the architecture for the whole backend tree (see arch_prefix): every
+  # analysis subprocess inherits it, so a universal binary anywhere below here
+  # picks the slice this env is actually built for.
+  local _archp; _archp="$(arch_prefix "${envbin%/bin}")"
+  local _arch_cmd=(); [[ -n "${_archp}" ]] && read -ra _arch_cmd <<< "${_archp}"
+  [[ -n "${_archp}" ]] && echo "  arch:   ${_archp} (pinned from the env's platform)"
   PATH="${launch_path}:${PATH}" PYTHONPATH="${DIR}/bin:${PYTHONPATH:-}" \
-    exec "${py}" -m uvicorn app.main:app --host 127.0.0.1 --port "${PORT}" --log-level info
+    exec ${_arch_cmd[@]+"${_arch_cmd[@]}"} "${py}" -m uvicorn app.main:app --host 127.0.0.1 --port "${PORT}" --log-level info
 }
 
 ensure_checkout

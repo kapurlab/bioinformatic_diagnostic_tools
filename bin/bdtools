@@ -26,6 +26,8 @@
 #   bdtools setup-databases [opts]      download shared reference DBs + wire the GUIs
 #   bdtools doctor  [tool ...]          check installs are runnable; print fixes
 #   bdtools fix     [tool|all]          run the repairs doctor recommends
+#   bdtools diagnose [tool ...]         dump EVERYTHING about how a tool
+#                                       resolves and runs, into one file to send
 #                   [--apply]           (preview by default; data fetches only —
 #                                        env rebuilds are proposed, never run)
 #   bdtools lint    [tool ...]          (maintainer) flag dependency drift in repos
@@ -808,6 +810,8 @@ cmd_fix() { "${KT_BIN_DIR}/fix.sh" "$@"; }
 
 cmd_doctor() { "${KT_BIN_DIR}/doctor.sh" "$@"; }
 
+cmd_diagnose() { "${KT_BIN_DIR}/diagnose.sh" "$@"; }
+
 cmd_lint() { "${KT_BIN_DIR}/lint.sh" "$@"; }
 
 cmd_make_launcher() { "${KT_BIN_DIR}/make-launcher.sh" "$@"; }
@@ -840,6 +844,7 @@ main() {
     site-init)          cmd_site_init "$@";;
     setup-databases)    cmd_setup_databases "$@";;
     doctor)             cmd_doctor "$@";;
+    diagnose)           cmd_diagnose "$@";;
     fix)                cmd_fix "$@";;
     lint)               cmd_lint "$@";;
     test)               cmd_test "$@";;

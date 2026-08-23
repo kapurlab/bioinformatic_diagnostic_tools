@@ -1166,6 +1166,10 @@ class DelegatedInstallerArchTests(unittest.TestCase):
               harden_conda_hooks() {{ :; }}
               resolve_env_prefix() {{ printf '%s' "{checkout}/env"; }}
               arch_prefix() {{ printf '%s' "{pin}"; }}
+              # build() clears a stale env prefix before delegating (a dead
+              # `ln -sfn` link fails the tool's own conda create identically);
+              # this harness lifts build() alone, so stub its collaborator.
+              _clear_partial_checkout_env() {{ :; }}
               enforce_package_pins() {{ :; }}
               enforce_env_constraints() {{ :; }}
               with_progress() {{ shift; "$@"; }}
@@ -1593,3 +1597,105 @@ class AmrfinderDatabaseTargetTests(unittest.TestCase):
         src = self.SETUP.read_text(encoding="utf-8")
         self.assertIn("KRAKEN_FILES=(taxo.k2d opts.k2d hash.k2d)", src)
         self.assertNotIn('if [[ -f "${KRAKEN_DEST}/hash.k2d" ]]; then ok', src)
+
+
+class EnvPrefixPreflightTests(unittest.TestCase):
+    """`conda env create` reports every one of these as
+
+        CondaError: Unable to create prefix directory '<...>/env'.
+        Check that you have sufficient permissions.
+
+    so the message sends people to chmod a path whose permissions are fine —
+    after the solve, twice, because the step retries. The live case (2026-08-23,
+    a lab Mac): doctor's own `ln -sfn <named env> <checkout>/env` remedy, then
+    the named conda env deleted, leaving a dangling link that `[[ -d ]]` cannot
+    see and mkdir refuses with EEXIST. Removing the repo and the env does not
+    clear it — the checkouts live in BDTOOLS_HOME.
+    """
+
+    FUNCS = ("/^_clear_partial_checkout_env()/,/^}/p;"
+             "/^_assert_env_prefix_creatable()/,/^}/p")
+
+    def run_preflight(self, tool_dir):
+        return sh(f'DIR="{tool_dir}"\n'
+                  f'eval "$(sed -n \'{self.FUNCS}\' "{ROOT}/bin/install-local.sh")"\n'
+                  '_clear_partial_checkout_env\n')
+
+    def test_a_dead_env_symlink_is_removed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tool = Path(tmp) / "tool"
+            tool.mkdir()
+            (tool / "env").symlink_to(Path(tmp) / "deleted-conda-env")
+            r = self.run_preflight(tool)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertFalse((tool / "env").is_symlink(), "dead link left in place")
+            self.assertIn("dead symlink", r.stderr + r.stdout)
+
+    def test_a_live_env_symlink_is_left_alone(self):
+        """Several installs legitimately run from a named conda env reached
+        through this link; clearing it would break every launch."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tool = Path(tmp) / "tool"
+            (tool / "..").resolve()
+            tool.mkdir()
+            real = Path(tmp) / "named-env/bin"
+            real.mkdir(parents=True)
+            py = real / "python"
+            py.write_text("#!/bin/sh\n")
+            py.chmod(0o755)
+            (tool / "env").symlink_to(real.parent)
+            r = self.run_preflight(tool)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertTrue((tool / "env").is_symlink())
+
+    def test_a_file_where_the_prefix_belongs_is_set_aside(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tool = Path(tmp) / "tool"
+            tool.mkdir()
+            (tool / "env").write_text("not an env\n")
+            r = self.run_preflight(tool)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertFalse((tool / "env").exists())
+            self.assertTrue(list(tool.glob("env.partial-*")))
+
+    def test_the_delegated_build_clears_the_path_too(self):
+        """A tool with its own deploy/install.sh runs the same `conda env
+        create` against the same prefix, and used to hit the same wall with
+        conda's message rather than ours."""
+        src = (ROOT / "bin/install-local.sh").read_text(encoding="utf-8")
+        branch = src.split('if [[ -x "${DIR}/deploy/install.sh" ]]; then', 1)[1][:600]
+        self.assertIn("_clear_partial_checkout_env --no-assert", branch)
+
+    def test_no_assert_skips_only_the_writability_verdict(self):
+        """A read-only checkout beside an already-built env is a legitimate site
+        install; only the paths that know conda is about to create this prefix
+        may stop a build over it."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tool = Path(tmp) / "tool"
+            tool.mkdir()
+            (tool / "env").symlink_to(Path(tmp) / "gone")
+            tool.chmod(0o500)
+            try:
+                r = sh(f'DIR="{tool}"\n'
+                       f'eval "$(sed -n \'{self.FUNCS}\' "{ROOT}/bin/install-local.sh")"\n'
+                       '_clear_partial_checkout_env --no-assert\n')
+            finally:
+                tool.chmod(0o700)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertNotIn("cannot create a directory", r.stdout + r.stderr)
+
+    def test_an_unwritable_checkout_stops_before_the_solve_and_names_why(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tool = Path(tmp) / "tool"
+            tool.mkdir()
+            tool.chmod(0o500)
+            try:
+                r = self.run_preflight(tool)
+            finally:
+                tool.chmod(0o700)
+            self.assertNotEqual(r.returncode, 0)
+            out = r.stdout + r.stderr
+            self.assertIn("cannot create a directory inside", out)
+            self.assertIn("free space", out)          # the other mkdir failure
+            self.assertIn("chmod u+w", out)           # a mode this user can fix
+            self.assertIn("chown", out)               # or an owner that needs sudo

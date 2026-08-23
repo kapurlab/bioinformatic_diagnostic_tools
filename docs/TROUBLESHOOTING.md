@@ -81,6 +81,7 @@ bin/bdtools test <tool>
 | tool exited 255 | tool exited 255 |
 | GUI stuck at "Waiting for output" | GUI stuck at Waiting for output |
 | Dashboard card says "Needs setup" but the tool runs fine | Needs setup while the tool works |
+| `Unable to create prefix directory`, `Check that you have sufficient permissions` | Unable to create prefix directory |
 | `No valid AMRFinder database is found`, `The BLAST database for AMRProt was not found` | No valid AMRFinder database |
 | `does not contain necessary file taxo.k2d` (or `opts.k2d` / `hash.k2d`) | kraken2 database incomplete |
 | `Cannot open temporary file ..._00253.bin`, `Could not determine genome size` | Cannot open temporary file (open-file limit) |
@@ -460,6 +461,61 @@ bin/bdtools doctor <tool>
 ```
 
 If doctor also reports the gap, the card was right — follow doctor's fix.
+
+### Unable to create prefix directory
+
+**What it means.** `conda env create` could not make `<checkout>/env`. The
+message blames permissions, and usually it is not permissions: `mkdir` refuses
+that path for four different reasons and conda reports all four identically.
+
+- **A dead `env` symlink** — the common one. When a tool runs from a *named*
+  conda env, doctor's remedy is `ln -sfn <named env> <checkout>/env`; delete that
+  conda env later and the link stays, pointing at nothing. `mkdir` fails with
+  EEXIST, while every `[[ -d … ]]` test reads the broken link as absent.
+  **Reinstalling does not clear it**: the checkouts live in
+  `~/.local/share/bdtools`, not in this repo, so removing the repo *and* the
+  conda env leaves it exactly where it was.
+- **A file** at that path.
+- **A checkout you cannot write to** — a build once run with `sudo` leaves
+  root-owned directories behind.
+- **A full disk.**
+
+**Run this:**
+
+```bash
+bin/bdtools install <tool>
+```
+
+**Reading the output.** Current installs check the path before the solve, so the
+answer is in the first lines: `removed a dead symlink at …/env (pointed at …,
+which is gone)` and the build continues, or `found a FILE at …/env … moved to
+env.partial-…`, or it stops with `cannot create a directory inside <checkout>`
+followed by the owner, mode, ACL and free space — the three facts that decide
+which of the last two it is. If you are on an older checkout, look yourself:
+
+```bash
+ls -lde ~/.local/share/bdtools/checkouts/<tool> ~/.local/share/bdtools/checkouts/<tool>/env; df -h ~/.local/share/bdtools
+```
+
+An `env ->` line whose target does not exist is the dead link; `dr-x` or an
+owner that is not you is the permission case; `100%` capacity is the disk.
+
+**The fix.** For a dead link, remove it and re-run the install — it holds no
+data:
+
+```bash
+rm ~/.local/share/bdtools/checkouts/<tool>/env
+```
+
+For an unwritable checkout, whichever the listing showed:
+
+```bash
+chmod u+w ~/.local/share/bdtools/checkouts/<tool>
+```
+
+```bash
+sudo chown -R "$(id -un)" ~/.local/share/bdtools/checkouts/<tool>
+```
 
 ### No valid AMRFinder database
 

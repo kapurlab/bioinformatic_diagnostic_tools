@@ -619,28 +619,90 @@ _CONDA_BACKUP_VARS="CC CXX CPP FC F77 F90 GCC GXX GFORTRAN CLANG CLANGXX
   DEBUG_CPPFLAGS HOST BUILD CONDA_BUILD_SYSROOT CMAKE_ARGS CMAKE_PREFIX_PATH
   MESON_ARGS _CONDA_PYTHON_SYSCONFIGDATA_NAME"
 
-# A leftover ${DIR}/env with no usable python is the corpse of a build that died
-# mid-create. Going forward _discard_partial_env_prefix removes those at the
-# moment of failure, but corpses predate that fix, and a delegated
-# deploy/install.sh that dies can still leave one. `conda env create` refuses an
-# existing prefix, and the corpse's conda-meta is exactly what a platform
-# decision must never read (the 2026-08 mixed-architecture incident). Set it
-# aside rather than delete: this code did not create it, so it is not ours to
-# destroy — and the message says when it is safe to remove.
+# Everything at ${DIR}/env that is not a usable env has to go before `conda env
+# create`, and conda cannot tell you which of them it hit: a dangling symlink, a
+# plain file, an unwritable parent and a full disk all surface as the same line,
+#
+#     CondaError: Unable to create prefix directory '<...>/env'.
+#     Check that you have sufficient permissions.
+#
+# which sends someone to chmod a path whose permissions are fine — after a
+# five-minute solve, twice, because the step retries.
+#
+# The dangling symlink is the live case (2026-08-23, a lab Mac). Doctor prints
+# `ln -sfn <named env> <checkout>/env` when a tool runs from a named conda env,
+# and deleting that conda env leaves the link. mkdir then fails with EEXIST while
+# every guard in this script is blind to it: `[[ -d <broken link> ]]` is false, so
+# this function used to skip and hand the create a path it could never make. A
+# reinstall does not clear it either — the checkouts live in ${BDTOOLS_HOME}, not
+# in the umbrella repo, so removing the repo AND the conda env leaves the corpse
+# exactly where it was.
+#
+# A partial DIRECTORY is set aside, not deleted: this code did not create it, so
+# it is not ours to destroy, and the corpse's conda-meta is exactly what a
+# platform decision must never read (the 2026-08 mixed-architecture incident). A
+# dead symlink holds no data, so that one is simply removed.
+# `--no-assert` clears the path without the writability check: a delegated
+# deploy/install.sh may build a named env instead of this prefix, and a shared
+# site install can legitimately keep read-only checkouts beside envs that are
+# already built. Only the two paths that KNOW conda is about to mkdir this
+# prefix get to stop the build over it.
 _clear_partial_checkout_env() {
-  [[ -d "${DIR}/env" && ! -x "${DIR}/env/bin/python" ]] || return 0
-  local aside="${DIR}/env.partial-$(date +%Y%m%d%H%M%S)"
-  if [[ "${DRY_RUN:-0}" -eq 1 ]]; then
-    echo "  [dry-run] mv ${DIR}/env ${aside}  (leftover partial env, no usable python)"
-    return 0
+  local aside="${DIR}/env.partial-$(date +%Y%m%d%H%M%S)" target
+  if [[ -L "${DIR}/env" ]]; then
+    # A LIVE link is how several installs legitimately run (a named conda env,
+    # a shared site env); only a dead one is in the way.
+    [[ -x "${DIR}/env/bin/python" ]] && return 0
+    target="$(readlink "${DIR}/env" 2>/dev/null || true)"
+    if [[ "${DRY_RUN:-0}" -eq 1 ]]; then
+      echo "  [dry-run] rm ${DIR}/env  (dead symlink -> ${target:-?})"
+    elif rm -f "${DIR}/env" 2>/dev/null; then
+      warn "removed a dead symlink at ${DIR}/env (pointed at ${target:-?}, which is gone)"
+      info "  that link — not a permission — is what conda reports as \"Unable to create prefix directory\""
+    else
+      warn "could not remove the dead symlink ${DIR}/env -> ${target:-?}; remove it and re-run:"
+      info "  rm ${DIR}/env"
+    fi
+  elif [[ -e "${DIR}/env" && ! -d "${DIR}/env" ]]; then
+    if [[ "${DRY_RUN:-0}" -eq 1 ]]; then
+      echo "  [dry-run] mv ${DIR}/env ${aside}  (a file where the env prefix belongs)"
+    elif mv "${DIR}/env" "${aside}" 2>/dev/null; then
+      warn "found a FILE at ${DIR}/env, where the env prefix belongs — moved to ${aside}"
+    else
+      warn "could not move ${DIR}/env aside — the create below will refuse the existing path"
+    fi
+  elif [[ -d "${DIR}/env" && ! -x "${DIR}/env/bin/python" ]]; then
+    if [[ "${DRY_RUN:-0}" -eq 1 ]]; then
+      echo "  [dry-run] mv ${DIR}/env ${aside}  (leftover partial env, no usable python)"
+    elif mv "${DIR}/env" "${aside}" 2>/dev/null; then
+      warn "found a leftover partial env at ${DIR}/env (no usable python) — moved to ${aside}"
+      info "  delete it once the new build works:  rm -rf ${aside}"
+    else
+      warn "could not move the leftover partial env at ${DIR}/env aside — the create below may refuse the existing prefix"
+    fi
   fi
-  if mv "${DIR}/env" "${aside}" 2>/dev/null; then
-    warn "found a leftover partial env at ${DIR}/env (no usable python) — moved to ${aside}"
-    info "  delete it once the new build works:  rm -rf ${aside}"
-  else
-    warn "could not move the leftover partial env at ${DIR}/env aside — the create below may refuse the existing prefix"
-  fi
-  return 0
+  [[ "${1:-}" == "--no-assert" ]] || _assert_env_prefix_creatable
+}
+
+# The other half of that conda message: it names the prefix but never the
+# directory that actually refused, who owns it, or whether the disk is simply
+# full. Probe the real operation — mkdir in ${DIR} — and if it fails, print the
+# three facts that decide it and stop, instead of spending the solve first.
+_assert_env_prefix_creatable() {
+  [[ "${DRY_RUN:-0}" -eq 1 ]] && return 0
+  [[ -d "${DIR}" ]] || return 0        # no checkout yet; not this check's call
+  local probe="${DIR}/.env-write-probe.$$"
+  if mkdir "${probe}" 2>/dev/null; then rmdir "${probe}"; return 0; fi
+  warn "cannot create a directory inside ${DIR}"
+  info "  conda reports this as \"Unable to create prefix directory\" and blames"
+  info "  permissions on the prefix; the prefix is fine — its parent is not."
+  info "  owner / mode / ACL:"
+  { ls -lde "${DIR}" 2>/dev/null || ls -ld "${DIR}"; } | sed 's/^/    /'
+  info "  free space:"
+  df -h "${DIR}" 2>/dev/null | sed 's/^/    /'
+  # Both spellings, because the listing above decides which: a mode this user
+  # can fix themselves, or an owner that needs sudo (a build once run as root).
+  die "make ${DIR} writable — chmod u+w ${DIR}, or sudo chown -R $(id -un) ${DIR} if the owner above is not you — or free space, then re-run"
 }
 
 # When --fresh set the old env aside from somewhere OTHER than where the new one
@@ -1191,6 +1253,11 @@ build() {
   # upstream CONDA_BACKUP_* bug (see harden_conda_hooks).
   harden_conda_hooks "$(resolve_env_prefix)"
   if [[ -x "${DIR}/deploy/install.sh" ]]; then
+    # The tool's own installer runs the same `conda env create` against the same
+    # prefix, so a dead link or a file there fails it identically — and its
+    # message is conda's, not ours. Clear the path first; leave the writability
+    # verdict to the two sites that know this prefix is the one being created.
+    [[ -x "${DIR}/env/bin/python" ]] || _clear_partial_checkout_env --no-assert
     log "delegating env+frontend build to ${TOOL}/deploy/install.sh"
     local args=(); [[ ${DRY_RUN} -eq 1 ]] && args+=(--dry-run)
     # Prefer a personal/standalone env if the tool's installer supports it.

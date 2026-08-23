@@ -82,6 +82,7 @@ bin/bdtools test <tool>
 | GUI stuck at "Waiting for output" | GUI stuck at Waiting for output |
 | Dashboard card says "Needs setup" but the tool runs fine | Needs setup while the tool works |
 | `Unable to create prefix directory`, `Check that you have sufficient permissions` | Unable to create prefix directory |
+| `post-link script failed for package`, `CONDA_BACKUP_AR: unbound variable` | post-link script failed |
 | `No valid AMRFinder database is found`, `The BLAST database for AMRProt was not found` | No valid AMRFinder database |
 | `does not contain necessary file taxo.k2d` (or `opts.k2d` / `hash.k2d`) | kraken2 database incomplete |
 | `Cannot open temporary file ..._00253.bin`, `Could not determine genome size` | Cannot open temporary file (open-file limit) |
@@ -516,6 +517,52 @@ chmod u+w ~/.local/share/bdtools/checkouts/<tool>
 ```bash
 sudo chown -R "$(id -un)" ~/.local/share/bdtools/checkouts/<tool>
 ```
+
+### post-link script failed
+
+**What it means.** An upstream packaging bug, not a broken machine and not a
+broken download. Three things line up:
+
+1. conda **sources** a package's post-link script into its wrapper shell
+   (`conda/core/link.py` passes `(".", path)`), so
+2. bioconda's spades script opening with `set -eu -o pipefail` leaves **nounset
+   on** for whatever the wrapper does next, and
+3. the conda-forge toolchain hooks read `$CONDA_BACKUP_<TOOL>` with no default:
+
+       deactivate_cctools_osx-64.sh: line 63: CONDA_BACKUP_AR: unbound variable
+       LinkError: post-link script failed for package ...::spades-4.3.0...
+
+conda then rolls the transaction back, which deletes the hooks — so the retry
+starts from the same place and fails identically, and the env never gets built.
+
+**Run this:**
+
+```bash
+bin/bdtools install <tool>
+```
+
+**Reading the output.** Current installs hand conda a value for every toolchain
+variable before the transaction starts, which makes the activate hook *record* a
+backup the deactivate hook can find. If you still see the line above, check that
+the checkout is up to date (`git log --oneline -1`) and that the failing variable
+is one the guard knows:
+
+```bash
+grep -A4 '^_CONDA_TOOL_VARS=' bin/install-local.sh
+```
+
+A name in the error that is **not** in that list is a new hook variant — add it
+there; the placeholder is derived from the name.
+
+**The fix.** Nothing to repair by hand: pull and re-run the install.
+
+```bash
+git pull && bin/bdtools install <tool> --fresh
+```
+
+Nothing about this is macOS-only in principle, but in practice it takes the
+osx-64 toolchain packages: a Mac builds these envs as osx-64 under Rosetta, and
+those are the hooks that ship the unguarded reads.
 
 ### No valid AMRFinder database
 

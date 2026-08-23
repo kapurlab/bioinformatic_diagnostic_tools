@@ -531,27 +531,19 @@ _conda_step() {
   local -a pre=(env -u SHELLOPTS -u BASHOPTS)
   # Preserve any BASH_ENV the user already had; the prelude below chains to it.
   [[ -n "${BASH_ENV:-}" ]] && pre+=("_BDTOOLS_PREV_BASH_ENV=${BASH_ENV}")
-  local v
+  local v cur
   for v in ${_CONDA_BACKUP_VARS}; do
-    # Mirror the current value when the variable is set, empty when it is not.
+    # Keep a real value the caller already had; otherwise hand the hooks the
+    # placeholder (see _conda_placeholder — a program name for the toolchain
+    # variables, "" for the flags). An EMPTY value is treated as no value,
+    # because that is what the hook's own -n test does with it.
+    #
     # Built as an ARRAY, not a command substitution: CFLAGS/LDFLAGS/CMAKE_ARGS
     # routinely contain spaces, and unquoted word-splitting would turn the rest of
     # the flags into the command conda was supposed to be.
-    if [[ -n "${!v+x}" ]]; then pre+=("CONDA_BACKUP_${v}=${!v}")
-    else pre+=("CONDA_BACKUP_${v}="); fi
-    # ...and define the PLAIN variable too, which is the half that was missing.
-    # The toolchain's ACTIVATE hook only records a backup when the plain variable
-    # is defined:
-    #     if [ ! -z "${AR+x}" ]; then export CONDA_BACKUP_AR="$AR"; fi
-    # With AR undefined it stores nothing, the matching deactivate hook then reads
-    # an unset CONDA_BACKUP_AR, and under `set -u` that is the failure that has
-    # been killing macOS env builds:
-    #     deactivate_cctools_osx-64.sh: line 63: CONDA_BACKUP_AR: unbound variable
-    #     LinkError: post-link script failed for package ...::spades-4.3.0...
-    # Defining it EMPTY satisfies the `+x` test and cannot point a compiler
-    # anywhere: conda's activate hook overwrites it with the env's real path a line
-    # later.
-    [[ -n "${!v+x}" ]] || pre+=("${v}=")
+    cur="${!v-}"
+    [[ -z "${cur}" ]] && cur="$(_conda_placeholder "${v}")"
+    pre+=("${v}=${cur}" "CONDA_BACKUP_${v}=${cur}")
   done
   # BASH_ENV: the belt that does not depend on any hook's shape.
   #
@@ -603,9 +595,12 @@ _conda_prelude_file() {
     echo '  . "${_BDTOOLS_PREV_BASH_ENV}"'
     echo 'fi'
     for v in ${_CONDA_BACKUP_VARS}; do
-      # `:=` defines it (possibly empty) without disturbing a real value.
-      printf ': "${%s:=}"; export %s\n' "${v}" "${v}"
-      printf ': "${CONDA_BACKUP_%s:=}"; export CONDA_BACKUP_%s\n' "${v}" "${v}"
+      # `:=` fills in the placeholder when the name is unset OR empty, and leaves
+      # a real value alone. Empty is not good enough for the toolchain names:
+      # the activate hook reads them with -n and UNSETS the backup it would
+      # otherwise have recorded (see _conda_placeholder).
+      printf ': "${%s:=%s}"; export %s\n' "${v}" "$(_conda_placeholder "${v}")" "${v}"
+      printf ': "${CONDA_BACKUP_%s:=${%s}}"; export CONDA_BACKUP_%s\n' "${v}" "${v}" "${v}"
     done
   } > "${f}.tmp" 2>/dev/null || { rm -f "${f}.tmp"; return 0; }
   mv -f "${f}.tmp" "${f}" 2>/dev/null || return 0
@@ -613,11 +608,84 @@ _conda_prelude_file() {
   printf '%s' "${f}"
 }
 
-_CONDA_BACKUP_VARS="CC CXX CPP FC F77 F90 GCC GXX GFORTRAN CLANG CLANGXX
+# PROGRAM-valued toolchain variables — the ones conda-forge's _tc_activation
+# hooks manage. Each must be handed a NON-EMPTY value; see _conda_placeholder for
+# why, and what value.
+#
+# The cctools half of this list (CHECKSYMS through SEGEDIT) is the half that was
+# missing: its hook enumerates 19 programs, our list named 8 of them, and under
+# `set -u` the hook dies on the first one it reads that nothing defined.
+_CONDA_TOOL_VARS="CC CXX CPP FC F77 F90 GCC GXX GFORTRAN CLANG CLANGXX
   AR AS RANLIB LD LD_GOLD NM STRIP OBJDUMP OBJCOPY READELF SIZE STRINGS ADDR2LINE
-  CFLAGS CXXFLAGS CPPFLAGS FFLAGS LDFLAGS DEBUG_CFLAGS DEBUG_CXXFLAGS DEBUG_FFLAGS
-  DEBUG_CPPFLAGS HOST BUILD CONDA_BUILD_SYSROOT CMAKE_ARGS CMAKE_PREFIX_PATH
-  MESON_ARGS _CONDA_PYTHON_SYSCONFIGDATA_NAME"
+  CHECKSYMS INSTALL_NAME_TOOL LIBTOOL LIPO NMEDIT OTOOL PAGESTUFF REDO_PREBINDING
+  SEG_ADDR_TABLE SEG_HACK SEGEDIT"
+# Flag-valued ones. Left EMPTY deliberately: a placeholder in CFLAGS or HOST
+# would be a semantic lie handed to anything that reads it, and no hook seen in
+# the wild manages these through the unset-ing loop that forces the treatment
+# above. If one ever does, its own error message will name the variable.
+_CONDA_FLAG_VARS="CFLAGS CXXFLAGS CPPFLAGS FFLAGS LDFLAGS DEBUG_CFLAGS
+  DEBUG_CXXFLAGS DEBUG_FFLAGS DEBUG_CPPFLAGS HOST BUILD CONDA_BUILD_SYSROOT
+  CMAKE_ARGS CMAKE_PREFIX_PATH MESON_ARGS _CONDA_PYTHON_SYSCONFIGDATA_NAME"
+_CONDA_BACKUP_VARS="${_CONDA_TOOL_VARS} ${_CONDA_FLAG_VARS}"
+
+# _conda_placeholder VAR — a non-empty value for a toolchain variable that has
+# none, or "" for a variable that must stay empty.
+#
+# Non-empty is the whole point, and it took a reproduction to see why. The real
+# conda-forge hook (cctools_osx-64, _tc_activation) does this on ACTIVATE:
+#
+#     eval oldval="\$${from}$thing"          # from="" -> $AR
+#     if [ -n "${oldval}" ]; then
+#       eval export "${to}'${thing}'=\"${oldval}\""   # CONDA_BACKUP_AR="$AR"
+#     else
+#       eval unset '${to}${thing}'          # unset CONDA_BACKUP_AR   <-- !!
+#     fi
+#
+# It tests -n, not +x. So handing it AR="" made it UNSET the CONDA_BACKUP_AR we
+# had just defined, and the deactivate hook — which reads it with no default —
+# then died exactly as it did before the guard existed:
+#
+#     deactivate_cctools_osx-64.sh: line 63: CONDA_BACKUP_AR: unbound variable
+#     LinkError: post-link script failed for package ...::spades-4.3.0...
+#
+# A non-empty value makes the same hook RECORD a backup, so the deactivate finds
+# one. Verified both ways against the real hooks (2026-08-23).
+#
+# Why not simply turn nounset off for that shell: conda sources the post-link
+# script into the wrapper (conda/core/link.py passes ("." , path) to
+# wrap_subprocess_call), and bioconda's spades script opens with
+# `set -eu -o pipefail`. Anything we do at shell startup — BASH_ENV, a prelude,
+# `set +u` — happens BEFORE that line and is overridden by it. The variables are
+# the only lever that survives.
+#
+# The value is the program's ordinary name, because the hook adopts it for the
+# life of that wrapper shell (`newval="${AR:-<cross-ar>}"` takes ours when set),
+# so anything a post-link script really runs still resolves to a real program
+# instead of a sentinel. It is never used to build this suite's software: the
+# env's own compilers come from its conda-meta, not from these names.
+_conda_placeholder() {
+  local v
+  case "$1" in
+    CXX|GXX)     printf 'c++';     return 0;;
+    CLANGXX)     printf 'clang++'; return 0;;
+    FC|F77|F90)  printf 'gfortran'; return 0;;
+    LD_GOLD)     printf 'ld.gold'; return 0;;
+  esac
+  # Every remaining tool variable lowercases to the program's real name
+  # (AR->ar, INSTALL_NAME_TOOL->install_name_tool, SEG_HACK->seg_hack).
+  #
+  # Membership by word splitting, not a `case " ${list} "` glob: the list is
+  # written over several lines, so a pattern with literal spaces around the name
+  # misses whichever variable ends a line — which is how REDO_PREBINDING and
+  # ADDR2LINE silently kept the empty value this function exists to replace.
+  for v in ${_CONDA_TOOL_VARS}; do
+    if [[ "${v}" == "$1" ]]; then
+      printf '%s' "$1" | tr 'A-Z' 'a-z'
+      return 0
+    fi
+  done
+  printf ''
+}
 
 # Everything at ${DIR}/env that is not a usable env has to go before `conda env
 # create`, and conda cannot tell you which of them it hit: a dangling symlink, a

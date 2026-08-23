@@ -144,8 +144,11 @@ tools:
     #
     # NOTE: an env built before the splits may still physically contain mlst
     # and kraken2. The pipeline prefers the sibling envs, so the stale copies
-    # simply stop being used; a rebuild sheds them:
-    #     bin/bdtools install amr_plus_gui --rebuild
+    # simply stop being used. Shedding them takes a FRESH rebuild — --rebuild
+    # is `conda env update`, additive by design, and cannot remove anything
+    # (this comment used to say --rebuild; a lab Mac followed it and looped
+    # forever on an update the stale packages made unsatisfiable):
+    #     bin/bdtools install amr_plus_gui --fresh
     packages: [bioconda::ncbi-amrfinderplus=4.2.7]
     # KNOWN UPSTREAM DEFECT (2026-08-22): libdb in this env's osx-arm64 build is
     # x86_64 — and that is upstream's doing, not a local split. Every published
@@ -170,7 +173,8 @@ tools:
     # BDTOOLS_SIBLING_ENV_GENOFLU_GUI (the amr_plus/mlst arrangement), so the
     # suite pins GenoFLU once, below — two pins of one package are two copies
     # that can drift. An env built before the split may still contain a
-    # genoflu; the runner prefers the sibling env, and a rebuild sheds it.
+    # genoflu; the runner prefers the sibling env, and only a FRESH rebuild
+    # (install genoflu_gui --fresh) sheds it — --rebuild is additive.
     packages: [bioconda::irma=1.3.5]
 
   - name: genoflu_gui

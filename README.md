@@ -195,12 +195,13 @@ skipped. Restart a running tool afterward to pick up the new paths:
 |---|---|---|---|
 | Kraken2 `k2_standard_08gb` (~8 GB) | kraken_id_parse_gui | `<root>/kraken2/k2_standard_08gb` | [AWS index collection](https://benlangmead.github.io/aws-indexes/k2) (builds are re-published; `setup-databases` pins a known-good one) |
 | BLAST `ref_prok_rep_genomes` | kraken_id_parse_gui | `<root>/blast/ref_prok_rep_genomes` | NCBI (`update_blastdb.pl`) |
+| AMRFinderPlus database (~200 MB) | amr_plus_gui | `<root>/amrfinderplus/<version>` (+ a `latest` symlink) | NCBI, via the env's own `amrfinder_update` (it builds the BLAST/HMMER indexes locally) |
 | vSNP reference options | vsnp_gui | `<root>/vsnp3/reference_options` | [USDA-VS/vSNP_reference_options](https://github.com/USDA-VS/vSNP_reference_options) |
 | vsnp dependencies | vsnp_gui | `<root>/vsnp3/vsnp_dependencies` | [USDA-VS/vsnp3_test_dataset](https://github.com/USDA-VS/vsnp3_test_dataset) (`vsnp_dependencies/`) |
 | Step 2 VCF comparison DBs | vsnp_gui | `<root>/vsnp3/vcf_db_directories` (linked once into the GUI's VCF-DB root) | [kapurlab/vcf_db_directories](https://github.com/kapurlab/vcf_db_directories) |
 
 Set up only some of them by naming which: `bin/bdtools setup-databases kraken vsnp-refs`
-(choices: `kraken blast vsnp-refs vsnp-deps vcf-dbs`). Pick the location non-interactively
+(choices: `kraken blast amrfinder vsnp-refs vsnp-deps vcf-dbs`). Pick the location non-interactively
 with `--home`, `--shared`, or `--root DIR`.
 
 The VCF comparison databases are seeded **once**: after the first run they are
@@ -208,10 +209,17 @@ yours to curate — a folder you remove is never silently re-added, and a folder
 you added yourself is never overwritten.
 
 The other five tools — `mlst_gui`, `genoflu_gui`, `irma_gui`, `ksnp_gui`,
-`ncbi_submit_gui` — need **no** external database. `amr_plus_gui` needs none
-either: its AMRFinderPlus database ships inside its conda environment.
-`mhc_gui` ships its BoLA references in the repository. So the list above is the
-whole job.
+`ncbi_submit_gui` — need **no** external database, and `mhc_gui` ships its BoLA
+references in the repository. So the list above is the whole job.
+
+> **`amr_plus_gui` does need one.** This section used to say its AMRFinderPlus
+> database ships inside the conda environment. It does not — the bioconda
+> package contains the program and 15 files, none of them data — and believing
+> otherwise is why nothing installed it, nothing checked it, and the training
+> docs never mentioned it. The symptom is a finished-looking run with **no AMR
+> calls** and `amrfinder` exit 1 (`No valid AMRFinder database is found`), so
+> run `bin/bdtools setup-databases amrfinder` once per machine. `bdtools doctor
+> amr_plus_gui` now grades it by asking amrfinder itself.
 
 ### 📍 Where the tools look for databases
 

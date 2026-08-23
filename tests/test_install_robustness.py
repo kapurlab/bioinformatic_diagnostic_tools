@@ -1510,3 +1510,86 @@ class CondaBaseListTests(unittest.TestCase):
                                capture_output=True, text=True)
             self.assertEqual(r.returncode, 0, r.stderr)
             self.assertIn("True", r.stdout)
+
+
+class OpenFileLimitShellTests(unittest.TestCase):
+    """common.sh's raise_file_limit is the shell mirror of
+    tool_launch.raise_file_limit, and the two must not drift: `bdtools local`
+    (which every local dashboard launch goes through) and the OOD dashboard hand
+    a tool its open-file limit through different code paths.
+
+    macOS gives a GUI-launched process 256 open files; KMC inside shovill opens
+    one temp file per k-mer bin and died at `Cannot open temporary file
+    .../kmc_00253.bin`, which reads as a shovill bug and is not one.
+    """
+
+    def test_it_raises_a_default_macos_limit(self):
+        r = sh('ulimit -Sn 256; before="$(file_limit)"; raise_file_limit; '
+               'echo "${before} -> $(file_limit)"')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        before, _, after = r.stdout.strip().partition(" -> ")
+        self.assertEqual(before, "256")
+        self.assertGreaterEqual(int(after), 1024, r.stdout)
+
+    def test_it_never_lowers_a_generous_limit(self):
+        r = sh('ulimit -Sn 20000 2>/dev/null || ulimit -Sn 8192; '
+               'before="$(file_limit)"; BDTOOLS_WANT_NOFILE=1024 raise_file_limit; '
+               'echo "${before} -> $(file_limit)"')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        before, _, after = r.stdout.strip().partition(" -> ")
+        self.assertEqual(after, before)
+
+    def test_a_refusing_host_does_not_fail_the_launch(self):
+        """A hard limit below every candidate must leave the launch alone: the
+        limit is worth raising, never worth refusing to start a tool over."""
+        r = sh('ulimit -Hn 300 2>/dev/null || true; ulimit -Sn 256; '
+               'raise_file_limit; echo "rc=$? limit=$(file_limit)"')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("rc=0", r.stdout)
+
+
+class AmrfinderDatabaseTargetTests(unittest.TestCase):
+    """`setup-databases` had no AMRFinderPlus target at all — the one reference
+    database with no install path, because the README said the conda package
+    shipped it (it ships the program and 15 files, no data). A machine that
+    never ran `amrfinder -u` produced reports with zero AMR calls."""
+
+    SETUP = ROOT / "bin/setup-databases.sh"
+
+    def test_amrfinder_is_a_selectable_target(self):
+        src = self.SETUP.read_text(encoding="utf-8")
+        self.assertIn("kraken|blast|amrfinder|vsnp-refs", src)
+        self.assertIn("WANT=(kraken blast amrfinder vsnp-refs", src)
+        self.assertIn("db_config.py\" amr --amrfinder-db", src)
+
+    def test_unknown_target_lists_amrfinder(self):
+        r = subprocess.run(["bash", str(self.SETUP), "--home", "--dry-run", "nope"],
+                           capture_output=True, text=True)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("amrfinder", r.stdout + r.stderr)
+
+    def test_the_download_is_arch_pinned_like_every_other_env_program(self):
+        """amrfinder_update runs from a tool env, possibly under a translated
+        dashboard — the same shape as update_blastdb.pl's August failure."""
+        src = self.SETUP.read_text(encoding="utf-8")
+        block = src.split("fetch_amrfinder()", 1)[1].split("\nclone_or_skip", 1)[0]
+        self.assertIn('arch_prefix "${envdir}"', block)
+
+    def test_the_installed_database_is_verified_with_doctors_own_checker(self):
+        """Two copies of "is this database usable" is how the launcher and
+        doctor come to disagree; setup asks check.check_amrfinder_db."""
+        src = self.SETUP.read_text(encoding="utf-8")
+        self.assertIn("check.check_amrfinder_db", src)
+
+    def test_a_database_amrfinder_refuses_is_not_written_into_the_config(self):
+        """Pointing the tool at a database its own binary rejects hands the user
+        a finding they never chose; the env's own copy keeps working meanwhile."""
+        src = self.SETUP.read_text(encoding="utf-8")
+        self.assertIn('AMR_DB_VERDICT="no"', src)
+        wire = src.split("wire_amr()", 1)[1].split("\n}", 1)[0]
+        self.assertIn('if [[ "${AMR_DB_VERDICT}" == "no" ]]', wire)
+
+    def test_kraken_completeness_uses_every_file_kraken2_needs(self):
+        src = self.SETUP.read_text(encoding="utf-8")
+        self.assertIn("KRAKEN_FILES=(taxo.k2d opts.k2d hash.k2d)", src)
+        self.assertNotIn('if [[ -f "${KRAKEN_DEST}/hash.k2d" ]]; then ok', src)

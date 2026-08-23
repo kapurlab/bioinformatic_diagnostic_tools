@@ -185,6 +185,11 @@ run_one() {  # tool -> prints a status; sets RC_FAIL on FAIL
   #    arch_prefix above). The pin is prepended as argv, never spliced into
   #    ${cmd} — the command string's quoting belongs to the spec, and a prefix
   #    inside it would be re-parsed by the very shell it is meant to wrap.
+  # Same open-file limit production launches with (raise_file_limit), for the
+  # same reason the arch pin is mirrored here: a golden run under limits the
+  # dashboard never uses certifies a run nobody performs. KMC dies at 253 open
+  # files, and a terminal's own limit is usually generous enough to hide it.
+  raise_file_limit
   local _archp _arch_cmd=()
   _archp="$(arch_prefix "${envbin%/bin}")"
   [[ -n "${_archp}" ]] && read -ra _arch_cmd <<< "${_archp}"

@@ -81,6 +81,9 @@ bin/bdtools test <tool>
 | tool exited 255 | tool exited 255 |
 | GUI stuck at "Waiting for output" | GUI stuck at Waiting for output |
 | Dashboard card says "Needs setup" but the tool runs fine | Needs setup while the tool works |
+| `No valid AMRFinder database is found`, `The BLAST database for AMRProt was not found` | No valid AMRFinder database |
+| `does not contain necessary file taxo.k2d` (or `opts.k2d` / `hash.k2d`) | kraken2 database incomplete |
+| `Cannot open temporary file ..._00253.bin`, `Could not determine genome size` | Cannot open temporary file (open-file limit) |
 | The same update is offered again and again and never lands | An update is offered repeatedly |
 | Windows browser can't reach a tool running in WSL | Windows browser cannot reach a WSL tool |
 
@@ -457,6 +460,121 @@ bin/bdtools doctor <tool>
 ```
 
 If doctor also reports the gap, the card was right — follow doctor's fix.
+
+### No valid AMRFinder database
+
+**What it means.** AMRFinderPlus has no database it can read, so the AMR step
+exits 1 — *after* the pipeline has written `report.pdf` and the stats workbook,
+which is why the run can look finished and contain no AMR calls at all. Two
+distinct causes print nearly the same thing:
+
+- **No database anywhere.** The bioconda `ncbi-amrfinderplus` package ships the
+  program and **no data** (15 files, none of them a database), so a fresh env
+  has nothing to search until the database is downloaded once.
+- **A database this binary cannot read.** AMRFinderPlus 4.x renamed `AMRProt`
+  to `AMRProt.fa` and bumped `database_format_version`. Hand a 4.x database to a
+  3.x binary and it reports `The BLAST database for AMRProt was not found. Use
+  amrfinder -u to download` — blaming a download that already succeeded.
+
+**Run this:**
+
+```bash
+bin/bdtools doctor amr_plus_gui
+```
+
+**Reading the output.** The `AMRFinderPlus DB` line is answered by amrfinder
+itself, so it says which of the two you have: `missing … no AMRFinderPlus
+database there` (nothing installed) versus `is format 4.x but this amrfinder is
+3.x` (a mismatch — nothing is corrupt and re-downloading will not help). A
+passing line prints the database version in play, e.g.
+`✓ AMRFinderPlus DB: …/data/latest (2026-05-15.1)`.
+
+**The fix.** Nothing installed — download it once (about 200 MB; it is also
+wired into the tool's Settings for you):
+
+```bash
+bin/bdtools setup-databases amrfinder
+```
+
+Format mismatch — move the program to the database's major version, which is
+the side that keeps the data you already have:
+
+```bash
+bin/bdtools install amr_plus_gui --fresh
+```
+
+`--fresh`, not `--rebuild`: an env built before the sibling split still contains
+mlst and kraken2, whose perl closure is what pinned `ncbi-amrfinderplus` to
+3.12.8 in the first place, and `--rebuild` is additive so it cannot remove them.
+
+### kraken2 database incomplete
+
+**What it means.** kraken2 needs `taxo.k2d`, `opts.k2d` **and** `hash.k2d`, and
+its wrapper aborts on the first one missing — so this line names whichever file
+it checked first, not necessarily the only one absent. The usual causes are an
+interrupted extraction and a path that points at a database on another machine
+(a `/srv/...` value stored in a config, on a laptop). In the AMR pipeline this
+is not fatal: organism detection is skipped, the run continues on MLST, and the
+AMR calls that need `-O` are simply not made.
+
+**Run this:**
+
+```bash
+bin/bdtools doctor amr_plus_gui
+```
+
+**Reading the output.** Both tools that read a Kraken2 database now name the
+path they were given, so two configs pointing at different copies are visible:
+`Kraken2 DB (organism detection)` is amr_plus_gui's own `kraken_db`, graded
+separately from kraken_id_parse_gui's `Kraken2 DB`. A finding reads
+`… — no taxo.k2d (kraken2 needs taxo.k2d, opts.k2d, hash.k2d)`.
+
+**The fix.** Re-fetch (an incomplete directory is detected and replaced):
+
+```bash
+bin/bdtools setup-databases kraken
+```
+
+If the path belongs to another machine, clear it in the tool's Settings page
+first — a stored value always beats the one this machine would have derived.
+
+### Cannot open temporary file (open-file limit)
+
+**What it means.** The process ran out of file descriptors. macOS gives a
+GUI-launched process a soft limit of **256** open files, and the assembly stack
+needs hundreds: KMC (inside shovill) opens one temp file per k-mer bin and dies
+at `Cannot open temporary file …/kmc_00253.bin` — file 253 of 256, minus stdio.
+shovill then reports `Could not determine genome size` and the pipeline falls
+back to plain SPAdes, which logs its own ceiling in the same run (`Open file
+limit set to 256`) and survives only because it needs 80. Nothing in either
+message names a limit, which is why this reads as a shovill bug.
+
+**Run this:** the launchers raise the limit themselves, so first make sure the
+running dashboard is one that does:
+
+```bash
+git pull && bin/bdtools dashboard --restart
+```
+
+**Reading the output.** Every launch now records what the tool was given, at the
+top of `~/.local/share/bdtools/dashboard-logs/<tool>.log` and in the console
+line `files:  8192 open-file limit`:
+
+```bash
+grep -h "open files" ~/.local/share/bdtools/dashboard-logs/*.log | tail -3
+```
+
+`open files: 256` means the tool was launched by something older than this fix
+(or by hand from a shell with the default limit). `8192` means the limit is not
+your problem — read the surrounding error for the real cause, e.g. a full disk
+or a `TMPDIR` that has gone away.
+
+**The fix.** Restart through the launcher, as above. For a one-off run started
+by hand, raise it in that shell first:
+
+```bash
+ulimit -Sn 8192
+```
 
 ### An update is offered repeatedly
 

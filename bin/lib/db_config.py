@@ -11,6 +11,7 @@ Config locations mirror each tool's own config.py (XDG_CONFIG_HOME, else
 
 Usage:
   db_config.py kraken  --kraken-db PATH --blast-db PATH
+  db_config.py amr     --amrfinder-db PATH
   db_config.py vsnp    --refs-root PATH        # only when there is NO local
                                                # vsnp3 site (setup-databases
                                                # re-points the site symlink
@@ -58,6 +59,9 @@ def main() -> None:
     k.add_argument("--kraken-db")
     k.add_argument("--blast-db")
 
+    a = sub.add_parser("amr")
+    a.add_argument("--amrfinder-db")
+
     v = sub.add_parser("vsnp")
     v.add_argument("--refs-root")
 
@@ -66,6 +70,14 @@ def main() -> None:
         update("kraken_id_parse_gui", {
             "kraken_db": args.kraken_db,
             "blast_db": args.blast_db,
+        })
+    elif args.tool == "amr":
+        # Written even though amr_plus_gui can DERIVE this path from the machine's
+        # db-root: it only adopts a derived default while the key is empty and the
+        # directory already exists, so a database installed after first launch —
+        # the normal order — is never picked up until someone edits Settings.
+        update("amr_plus_gui", {
+            "amrfinder_db": args.amrfinder_db,
         })
     elif args.tool == "vsnp":
         update("vsnp_gui", {

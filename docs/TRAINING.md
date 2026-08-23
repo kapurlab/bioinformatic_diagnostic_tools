@@ -59,11 +59,15 @@ Most tools are ready to go. Two need a one-time database download:
 | Tool | Needs | Set up with |
 |---|---|---|
 | **vSNP3** (Modules 3–4) | vSNP3 reference set | `bin/bdtools setup-databases vsnp-refs vsnp-deps` |
+| **AMRFinderPlus** (Module 5) | **AMRFinderPlus database** *(required — the conda package ships the program only)* | `bin/bdtools setup-databases amrfinder` |
 | **AMRFinderPlus** (Module 5) | Kraken2 DB *(only for automatic organism detection — optional)* | `bin/bdtools setup-databases kraken` |
 
 Run those before the relevant module. If you skip the Kraken2 DB, AMRFinderPlus
-still works — you just pick the organism by hand. If a tool card shows a
-**"needs setup"** badge, that's what it's telling you.
+still works — you just pick the organism by hand. The **AMRFinderPlus database
+is not optional**: without it the run finishes, writes a report, and contains no
+AMR calls (`amrfinder` exits 1 with `No valid AMRFinder database is found`). If a
+tool card shows a **"needs setup"** badge, that's what it's telling you, and
+`bin/bdtools doctor amr_plus_gui` names which database is missing.
 
 > Check anything at any time with `bin/bdtools doctor` — it lists each tool, what
 > it needs, and the exact command to fix a gap.
@@ -552,9 +556,12 @@ SRR39605045	Escherichia coli
 
 ### Steps
 
-1. *(Recommended, first-time)* set up the Kraken2 DB for automatic organism
-   detection: `bin/bdtools setup-databases kraken`. Without it, you'll just pick
-   the organism manually — that's fine.
+1. *(Required, first-time)* install the AMRFinderPlus database:
+   `bin/bdtools setup-databases amrfinder`. Nothing is detected without it — the
+   run still writes a report, it just has no AMR calls in it.
+   *(Recommended)* also set up the Kraken2 DB for automatic organism detection:
+   `bin/bdtools setup-databases kraken`. Without that one you just pick the
+   organism manually — that's fine.
 2. **Launch** **AMRFinderPlus**. Create a project — e.g. `AMR_training`.
 3. **Inputs → SRA Download** → paste `SRR28320745` (and/or `SRR39605045`) →
    **Download**. When it finishes, a **per-sample status list** shows which

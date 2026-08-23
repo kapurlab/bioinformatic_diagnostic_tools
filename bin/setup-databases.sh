@@ -15,6 +15,10 @@
 # DB (which databases; default: all):
 #   kraken        Kraken2 k2_standard_08gb        -> <root>/kraken2/k2_standard_08gb
 #   blast         BLAST ref_prok_rep_genomes      -> <root>/blast/ref_prok_rep_genomes
+#   amrfinder     NCBI AMRFinderPlus database     -> <root>/amrfinderplus/<version>
+#                 (the conda package ships the PROGRAM only — no database at
+#                 all — so without this step every AMR run exits 1 having
+#                 already written a report: the 2026-08-23 lab run)
 #   vsnp-refs     USDA-VS vSNP_reference_options  -> <root>/vsnp3/reference_options
 #   vsnp-deps     USDA-VS vsnp3 test dependencies -> <root>/vsnp3/vsnp_dependencies
 #   vcf-dbs       kapurlab vcf_db_directories     -> <root>/vsnp3/vcf_db_directories
@@ -23,6 +27,7 @@
 #
 # Consumers wired automatically:
 #   kraken,blast  -> kraken_id_parse_gui  (~/.config/kraken_id_parse_gui/config.json)
+#   amrfinder     -> amr_plus_gui         (~/.config/amr_plus_gui/config.json)
 #   vsnp-*        -> vsnp_gui             (reference locations + config.json)
 #   vcf-dbs       -> vsnp_gui             (vcf_db_folders root, one-time)
 set -euo pipefail
@@ -65,14 +70,14 @@ while [[ $# -gt 0 ]]; do
     --shared)  LOC="shared"; shift;;
     --root)    ROOT="$2";    shift 2;;
     --dry-run) DRY_RUN=1; export DRY_RUN; shift;;
-    -h|--help) sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
-    kraken|blast|vsnp-refs|vsnp-deps|vcf-dbs) WANT+=("$1"); shift;;
+    -h|--help) sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
+    kraken|blast|amrfinder|vsnp-refs|vsnp-deps|vcf-dbs) WANT+=("$1"); shift;;
     all) shift;;                       # explicit "all" == default
     -*)  die "unknown option: $1";;
-    *)   die "unknown database: $1 (kraken|blast|vsnp-refs|vsnp-deps|vcf-dbs|all)";;
+    *)   die "unknown database: $1 (kraken|blast|amrfinder|vsnp-refs|vsnp-deps|vcf-dbs|all)";;
   esac
 done
-[[ ${#WANT[@]} -gt 0 ]] || WANT=(kraken blast vsnp-refs vsnp-deps vcf-dbs)
+[[ ${#WANT[@]} -gt 0 ]] || WANT=(kraken blast amrfinder vsnp-refs vsnp-deps vcf-dbs)
 
 # ---- resolve the install root ---------------------------------------------
 if [[ -z "${ROOT}" ]]; then
@@ -143,6 +148,7 @@ PY
 fi
 
 KRAKEN_DEST="${ROOT}/kraken2/k2_standard_08gb"
+AMR_DEST="${ROOT}/amrfinderplus"
 BLAST_DIR="${ROOT}/blast"
 BLAST_DB="${BLAST_DIR}/${BLAST_DBNAME}"
 VSNP_REFS="${ROOT}/vsnp3/reference_options"
@@ -152,8 +158,25 @@ want() { local x; for x in "${WANT[@]}"; do [[ "$x" == "$1" ]] && return 0; done
 fetcher() { command -v curl >/dev/null 2>&1 && echo "curl" || { command -v wget >/dev/null 2>&1 && echo "wget"; }; }
 
 # ---- downloads (each idempotent: skip if the dest already has content) -----
+# kraken2 needs taxo.k2d, opts.k2d AND hash.k2d, and its wrapper aborts on the
+# first one missing. Checking only hash.k2d called a half-extracted directory
+# "present" here and made it doctor-green, and the failure then surfaced mid-run
+# as `does not contain necessary file taxo.k2d` (the AMR pipeline's organism
+# detection, 2026-08-23). One list, used for both the skip and the verify.
+KRAKEN_FILES=(taxo.k2d opts.k2d hash.k2d)
+kraken_db_complete() {   # DIR
+  local f; for f in "${KRAKEN_FILES[@]}"; do [[ -f "${1}/${f}" ]] || return 1; done
+}
+kraken_db_missing() {    # DIR — the first file kraken2 would complain about
+  local f; for f in "${KRAKEN_FILES[@]}"; do
+    [[ -f "${1}/${f}" ]] || { printf '%s' "${f}"; return 0; }
+  done
+}
 fetch_kraken() {
-  if [[ -f "${KRAKEN_DEST}/hash.k2d" ]]; then ok "kraken2 DB present: ${KRAKEN_DEST}"; return; fi
+  if kraken_db_complete "${KRAKEN_DEST}"; then ok "kraken2 DB present: ${KRAKEN_DEST}"; return; fi
+  if [[ -d "${KRAKEN_DEST}" && -n "$(ls -A "${KRAKEN_DEST}" 2>/dev/null)" ]]; then
+    warn "kraken2 DB at ${KRAKEN_DEST} is incomplete (no $(kraken_db_missing "${KRAKEN_DEST}")) — re-downloading"
+  fi
   log "downloading Kraken2 k2_standard_08gb (~8 GB) -> ${KRAKEN_DEST}"
   local f; f="$(fetcher)" || die "need curl or wget to download the Kraken2 DB"
   run mkdir -p "${KRAKEN_DEST}"
@@ -163,7 +186,8 @@ fetch_kraken() {
   else
     wget -qO- "${KRAKEN_URL}" | tar -xz -C "${KRAKEN_DEST}"
   fi
-  [[ -f "${KRAKEN_DEST}/hash.k2d" ]] || die "Kraken2 DB extracted but hash.k2d missing — check the download"
+  kraken_db_complete "${KRAKEN_DEST}" \
+    || die "Kraken2 DB extracted but $(kraken_db_missing "${KRAKEN_DEST}") is missing — check the download"
   ok "kraken2 DB ready: ${KRAKEN_DEST}"
 }
 
@@ -223,6 +247,83 @@ fetch_blast() {
   ok "BLAST DB ready: ${BLAST_DB}"
 }
 
+# The AMRFinderPlus database is a SEPARATE download: bioconda's
+# ncbi-amrfinderplus package contains 15 files and no data at all, so a fresh env
+# has the program and nothing to run it against. The README used to say the
+# database ships inside the conda environment — believing that is why this was
+# the one reference database with no install path, no check, and no mention in
+# the training docs, until a run wrote a report with zero AMR calls and
+# `amrfinder` exit 1 (2026-08-23).
+#
+# Downloaded with the env's own amrfinder_update (arch-pinned like blast's
+# update_blastdb.pl, for the same reason): it lays out <root>/amrfinderplus/
+# <version>/ plus a `latest` symlink it keeps current, and builds the BLAST/HMMER
+# indexes locally — which is why this cannot be a plain tarball fetch.
+find_amrfinder_update() {
+  local envdir; envdir="$(tool_env_prefix amr_plus_gui 2>/dev/null || true)"
+  [[ -n "${envdir}" && -x "${envdir}/bin/amrfinder_update" ]] && {
+    echo "${envdir}/bin/amrfinder_update"; return 0; }
+  command -v amrfinder_update 2>/dev/null && return 0
+  return 1
+}
+
+# Ask the checker doctor uses, not a second copy of the rule: a database the
+# installed binary cannot read is worse than none, and amrfinder blames the
+# download for it ("The BLAST database for AMRProt was not found. Use amrfinder
+# -u") when the real mismatch is 4.x data against a 3.x program.
+# ok | no | unknown — set by verify_amrfinder_db, read by wire_amr, because
+# pointing a tool's config at a database its own binary refuses is a finding the
+# user never chose. Left "unknown" when there is no amrfinder to ask.
+AMR_DB_VERDICT="unknown"
+verify_amrfinder_db() {   # ENVBIN
+  local out; out="$("${PYBIN}" - "${KT_BIN_DIR}/lib" "${AMR_DEST}/latest" "${1}" <<'PY' 2>/dev/null || true
+import sys
+sys.path.insert(0, sys.argv[1])
+import check
+ok, detail = check.check_amrfinder_db(sys.argv[2], sys.argv[3])
+print(("ok " if ok else ("skip " if ok is None else "no ")) + (detail or ""))
+PY
+)"
+  case "${out}" in
+    ok*)   AMR_DB_VERDICT="ok";   ok "amrfinder reads it: ${out#ok }";;
+    no*)   AMR_DB_VERDICT="no"
+           warn "installed, but this env's amrfinder cannot use it: ${out#no }"
+           info "  remedy: bin/bdtools install amr_plus_gui --fresh   (rebuilds at the amrfinder tools.yml pins)";;
+    *)     AMR_DB_VERDICT="unknown";;   # nothing to ask — doctor will grade it
+  esac
+}
+
+fetch_amrfinder() {
+  local updater="" envdir=""
+  updater="$(find_amrfinder_update || true)"
+  [[ -n "${updater}" ]] && envdir="$(dirname "$(dirname "${updater}")")"
+  if [[ -f "${AMR_DEST}/latest/version.txt" ]]; then
+    ok "AMRFinderPlus DB present: ${AMR_DEST}/latest ($(cat "${AMR_DEST}/latest/version.txt"))"
+    # Re-checked, not just counted: a present database can still be one this
+    # env's amrfinder cannot read, and a re-run is exactly what someone tries
+    # after the AMR step failed.
+    [[ -n "${envdir}" ]] && verify_amrfinder_db "${envdir}/bin"
+    return
+  fi
+  if [[ -z "${updater}" ]]; then
+    warn "amrfinder_update not found — install amr_plus_gui first (its env ships AMRFinderPlus), then re-run."
+    info "  bin/bdtools install amr_plus_gui"
+    return
+  fi
+  log "downloading the AMRFinderPlus database -> ${AMR_DEST}"
+  run mkdir -p "${AMR_DEST}"
+  local _archp _arch_cmd=()
+  _archp="$(arch_prefix "${envdir}")"
+  [[ -n "${_archp}" ]] && read -ra _arch_cmd <<< "${_archp}"
+  if [[ ${DRY_RUN} -eq 1 ]]; then echo "  [dry-run] ${_archp:+${_archp} }${updater} -d ${AMR_DEST}"; return; fi
+  ${_arch_cmd[@]+"${_arch_cmd[@]}"} "${updater}" -d "${AMR_DEST}" \
+    || die "amrfinder_update failed for ${AMR_DEST}"
+  [[ -f "${AMR_DEST}/latest/version.txt" ]] \
+    || die "amrfinder_update finished but ${AMR_DEST}/latest/version.txt is missing — check the download"
+  ok "AMRFinderPlus DB ready: ${AMR_DEST}/latest ($(cat "${AMR_DEST}/latest/version.txt"))"
+  verify_amrfinder_db "${envdir}/bin"
+}
+
 clone_or_skip() {  # repo dest label
   local repo="$1" dest="$2" label="$3"
   if [[ -n "$(ls -A "${dest}" 2>/dev/null)" ]]; then ok "${label} present: ${dest}"; return; fi
@@ -261,6 +362,18 @@ wire_kraken() {
   [[ ${#args[@]} -gt 0 ]] || return 0
   if [[ ${DRY_RUN} -eq 1 ]]; then echo "  [dry-run] db_config.py kraken ${args[*]}"; return; fi
   "${PYBIN}" "${KT_BIN_DIR}/lib/db_config.py" kraken "${args[@]}"
+}
+
+wire_amr() {
+  want amrfinder || return 0
+  [[ -f "${AMR_DEST}/latest/version.txt" ]] || return 0
+  if [[ "${AMR_DB_VERDICT}" == "no" ]]; then
+    warn "not pointing amr_plus_gui at ${AMR_DEST}/latest — its amrfinder cannot read it"
+    info "  the tool keeps using the database in its own env until the remedy above is applied"
+    return 0
+  fi
+  if [[ ${DRY_RUN} -eq 1 ]]; then echo "  [dry-run] db_config.py amr --amrfinder-db ${AMR_DEST}/latest"; return; fi
+  "${PYBIN}" "${KT_BIN_DIR}/lib/db_config.py" amr --amrfinder-db "${AMR_DEST}/latest"
 }
 
 # vsnp_gui keys its reference root off VSNP_GUI_SITE_ROOT and the launcher
@@ -324,9 +437,11 @@ PY
 # ---- run -------------------------------------------------------------------
 want kraken    && fetch_kraken
 want blast     && fetch_blast
+want amrfinder && fetch_amrfinder
 want vsnp-refs && fetch_vsnp_refs
 want vsnp-deps && fetch_vsnp_deps
 wire_kraken
+wire_amr
 wire_vsnp
 wire_vcf_dbs
 

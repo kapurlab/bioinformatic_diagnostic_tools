@@ -39,6 +39,33 @@ need_writable() {
 # run CMD... — execute, or just print under --dry-run.
 run()  { if [[ "${DRY_RUN}" -eq 1 ]]; then echo "  [dry-run] $*"; else "$@"; fi; }
 
+# raise_file_limit — give this process, and everything it spawns, enough open
+# files for the assembly stack. The shell mirror of
+# tool_launch.raise_file_limit(); keep the two in step, because two launchers
+# disagreeing about the environment they hand a tool is a failure mode this suite
+# has already paid for more than once.
+#
+# macOS gives a GUI-launched process a soft limit of 256 files. shovill's KMC
+# opens one temp file per k-mer bin and died at `Cannot open temporary file
+# .../kmc_00253.bin` — file 253 of 256 minus stdio — so shovill failed and the
+# AMR pipeline fell back to plain SPAdes, which printed its own ceiling in the
+# same log ("Open file limit set to 256") and survived only because it needs 80.
+# Nothing in either message names a limit, and no check of the install can see
+# it: it is a property of the process that launched the tool. (Live 2026-08-23.)
+BDTOOLS_WANT_NOFILE="${BDTOOLS_WANT_NOFILE:-8192}"
+raise_file_limit() {
+  local cur want
+  cur="$(ulimit -Sn 2>/dev/null || echo 0)"
+  [[ "${cur}" == "unlimited" ]] && return 0
+  for want in "${BDTOOLS_WANT_NOFILE}" 4096 2048 1024; do
+    [[ "${cur}" =~ ^[0-9]+$ ]] && (( want <= cur )) && return 0
+    ulimit -Sn "${want}" 2>/dev/null && return 0
+  done
+  return 0   # never fail a launch over this; the header records what we got
+}
+file_limit() { ulimit -Sn 2>/dev/null || echo unknown; }
+
+
 # ---- python interpreter ----------------------------------------------------
 # Resolve the newest usable python3 (>=3.7) with NO action required from the
 # user. Some HPC/OOD hosts default `python3` to an EOL 3.6 that lacks features

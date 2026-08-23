@@ -853,5 +853,170 @@ class HostGuardTests(unittest.TestCase):
                          "session-token comparisons must use secrets.compare_digest")
 
 
+class AmrDatabaseCheckTests(unittest.TestCase):
+    """Doctor must grade the databases an AMR run reads.
+
+    The 2026-08-23 lab run: amrfinder on PATH, doctor green on every line, and
+    the AMR step exiting 1 with "No valid AMRFinder database is found" after the
+    pipeline had already written report.pdf and the stats workbook. Nothing here
+    declared either database, so nothing could have caught it.
+    """
+
+    def _env(self, tmp, version="4.2.7", db_rc=0, db_msg="", fmt=None):
+        """A fake env whose `amrfinder` answers --version and --database_version."""
+        root = Path(tmp)
+        env_bin = root / "env/bin"
+        env_bin.mkdir(parents=True)
+        db = root / "env/share/amrfinderplus/data/latest"
+        db.mkdir(parents=True)
+        (db / "version.txt").write_text("2026-05-15.1\n")
+        (db / "AMRProt.fa").write_text(">x\n")
+        if fmt:
+            (db / "database_format_version.txt").write_text(fmt + "\n")
+        shim = env_bin / "amrfinder"
+        shim.write_text(
+            "#!/bin/sh\n"
+            'case "$*" in\n'
+            f'  *--version*) echo "{version}"; exit 0;;\n'
+            "esac\n"
+            f'echo "*** ERROR ***"; echo "{db_msg}"; exit {db_rc}\n'
+            if db_rc else
+            "#!/bin/sh\n"
+            f'echo "Software version: {version}"\n'
+            'case "$*" in\n'
+            f'  *--version*) echo "{version}"; exit 0;;\n'
+            "esac\n"
+            'echo "Database version: 2026-05-15.1"\nexit 0\n')
+        shim.chmod(0o755)
+        return str(env_bin), str(db)
+
+    def test_amr_plus_gui_declares_the_databases_a_run_reads(self):
+        dbs = {d["label"]: d for d in REQ.for_tool("amr_plus_gui")["databases"]}
+        amr = dbs["AMRFinderPlus DB"]
+        self.assertEqual(amr["kind"], "amrfinder_db")
+        self.assertIn("setup-databases amrfinder", amr["fix"])
+        kraken = dbs["Kraken2 DB (organism detection)"]
+        # amr_plus_gui carries its OWN kraken_db key; grading only the Kraken
+        # GUI's copy left this one invisible.
+        self.assertEqual(kraken["config_key"], "kraken_db")
+        self.assertTrue(kraken["optional"])
+        # No site literal may come back in through a default here.
+        for db in dbs.values():
+            self.assertNotIn("/srv/", db.get("default", ""))
+
+    def test_missing_database_is_reported_with_amrfinders_own_words(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            env_bin, _ = self._env(
+                tmp, db_rc=1, db_msg="No valid AMRFinder database is found")
+            ok, detail = CHECK.check_amrfinder_db("", env_bin)
+            self.assertFalse(ok)
+            self.assertIn("No valid AMRFinder database is found", detail)
+
+    def test_database_inside_the_env_counts_as_configured(self):
+        """An empty amrfinder_db is the normal case, not a finding: amrfinder
+        falls back to the copy in its own env."""
+        with tempfile.TemporaryDirectory() as tmp:
+            env_bin, db = self._env(tmp)
+            ok, detail = CHECK.check_amrfinder_db("", env_bin)
+            self.assertTrue(ok, detail)
+            self.assertIn(db, detail)
+
+    def test_format_mismatch_is_named_instead_of_blaming_the_download(self):
+        """4.x data with a 3.x binary: amrfinder says "The BLAST database for
+        AMRProt was not found. Use amrfinder -u", which sends someone to
+        re-download a database that is already there and already correct."""
+        with tempfile.TemporaryDirectory() as tmp:
+            env_bin, db = self._env(tmp, version="3.12.8", fmt="4.2.0")
+            ok, detail = CHECK.check_amrfinder_db(db, env_bin)
+            self.assertFalse(ok)
+            self.assertIn("format 4.x", detail)
+            self.assertIn("3.x", detail)
+            self.assertIn("re-downloading will not help", detail)
+
+    def test_no_amrfinder_at_all_is_not_reported_as_a_database_fault(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            env_bin = Path(tmp) / "env/bin"
+            env_bin.mkdir(parents=True)
+            with mock.patch.dict(os.environ, {"PATH": str(env_bin)}):
+                ok, detail = CHECK.check_amrfinder_db("", str(env_bin))
+            self.assertIsNone(ok, detail)   # the binary check owns this finding
+
+    def test_kraken_db_needs_every_file_kraken2_checks(self):
+        """A directory with only hash.k2d passed the old single-marker check and
+        then failed at run time with `does not contain necessary file
+        taxo.k2d` — kraken2's wrapper requires all three."""
+        db = {"label": "Kraken2 DB", "config_key": "kraken_db",
+              "kind": "dir_marker",
+              "markers": ["taxo.k2d", "opts.k2d", "hash.k2d"],
+              "fix": "bin/bdtools setup-databases kraken"}
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = Path(tmp) / "cfg/kraken_id_parse_gui"
+            cfg.mkdir(parents=True)
+            partial = Path(tmp) / "k2"
+            partial.mkdir()
+            (partial / "hash.k2d").touch()
+            (cfg / "config.json").write_text(json.dumps({"kraken_db": str(partial)}))
+            with mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": str(Path(tmp) / "cfg")}):
+                ok, detail = CHECK.check_db("kraken_id_parse_gui", db)
+                self.assertFalse(ok)
+                self.assertIn("taxo.k2d", detail)
+                for f in ("taxo.k2d", "opts.k2d"):
+                    (partial / f).touch()
+                ok, _ = CHECK.check_db("kraken_id_parse_gui", db)
+                self.assertTrue(ok)
+
+    def test_an_optional_database_is_a_note_when_unset_and_a_finding_when_broken(self):
+        db = {"label": "Kraken2 DB (organism detection)", "config_key": "kraken_db",
+              "kind": "dir_marker", "markers": ["taxo.k2d"], "optional": True,
+              "fix": "bin/bdtools setup-databases kraken"}
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = Path(tmp) / "cfg/amr_plus_gui"
+            cfg.mkdir(parents=True)
+            (cfg / "config.json").write_text(json.dumps({"kraken_db": ""}))
+            with mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": str(Path(tmp) / "cfg")}):
+                self.assertIsNone(CHECK.check_db("amr_plus_gui", db)[0])
+                (cfg / "config.json").write_text(
+                    json.dumps({"kraken_db": str(Path(tmp) / "gone")}))
+                self.assertFalse(CHECK.check_db("amr_plus_gui", db)[0])
+
+
+class OpenFileLimitTests(unittest.TestCase):
+    """macOS hands a GUI-launched process 256 open files. KMC (inside shovill)
+    opens one temp file per k-mer bin and died at `Cannot open temporary file
+    .../kmc_00253.bin`, so every assembly fell back to plain SPAdes — which
+    logged its own ceiling ("Open file limit set to 256") and survived only
+    because it needs 80. No file check can see this: it is a property of the
+    process that launched the tool."""
+
+    def test_raise_file_limit_raises_and_never_lowers(self):
+        import resource
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        try:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (256, hard))
+            before, after = TL.raise_file_limit(1024)
+            self.assertEqual(before, 256)
+            self.assertGreaterEqual(after, 1024)
+            self.assertGreaterEqual(TL.file_limit(), 1024)
+            # A want below the current limit must not lower it.
+            self.assertEqual(TL.raise_file_limit(64)[1], TL.file_limit())
+        finally:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (soft, hard))
+
+    def test_the_launch_header_records_the_limit_the_tool_will_have(self):
+        header = TL.log_header({"tool": "amr_plus_gui", "env_dir": "/x/env",
+                                "argv": [], "cwd": "/x", "env_overrides": {}})
+        self.assertIn("open files:", header)
+
+    def test_both_launchers_raise_it(self):
+        """One launcher disagreeing with the other about the environment a tool
+        gets is a failure mode this suite has already paid for."""
+        self.assertIn("raise_file_limit",
+                      (ROOT / "bin/install-local.sh").read_text(encoding="utf-8"))
+        self.assertIn("tool_launch.raise_file_limit()",
+                      (ROOT / "bin/ood_dashboard/app.py").read_text(encoding="utf-8"))
+        # ...and a golden run must use the same limits production launches with.
+        self.assertIn("raise_file_limit", (ROOT / "bin/test.sh").read_text(encoding="utf-8"))
+
+
 if __name__ == "__main__":
     unittest.main()

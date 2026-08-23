@@ -35,9 +35,18 @@ from a named conda env passed every check and still had no working Kraken
 hand-off in vSNP Step 1.
 
 Database `kind`:
-  dir          a directory that must exist and be non-empty
-  dir_marker   a directory that must contain `marker` (e.g. kraken2's hash.k2d)
-  file_prefix  a BLAST-style db prefix: at least one `<value>.*` file must exist
+  dir           a directory that must exist and be non-empty
+  dir_marker    a directory that must contain every name in `markers` (kraken2's
+                taxo.k2d, opts.k2d, hash.k2d — all three, because its wrapper
+                aborts on the first one missing)
+  file_prefix   a BLAST-style db prefix: at least one `<value>.*` file must exist
+  amrfinder_db  asked of amrfinder itself, not of the filesystem: it may use a
+                configured path or the copy inside its own env, and only the
+                binary knows which — see check.check_amrfinder_db
+
+`optional` marks a database the tool degrades without instead of failing: unset
+is then a note (with `degrades` saying what stops working), while a path that IS
+set and unreadable stays a finding — that run drops the feature silently.
 """
 
 # Shared by every GUI: the FastAPI/uvicorn web layer that serves the SPA.
@@ -73,7 +82,12 @@ REQUIREMENTS = {
         "fix": "bin/bdtools install kraken_id_parse_gui --fresh   # rebuilds this env from scratch",
         "databases": [
             {"label": "Kraken2 DB", "config_key": "kraken_db",
-             "kind": "dir_marker", "marker": "hash.k2d",
+             "kind": "dir_marker",
+             # All three, in the order kraken2's own wrapper checks them: it
+             # aborts on the FIRST one missing, so a partial DB used to pass a
+             # hash.k2d-only check here and fail at run time with "does not
+             # contain necessary file taxo.k2d".
+             "markers": ["taxo.k2d", "opts.k2d", "hash.k2d"],
              "default": "/srv/kapurlab/databases/kraken2/k2_standard_08gb",
              "fix": "bin/bdtools setup-databases kraken"},
             {"label": "BLAST ref_prok_rep_genomes", "config_key": "blast_db",
@@ -105,8 +119,37 @@ REQUIREMENTS = {
     # contain them, and probing this env for them would report a missing
     # program that no rebuild of THIS env could fix. Same for genoflu, which
     # irma_gui runs from genoflu_gui's env and was never listed here.
+    # Both databases below are declared because an AMR run reads them and
+    # nothing here graded either one. The 2026-08-23 lab run: amrfinder on PATH,
+    # doctor green, and Step 5 exiting 1 with "No valid AMRFinder database is
+    # found" while Step 1 skipped organism detection because its Kraken2 DB was
+    # unreadable — a report written, an xlsx written, and zero AMR calls in it.
+    #
+    # No path literal and no `default`: amr_plus_gui computes both defaults from
+    # this machine's db-root and stores only paths that exist, so the config key
+    # is the authority and an empty one means "not set here", never "/srv".
     "amr_plus_gui": {"modules": _WEB_AIO, "binaries": ["amrfinder"],
-                     "sibling_tools": ["mlst_gui", "kraken_id_parse_gui"]},
+                     "sibling_tools": ["mlst_gui", "kraken_id_parse_gui"],
+                     "databases": [
+                         # kind amrfinder_db asks amrfinder itself (see
+                         # check.check_amrfinder_db): the DB may be a configured
+                         # path OR the copy inside the env, and only the binary
+                         # knows which one it will take.
+                         {"label": "AMRFinderPlus DB", "config_key": "amrfinder_db",
+                          "kind": "amrfinder_db",
+                          "fix": "bin/bdtools setup-databases amrfinder"},
+                         # Read-based organism detection only. Without it the
+                         # pipeline falls back to MLST and still calls acquired
+                         # genes, so an unset key is a note — but a key pointing
+                         # at an unreadable DB is a finding: that run logs a
+                         # kraken2 failure and drops the feature silently.
+                         {"label": "Kraken2 DB (organism detection)",
+                          "config_key": "kraken_db", "kind": "dir_marker",
+                          "markers": ["taxo.k2d", "opts.k2d", "hash.k2d"],
+                          "optional": True,
+                          "degrades": "organism detection falls back to MLST",
+                          "fix": "bin/bdtools setup-databases kraken"},
+                     ]},
     "genoflu_gui": {"modules": _WEB_AIO, "binaries": ["seqkit"]},
     # plotly is REQUIRED, not a nicety: html_report.py wraps its import in a
     # broad except, so an env without it still writes a report — just with every

@@ -26,6 +26,10 @@ import platform
 import shlex
 import sys
 import time
+try:
+    import resource        # POSIX only; absent on native Windows
+except ImportError:        # pragma: no cover — WSL/macOS/Linux all have it
+    resource = None
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
@@ -486,6 +490,59 @@ def resolve(tool, port, host="127.0.0.1"):
     }
 
 
+# How many open files a tool gets. Every analysis subprocess inherits this
+# launcher's RLIMIT_NOFILE, and macOS hands a GUI-launched process a soft limit
+# of 256 — which the assembly stack runs straight through. Live case
+# (2026-08-23): shovill's KMC opens one temp file per k-mer bin and died on
+# `Cannot open temporary file .../kmc_00253.bin` — file 253 of 256, minus stdio
+# — so the AMR pipeline silently fell back to plain SPAdes, which announced its
+# own ceiling in the same log ("Open file limit set to 256") and survived only
+# because it needs 80. Nothing about that failure names a limit, and no file
+# check can see it: it is a property of the process that spawned the tool.
+#
+# 8192 with a stepped retreat: the soft limit may be raised up to the hard limit
+# (effectively unbounded on macOS and Linux), but a host with a real ceiling must
+# still get the highest value it will accept rather than an exception.
+WANT_NOFILE = 8192
+
+
+def raise_file_limit(want=WANT_NOFILE):
+    """Raise this process's open-file soft limit. Returns (before, after).
+
+    Children inherit it, so calling this once in the launcher covers every
+    program the pipeline spawns. Never lowers a limit, and never throws: a host
+    that refuses the raise is reported through the return value (and the launch
+    header), not by failing a launch that would otherwise have worked."""
+    if resource is None:
+        return (0, 0)
+    try:
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    except (OSError, ValueError):
+        return (0, 0)
+    if soft >= want:
+        return (soft, soft)
+    capped = want if hard == resource.RLIM_INFINITY else min(want, hard)
+    for cand in (capped, 4096, 2048, 1024):
+        if cand <= soft:
+            break
+        try:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (cand, hard))
+            return (soft, cand)
+        except (OSError, ValueError):
+            continue
+    return (soft, soft)
+
+
+def file_limit():
+    """This process's open-file soft limit (0 when it cannot be read)."""
+    if resource is None:
+        return 0
+    try:
+        return resource.getrlimit(resource.RLIMIT_NOFILE)[0]
+    except (OSError, ValueError):
+        return 0
+
+
 def _env_subdir(envdir):
     """The conda platform an env was built for (majority of its packages)."""
     counts = {}
@@ -587,6 +644,7 @@ def log_header(plan, when=None):
         "# bdtools tool launch — %s\n"
         "# started: %s\n"
         "# python env: %s\n"
+        "# open files: %s (soft RLIMIT_NOFILE, inherited by every analysis subprocess)\n"
         "%s"
         "# Reproduce this exact run from a terminal (copy/paste the line below):\n"
         "#\n"
@@ -594,7 +652,7 @@ def log_header(plan, when=None):
         "#\n"
         "%s\n"
     ) % (bar, plan.get("tool", "?"), when, plan.get("env_dir", "?"),
-         warn_block, reproduce_command(plan), bar)
+         file_limit() or "unknown", warn_block, reproduce_command(plan), bar)
 
 
 def _cli():

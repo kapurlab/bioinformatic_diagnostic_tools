@@ -1836,6 +1836,136 @@ def _paths_file_roots(env_bin, rel):
     return [ln.strip() for ln in lines if ln.strip() and not ln.strip().startswith("#")]
 
 
+# --- AMRFinderPlus database ------------------------------------------------
+#
+# Graded by EXECUTION, not by looking at files: `amrfinder --database_version`
+# resolves its database exactly the way a run does (the configured -d, else the
+# copy inside its own env), so doctor and the pipeline cannot disagree about
+# whether there is a usable one. This is here because nothing graded it at all.
+# The bioconda ncbi-amrfinderplus package ships 15 files and NO database — the
+# README said the opposite — so a machine where nobody ever ran `amrfinder -u`
+# had amrfinder on PATH, a green doctor report, and every AMR run exiting 1 with
+# "No valid AMRFinder database is found" *after* writing a report and an xlsx.
+# That is the live 2026-08-23 training run, and it is the third instance of this
+# suite's recurring shape: a failed run reported as success.
+AMRFINDER_PROBE_TIMEOUT = 90
+
+
+def _amrfinder_env_db(env_bin):
+    """Where amrfinder looks when given no -d: the DB inside its own env."""
+    if not env_bin:
+        return ""
+    return str(Path(env_bin).parent / "share" / "amrfinderplus" / "data" / "latest")
+
+
+def _amrfinder_error(out):
+    """The line amrfinder printed after its own `*** ERROR ***` banner."""
+    lines = [ln.strip() for ln in (out or "").splitlines()]
+    for i, ln in enumerate(lines):
+        if ln.startswith("*** ERROR"):
+            for rest in lines[i + 1:]:
+                if rest:
+                    return rest
+    for ln in reversed(lines):
+        if ln:
+            return ln
+    return "no output"
+
+
+def _run_amrfinder(cmd):
+    """(returncode, combined output); (None, "") if it could not be run."""
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True,
+                              timeout=AMRFINDER_PROBE_TIMEOUT)
+    except (OSError, subprocess.SubprocessError):
+        return None, ""
+    return proc.returncode, (proc.stdout or "") + "\n" + (proc.stderr or "")
+
+
+def _amrfinder_major(amr, pin):
+    """Major version of the amrfinder binary, or None.
+
+    Scans every line rather than the first: 3.x prints a "Running: <path>"
+    banner before "Software version: 3.12.8", so line 0 is a path carrying no
+    version at all (the trap amr_plus_gui's run_amrfinder.py documents)."""
+    rc, out = _run_amrfinder(pin + [amr, "--version"])
+    if rc is None:
+        return None
+    for line in out.splitlines():
+        for pattern in (r"^\s*(\d+)\.\d+", r"version[:\s]+(\d+)\.\d+"):
+            m = re.search(pattern, line.strip(), re.IGNORECASE)
+            if m:
+                return int(m.group(1))
+    return None
+
+
+def _db_format_major(path):
+    """Major of the DB's database_format_version.txt, or None if absent."""
+    try:
+        raw = (Path(path) / "database_format_version.txt").read_text(
+            encoding="utf-8").strip()
+    except OSError:
+        return None
+    m = re.match(r"(\d+)\.", raw + ".")
+    return int(m.group(1)) if m else None
+
+
+def check_amrfinder_db(configured, env_bin):
+    """(ok, detail) for the AMRFinderPlus DB an AMR run here would actually use.
+
+    ok is None when the question does not apply (no amrfinder in this env — the
+    binary check owns that finding and saying it twice reads as two faults).
+
+    The format comparison is kept even when the probe passes: 4.x renamed
+    AMRProt to AMRProt.fa and bumped database_format_version, and a 3.x binary
+    handed a 4.x database aborts with "The BLAST database for AMRProt was not
+    found. Use amrfinder -u", which sends someone to re-download a database that
+    is already there and already correct. Same rule as the pipeline's
+    _is_valid_amrfinder_db, so both refuse the same pairing."""
+    amr = find_binary("amrfinder", env_bin)
+    if not amr:
+        return None, "(no amrfinder in this env)"
+    envdir = str(Path(env_bin).parent) if env_bin else ""
+    pin = _pin_for_exec(envdir, amr, env_bin) if envdir else []
+    used = configured or _amrfinder_env_db(env_bin)
+    cmd = pin + [amr, "--database_version"] + (["-d", configured] if configured else [])
+    rc, out = _run_amrfinder(cmd)
+    if rc is None:
+        return None, f"(could not run {amr})"
+    # amrfinder names the directory it settled on ("Database directory: '<p>'").
+    # Prefer it over our reconstruction: with no -d the choice depends on
+    # $CONDA_PREFIX, which is set per launch, so the path we would compute can
+    # be right about the env and wrong about the run.
+    for line in out.splitlines():
+        m = re.search(r"database directory:\s*'([^']+)'", line, re.IGNORECASE)
+        if m:
+            used = m.group(1)
+    if rc != 0 and "is not a valid option" in out:
+        # An amrfinder too old for --database_version (3.x). Fall back to the
+        # layout its own reader requires, then to the format check below — which
+        # is what actually breaks these installs.
+        d = Path(used) if used else None
+        ok = bool(d) and (d / "version.txt").is_file() and (
+            any(d.glob("AMRProt*")) or any(d.glob("AMR_CDS*")))
+        if not ok:
+            return False, f"{used or '(none)'} — no AMRFinderPlus database there"
+    elif rc != 0:
+        return False, f"{used or '(none)'} — amrfinder says: {_amrfinder_error(out)}"
+    db_major, bin_major = _db_format_major(used), _amrfinder_major(amr, pin)
+    if db_major and bin_major and db_major != bin_major:
+        return False, (f"{used} is format {db_major}.x but this amrfinder is "
+                       f"{bin_major}.x — nothing is corrupt and re-downloading "
+                       f"will not help; one side has to move")
+    ver = ""
+    for line in out.splitlines():
+        m = re.search(r"database version[:\s]+(\S+)", line, re.IGNORECASE)
+        if m:
+            ver = m.group(1)
+    if ver and ver != os.path.basename(used.rstrip("/")):
+        return True, f"{used} ({ver})"
+    return True, used
+
+
 def check_db(tool, db, env_bin=""):
     # What the tool actually reads at run time wins over what a config key says.
     for root in _paths_file_roots(env_bin, db.get("paths_file", "")):
@@ -1851,10 +1981,22 @@ def check_db(tool, db, env_bin=""):
     val = config_value(tool, db["config_key"])
     if not val and db.get("default"):
         val = _expand(db["default"])
+    kind = db["kind"]
+    # Asked before the "nothing configured" bail-out below, because this one
+    # resolves either way: amrfinder falls back to the database inside its own
+    # env, so an empty config key is a perfectly normal working install.
+    if kind == "amrfinder_db":
+        return check_amrfinder_db(val, env_bin)
     if not val:
+        # `optional` marks a database the tool DEGRADES without rather than
+        # fails: amr_plus_gui skips read-based organism detection when it has no
+        # Kraken2 DB and still calls acquired genes. Unset is then a note, not a
+        # fault — but a path that IS set and cannot be read stays a finding,
+        # because that run will log a failure and silently drop the feature.
+        if db.get("optional"):
+            return None, f"(not configured under '{db['config_key']}')"
         return False, f"(no path set under '{db['config_key']}')"
     p = Path(val)
-    kind = db["kind"]
     if kind == "dir":
         # Same OSError guard as the paths_file loop above: a traversable but
         # unreadable directory (mode 330 on a shared site root) makes iterdir
@@ -1865,7 +2007,18 @@ def check_db(tool, db, env_bin=""):
         except OSError as e:
             return False, f"{val} (cannot list: {e})"
     elif kind == "dir_marker":
-        ok = (p / db["marker"]).exists()
+        # Every marker, not one. kraken2's own wrapper requires taxo.k2d,
+        # opts.k2d AND hash.k2d, and checks them in that order — so a directory
+        # holding only hash.k2d (an interrupted extraction; a DB built by hand)
+        # passed this check and then died at run time with `does not contain
+        # necessary file taxo.k2d`, which is exactly what the AMR pipeline's
+        # organism-detection step hit on 2026-08-23.
+        markers = db.get("markers") or ([db["marker"]] if db.get("marker") else [])
+        missing = [m for m in markers if not (p / m).exists()]
+        if missing:
+            need = ", ".join(markers)
+            return False, f"{val} — no {missing[0]} (kraken2 needs {need})"
+        ok = bool(markers)
     elif kind == "file_prefix":
         ok = bool(list(p.parent.glob(p.name + ".*"))) if p.parent.is_dir() else False
     else:
@@ -2295,7 +2448,17 @@ def run_checks(tool, env_py, scope, tool_dir=None, deep=False):
         for db in spec.get("databases", []):
             ok, detail = check_db(tool, db, env_bin=env_bin)
             if ok:
-                lines.append((OK, db["label"], None))
+                # Say WHICH database answered: the recurring confusion on these
+                # reports is two configs naming different copies (amr_plus_gui
+                # carries its own kraken_db key, separate from the Kraken GUI's),
+                # and a bare "✓ Kraken2 DB" cannot tell them apart.
+                lines.append((OK, f"{db['label']}: {detail}" if detail else db["label"], None))
+            elif ok is None:
+                msg = f"{db['label']} {detail}"
+                if db.get("degrades"):
+                    msg += f" — {db['degrades']}"
+                lines.append((SKIP, msg, db.get("fix")))
+                notes.append(msg + (f"; remedy: {db['fix']}" if db.get("fix") else ""))
             else:
                 lines.append((BAD, f"{db['label']} missing {detail}", db["fix"]))
                 issues.append({"label": f"{db['label']} missing", "fix": db["fix"]})

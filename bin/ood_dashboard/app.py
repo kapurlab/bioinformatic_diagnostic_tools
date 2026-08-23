@@ -284,6 +284,11 @@ class Suite:
         ), "dashboard-logs")
         os.makedirs(logdir, exist_ok=True)
         logf = open(os.path.join(logdir, f"{name}.log"), "ab")
+        # Before the header is written, so the header states the limit the tool
+        # will actually have. macOS gives a GUI-launched dashboard 256 open
+        # files and the assembly stack needs hundreds (see
+        # tool_launch.raise_file_limit); the tool inherits ours.
+        tool_launch.raise_file_limit()
         try:
             logf.write(tool_launch.log_header(plan).encode())
             logf.flush()

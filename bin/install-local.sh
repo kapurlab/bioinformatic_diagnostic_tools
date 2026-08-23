@@ -1646,6 +1646,10 @@ for k in KEYS:
     if v:
         print("%s=%s" % (k, v))' 2>/dev/null)
 
+  # Enough open files for the assembly stack, before the header below records
+  # what the tool got. Every analysis subprocess inherits it (raise_file_limit).
+  raise_file_limit
+
   # Record the exact, reproducible launch command to the tool's dashboard log, so
   # every run (including this direct `bdtools local` one) is copy-paste rerunnable
   # from a terminal. Mirrors the header the dashboards write (tool_launch.log_header).
@@ -1659,6 +1663,7 @@ for k in KEYS:
     printf '# bdtools tool launch — %s\n' "${TOOL}"
     printf '# started: %s\n' "$(date '+%Y-%m-%d %H:%M:%S %z')"
     printf '# python env: %s\n' "${envbin%/bin}"
+    printf '# open files: %s (soft RLIMIT_NOFILE, inherited by every analysis subprocess)\n' "$(file_limit)"
     printf '# Reproduce this exact run from a terminal (copy/paste the line below):\n#\n'
     printf 'cd %q && PATH=%q:$PATH PYTHONPATH=%q %s%q -m uvicorn app.main:app --host 127.0.0.1 --port %q --log-level info\n' \
       "${DIR}/backend" "${launch_path}" "${DIR}/bin" "${extra_env}" "${py}" "${PORT}"
@@ -1673,6 +1678,7 @@ for k in KEYS:
   # computed once at the top of launch() — the heredoc repair above already
   # ran under the same pin.
   [[ -n "${_archp}" ]] && echo "  arch:   ${_archp} (pinned from the env's platform)"
+  echo "  files:  $(file_limit) open-file limit (the assembly stack needs hundreds)"
   PATH="${launch_path}:${PATH}" PYTHONPATH="${DIR}/bin:${PYTHONPATH:-}" \
     exec ${_arch_cmd[@]+"${_arch_cmd[@]}"} "${py}" -m uvicorn app.main:app --host 127.0.0.1 --port "${PORT}" --log-level info
 }

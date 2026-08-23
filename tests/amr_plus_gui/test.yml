@@ -1,10 +1,16 @@
 # amr_plus_gui validation spec — see tests/README.md
 # Sample: Klebsiella pneumoniae HS11286 reference assembly — a carbapenem-
 # resistant reference strain that carries multiple acquired beta-lactamases
-# (incl. a blaKPC carbapenemase). Organism is forced so no Kraken2 DB is needed;
-# AMRFinderPlus ships its own DB in the conda env, so this tool needs no
-# external reference download. A post-step (tests/lib/amr_summarize.py) reduces
-# amrfinder.tsv + organism_detection.json to amr_result.json for comparison.
+# (incl. a blaKPC carbapenemase). Organism is forced so no Kraken2 DB is needed.
+# The AMRFinderPlus database, though, IS a prerequisite: this comment used to say
+# it ships in the conda env, and it does not — bioconda's ncbi-amrfinderplus is
+# the program plus 15 files, no data — so install it once with
+# `bdtools setup-databases amrfinder`. Kept tier 1 deliberately: without a
+# database this run reports zero genes rather than skipping, which is the honest
+# result for a validation whose whole point is the calls (and `bdtools doctor
+# amr_plus_gui` names the missing database). A post-step
+# (tests/lib/amr_summarize.py) reduces amrfinder.tsv + organism_detection.json to
+# amr_result.json for comparison.
 tier: 1
 summary: K. pneumoniae HS11286 -> AMRFinderPlus detects acquired AMR genes
 fetch: genome

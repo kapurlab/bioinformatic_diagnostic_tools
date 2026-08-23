@@ -19,6 +19,8 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -85,6 +87,39 @@ CONDA_MODULES = {
 }
 
 
+# Variables that redirect an interpreter away from its own libraries, stripped
+# from every probe subprocess. Doctor grades the TOOL's environment, not the
+# shell doctor happens to run in: an HPC site module exporting PYTHONHOME makes
+# the env's own python report the module's prefix as sys.prefix, and doctor
+# then declared a healthy interpreter "another env's python" and prescribed a
+# force-reinstall that could not change anything — the production launcher
+# never sees that variable. PERL5LIB/PERLLIB/PERL5OPT/RUBYLIB are the same
+# lever for the other interpreters, and LD_PRELOAD injects libraries into
+# every child outright. LD_LIBRARY_PATH is deliberately KEPT: production
+# children inherit it too, so stripping it would probe a configuration nobody
+# runs — instead its presence is reported as a note (see loader_env_notes),
+# because on HPC it redirects loading the way Rosetta redirected slices.
+_PROBE_STRIP_VARS = ("PYTHONHOME", "PYTHONPATH", "PYTHONSTARTUP",
+                     "PERL5LIB", "PERLLIB", "PERL5OPT", "RUBYLIB", "LD_PRELOAD")
+
+
+def _probe_env():
+    """os.environ minus _PROBE_STRIP_VARS — what every probe child runs with."""
+    env = dict(os.environ)
+    for var in _PROBE_STRIP_VARS:
+        env.pop(var, None)
+    return env
+
+
+# Memoized per real path for the life of the process. run_checks consults the
+# env's subdir five-plus times per tool, and every un-cached call re-reads and
+# re-parses every conda-meta/*.json — on an NFS/Lustre home directory that is
+# a per-tool metadata storm doctor inflicts on the machine it is diagnosing.
+# An env's platform changes only during a conda transaction, never during one
+# doctor run, so one read per env is the honest amount of work.
+_SUBDIR_CACHE = {}
+
+
 def env_conda_subdir(envdir):
     """The conda platform this env was built for — majority of its packages.
 
@@ -94,6 +129,9 @@ def env_conda_subdir(envdir):
     env; the result runs until the analysis calls the binary and then dies with
     "incompatible architecture". A repair must not be able to cause that.
     """
+    key = os.path.realpath(str(envdir))
+    if key in _SUBDIR_CACHE:
+        return _SUBDIR_CACHE[key]
     counts = {}
     for meta in Path(envdir, "conda-meta").glob("*.json"):
         try:
@@ -102,7 +140,9 @@ def env_conda_subdir(envdir):
             continue
         if sd and sd != "noarch":
             counts[sd] = counts.get(sd, 0) + 1
-    return max(counts, key=counts.get) if counts else ""
+    out = max(counts, key=counts.get) if counts else ""
+    _SUBDIR_CACHE[key] = out
+    return out
 
 
 def _pip_cmd(env_py, tool_dir, web):
@@ -193,7 +233,8 @@ def stale_python_trees(env_py):
         cur = subprocess.run(
             [env_py, "-c",
              "import sys; print('python%d.%d' % sys.version_info[:2])"],
-            capture_output=True, text=True, timeout=60).stdout.strip()
+            capture_output=True, text=True, timeout=60,
+            env=_probe_env()).stdout.strip()
     except Exception:
         cur = ""
     if not cur:
@@ -236,16 +277,35 @@ for m in sys.argv[1:]:
             "error": "%s: %s" % (type(e).__name__, " ".join(str(e).split())[:300]),
             "chain": chain,
         }
-print(json.dumps(out))
+# Bracketed by a sentinel so the parent can find the payload ANYWHERE in
+# stdout. "Last line of stdout" broke the moment one probed module registered
+# an atexit handler that prints (update notices, telemetry banners): that text
+# lands AFTER this line, the parse failed, and every module in the spec was
+# reported missing on a healthy env.
+print("@@BDTOOLS@@" + json.dumps(out) + "@@BDTOOLS@@")
 '''
 
 
-def check_modules(env_py, modules):
+# Returned by check_modules INSTEAD of a findings dict when the probe hit its
+# time limit. A timeout is a fact about the filesystem, not the packages: on a
+# cold NFS/Lustre cache the first-touch page-in of numpy/pandas/pysam shared
+# objects can exceed any budget, and folding that into the generic "can't run
+# the interpreter" answer printed "python modules missing: fastapi, uvicorn,
+# ... pandas, pysam" — fifteen install commands — over a perfectly healthy env
+# on the platform where doctor is trusted least. The caller must turn this
+# into a note, never into a missing-modules finding.
+MODULE_PROBE_TIMED_OUT = object()
+_MODULE_PROBE_SECS = 120
+
+
+def check_modules(env_py, modules, probe_env=None):
     """Which of `modules` fail to import in the tool's env, and WHY.
 
     Returns a dict, in spec order, {module: {"absent": bool, "error": str,
     "chain": [pkg, ...]}} — empty when every import works. Falsy-empty either
     way, so callers guard on it exactly as they did when this returned a list.
+    Returns MODULE_PROBE_TIMED_OUT (a sentinel, not a dict) when the probe ran
+    out of time — see that constant for why the distinction is load-bearing.
 
     Actually imports each module in the env interpreter (a real "does it work"
     test, not just "is it discoverable"). Each import is guarded independently so
@@ -269,12 +329,23 @@ def check_modules(env_py, modules):
     unknown = {m: {"absent": True, "error": "", "chain": []} for m in modules}
     try:
         out = subprocess.run([env_py, "-c", _IMPORT_PROBE, *modules],
-                             capture_output=True, text=True, timeout=120)
+                             capture_output=True, text=True,
+                             timeout=_MODULE_PROBE_SECS,
+                             env=probe_env or _probe_env())
         # If the interpreter couldn't even start the script (nonzero exit with no
         # output), we can't say which imports failed — report all as missing.
         if out.returncode != 0 and not out.stdout.strip():
             return unknown
-        data = json.loads(out.stdout.strip().splitlines()[-1])
+        # Extract by sentinel, so a module that prints after the payload (an
+        # atexit update notice) cannot corrupt the parse — see _IMPORT_PROBE.
+        hit = re.search(r"@@BDTOOLS@@(.*?)@@BDTOOLS@@", out.stdout, re.DOTALL)
+        data = json.loads(hit.group(1) if hit
+                          else out.stdout.strip().splitlines()[-1])
+    except subprocess.TimeoutExpired:
+        # NOT the all-missing answer: the interpreter was still working, the
+        # filesystem was slow. Reporting fifteen missing packages here is the
+        # highest-volume cry-wolf vector on HPC — see MODULE_PROBE_TIMED_OUT.
+        return MODULE_PROBE_TIMED_OUT
     except Exception:
         return unknown  # can't even run the interpreter -> all "missing"
     # Preserve the spec's order, not the JSON's, so messages read the same way
@@ -318,10 +389,18 @@ def broken_import_fix(env_py, module, info):
 def _shared_lib_from_error(err):
     """Basename of the native library a failed import could not load, or ''.
 
-    Covers the three shapes a dynamic-linker failure reaches python with:
-    macOS `dlopen(...): Library not loaded: @rpath/libssl.3.dylib`, macOS
-    `tried: '...' (mach-o file, but is an incompatible architecture ...)`, and
-    Linux `libssl.so.3: cannot open shared object file`."""
+    Covers the shapes a dynamic-linker failure reaches python with. macOS:
+    `dlopen(...): Library not loaded: @rpath/libssl.3.dylib` and
+    `tried: '...' (mach-o file, but is an incompatible architecture ...)`.
+    Linux/glibc: `libssl.so.3: cannot open shared object file`,
+    `symbol lookup error: /path/libX.so: undefined symbol: foo`,
+    ``version `GLIBC_2.34' not found (required by /path/libX.so)``, and the
+    ImportError variant `/env/.../_ext.so: undefined symbol: PyFloat_...`.
+    musl (Alpine): `Error loading shared library libz.so.1: ...`. The Linux
+    shapes are checked AFTER the macOS ones so macOS behavior is unchanged —
+    without them, shared_lib_fix returned (None, None) on every glibc failure
+    and the report fell through to the import-chain heuristic, the exact
+    "confidently wrong" remedy path this function exists to preempt."""
     m = re.search(r"Library not loaded:\s*'?(\S+?)'?(?:\s|$|\))", err)
     if m:
         return os.path.basename(m.group(1).strip("'\""))
@@ -330,6 +409,18 @@ def _shared_lib_from_error(err):
     if m:
         return m.group(1)
     m = re.search(r"tried:\s*'([^']+)'[^']*incompatible architecture", err)
+    if m:
+        return os.path.basename(m.group(1))
+    m = re.search(r"symbol lookup error:\s*(\S+?):", err)
+    if m:
+        return os.path.basename(m.group(1))
+    m = re.search(r"(\S+\.so[\w.]*)\s*:\s*undefined symbol", err)
+    if m:
+        return os.path.basename(m.group(1))
+    m = re.search(r"Error loading shared library\s+([^\s:]+)", err)
+    if m:
+        return os.path.basename(m.group(1))
+    m = re.search(r"not found \(required by (\S+?)\)", err)
     if m:
         return os.path.basename(m.group(1))
     return ""
@@ -388,6 +479,34 @@ def shared_lib_fix(env_py, module, info):
     envdir = str(Path(env_py).parent.parent)
     name, version, pkg_subdir, channel = _conda_pkg_owning(envdir, lib)
     if not name:
+        # Some libraries were never conda's to ship, and the generic "only a
+        # rebuild can restore it" is doubly wrong for them: the file was
+        # expected from the operating system or a driver, and no number of env
+        # rebuilds will produce it. The classic on CPU-only Linux nodes is a
+        # GPU-optional package narrating "libcuda.so.1: cannot open shared
+        # object file" — steering that user to the largest, least effective
+        # action is how doctor loses its credibility.
+        low = lib.lower()
+        if low.startswith(("libcuda", "libnvidia")):
+            return None, (f"cause: {lib} is a GPU driver library — it comes "
+                          f"from the NVIDIA driver, not from this env. On a "
+                          f"machine without that driver the GPU path is simply "
+                          f"unavailable; the CPU path is unaffected, and no "
+                          f"rebuild can produce a driver")
+        if low.startswith(("libcrypt.so.1", "libxcrypt")):
+            # The one system library with an in-env fix: modern distros
+            # (RHEL9, Ubuntu 24.04) dropped libcrypt.so.1, and conda-forge
+            # ships libxcrypt as exactly the shim older bioconda builds need.
+            env_subdir = env_conda_subdir(envdir)
+            pre = f"CONDA_SUBDIR={env_subdir} " if env_subdir else ""
+            fix = (f'{pre}conda install -y -p "{envdir}" -c conda-forge '
+                   f'libxcrypt   # restores libcrypt.so.1 inside the env, no '
+                   f'root needed')
+            why = (f"cause: this program was built against {lib}, which modern "
+                   f"distros no longer ship — the host removed it, the env "
+                   f"never had it, and a rebuild re-solves to the same builds; "
+                   f"libxcrypt is the conda-installable shim that puts it back")
+            return fix, why
         return None, (f"cause: the shared library {lib} failed to load — a "
                       f"native-library problem, not a conflict between the python "
                       f"packages in the import chain; no installed conda package "
@@ -437,20 +556,62 @@ def find_binary(name, env_bin, extra_dirs=()):
     return shutil.which(name, path=os.pathsep.join(p for p in search if p))
 
 
+def _same_or_under(path, root):
+    """Is `path` the same file/dir as `root`, or somewhere inside it?
+
+    Path identity by string prefix alone carries two known lies. Symlinks:
+    macOS parks /tmp and /var behind /private, so an env created under /tmp
+    never string-matches its own realpath — both sides are resolved first.
+    Case: the default macOS filesystem (APFS) folds case, so ONE directory
+    reached as .../BDTools and .../bdtools fails every startswith() test —
+    which classified a healthy in-env interpreter as belonging to "another
+    conda env" (the same env, spelled differently) and, on the loader-smoke
+    side, silently SKIPPED binaries it should have probed. Folding is applied
+    only on macOS (with os.path.normcase for any platform where it acts):
+    Linux filesystems are case-sensitive, and folding there would merge
+    genuinely distinct paths into false ownership.
+    """
+    p = os.path.normcase(os.path.realpath(str(path)))
+    r = os.path.normcase(os.path.realpath(str(root)))
+    if platform.system() == "Darwin":
+        p, r = p.lower(), r.lower()
+    return p == r or p.startswith(r.rstrip(os.sep) + os.sep)
+
+
 # Executable-format magic bytes, plus the CPU field each format carries:
 # ELF e_machine (offset 0x12, uint16 LE) and Mach-O cputype (offset 4, uint32 LE).
 # The OS alone is not enough — see check_binary_format.
 _ELF_MAGIC = b"\x7fELF"
 _MACHO_THIN = (b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe")
 _MACHO_FAT = b"\xca\xfe\xba\xbe"
-_ELF_MACHINES = {0x03: "i386", 0x3E: "x86_64", 0xB7: "arm64", 0x28: "arm"}
+# e_machine values, with the 64-bit machines host_conda_subdir claims to
+# support: EM_PPC64 (0x15) reads "ppc64le" or "ppc64" by the file's own
+# endianness, EM_S390 (0x16) is s390x, EM_RISCV (0xF3) is riscv64. Before
+# these, every ELF on a ppc64le HPC host parsed to "unknown" — the suite
+# claimed ppc support in common.sh and could not audit it here.
+_ELF_MACHINES = {0x03: "i386", 0x3E: "x86_64", 0xB7: "arm64", 0x28: "arm",
+                 0x15: "ppc64", 0x16: "s390x", 0xF3: "riscv64"}
 _MACHO_CPUS = {0x00000007: "i386", 0x01000007: "x86_64", 0x0100000C: "arm64"}
+
+# Memoized per path for the life of the process: the fat-or-thin question is
+# now asked once per interpreter probe AND once per smoke launch (the pin
+# decision hangs on it — see _pin_for_exec), and the answer for a given file
+# cannot change mid-run.
+_SLICE_CACHE = {}
 
 
 def _macho_slices(path):
     """Architecture names inside a Mach-O file: [] for non-fat, one per slice
     for a universal binary. A fat file matches every host, which is exactly why
     it can hide a runtime mismatch — see interpreter_smoke_test."""
+    if path in _SLICE_CACHE:
+        return _SLICE_CACHE[path]
+    names = _read_macho_slices(path)
+    _SLICE_CACHE[path] = names
+    return names
+
+
+def _read_macho_slices(path):
     import struct
     try:
         with open(path, "rb") as fh:
@@ -484,36 +645,128 @@ def _binary_target(path):
         return None              # unreadable, tiny, or a script (portable)
     magic = head[:4]
     if magic == _ELF_MAGIC:
-        m = struct.unpack("<H", head[18:20])[0]
-        return "linux", _ELF_MACHINES.get(m, "unknown")
+        # EI_DATA (byte 5) declares the file's own byte order — reading
+        # e_machine as little-endian unconditionally parsed every big-endian
+        # ELF (s390x, ppc64 BE) into garbage machine numbers. Big-endian only
+        # when the file SAYS so (2); anything else falls back to LE rather
+        # than flipping on a malformed header.
+        big = head[5] == 2
+        m = struct.unpack(">H" if big else "<H", head[18:20])[0]
+        arch = _ELF_MACHINES.get(m, "unknown")
+        if m == 0x15:
+            arch = "ppc64" if big else "ppc64le"
+        # EI_CLASS (byte 4): 1 means a 32-bit file. A 32-bit build of a 64-bit
+        # machine type must NOT wear the 64-bit name, or a wrong-ELF-class .so
+        # in a linux-64 env passes the audit and dies at run time with
+        # "wrong ELF class: ELFCLASS32" — give it a distinct arch instead.
+        if head[4] == 1 and arch == "x86_64":
+            arch = "x86"
+        elif head[4] == 1 and arch in ("arm64", "ppc64", "ppc64le",
+                                       "s390x", "riscv64"):
+            arch += "-32"
+        return "linux", arch
     if magic in _MACHO_THIN:
         c = struct.unpack("<I", head[4:8])[0]
         return "macos", _MACHO_CPUS.get(c, "unknown")
     if magic == _MACHO_FAT:
-        # Universal binary: assume the loader finds a usable slice rather than
-        # parsing the fat header. Permissive on purpose — this guards against the
-        # obvious mistake, it is not a loader.
-        return "macos", "universal"
+        # 0xCAFEBABE is ALSO the Java class-file magic, where bytes 4-8 hold
+        # the class-file version (>= 45 in the low half, or big values with
+        # preview bits set). A .class in <env>/bin was reported "built for
+        # macOS (Mach-O) universal but this host is Linux" — a wrong-OS
+        # verdict on a file that is neither. Real fat headers carry 2-3
+        # slices, so validate the count exactly like _macho_slices does.
+        n = struct.unpack(">I", head[4:8])[0]
+        if 0 < n < 32:
+            return "macos", "universal"
+        return None
     return None
+
+
+# One sysctl per process: _host_target is consulted per file in the arch
+# audit, and the kernel's answer cannot change mid-run.
+_DARWIN_ARCH = []
+
+
+def _darwin_host_arch():
+    """The CPU this Mac actually has — never what platform.machine() claims.
+
+    platform.machine() reports the architecture of the CURRENT process, so a
+    doctor run under Rosetta (an x86_64 base python — the suite's own default
+    on Apple Silicon via ensure_conda_subdir rule 2, or an x86_64 terminal)
+    answers "x86_64" on an arm64 machine. That is the exact lie the arch-pin
+    work removed from every other guard: judging the host by it reported a
+    native arm64 vendored binary as unrunnable on the machine that runs it
+    natively. The kernel knows better — hw.optional.arm64 is 1 on Apple
+    Silicon no matter which slice asks.
+    """
+    if _DARWIN_ARCH:
+        return _DARWIN_ARCH[0]
+    arch = ""
+    try:
+        out = subprocess.run(["/usr/sbin/sysctl", "-n", "hw.optional.arm64"],
+                             capture_output=True, text=True, timeout=10)
+        if out.returncode == 0 and out.stdout.strip() == "1":
+            arch = "arm64"
+    except Exception:
+        pass
+    if not arch:
+        m = platform.machine().lower()
+        arch = {"x86_64": "x86_64", "amd64": "x86_64",
+                "arm64": "arm64", "aarch64": "arm64"}.get(m, m)
+    _DARWIN_ARCH.append(arch)
+    return arch
 
 
 def _host_target():
     os_name = {"Linux": "linux", "Darwin": "macos"}.get(
         platform.system(), platform.system().lower())
+    if os_name == "macos":
+        return os_name, _darwin_host_arch()
+    # uname is truthful on Linux, WSL2 included — no translation layer lies.
     m = platform.machine().lower()
     arch = {"x86_64": "x86_64", "amd64": "x86_64",
             "arm64": "arm64", "aarch64": "arm64"}.get(m, m)
     return os_name, arch
 
 
+_ROSETTA = []                       # memoized: one exec per process
+
+
 def _rosetta_available():
     """Can this Apple Silicon host run x86_64 binaries?"""
+    if _ROSETTA:
+        return _ROSETTA[0]
     try:
-        return subprocess.run(["/usr/bin/arch", "-x86_64", "/usr/bin/true"],
-                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                              timeout=10).returncode == 0
+        ok = subprocess.run(["/usr/bin/arch", "-x86_64", "/usr/bin/true"],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                            timeout=10).returncode == 0
     except Exception:
+        ok = False
+    _ROSETTA.append(ok)
+    return ok
+
+
+def _host_can_run(target):
+    """Can THIS machine exec a binary targeting (os, arch)?
+
+    The same runnability rules check_binary_format applies, factored out so
+    other checks can ask the question without inheriting its messages: an
+    osx-64 file on Apple Silicon with Rosetta is runnable, x86_64 on aarch64
+    Linux is not. "Foreign to the env" and "unrunnable on the host" are
+    different verdicts with different remedies, and conflating them is how a
+    deliberately-installed osx-64 package got reported as corruption.
+    """
+    if not target:
         return False
+    bin_os, bin_arch = target
+    host_os, host_arch = _host_target()
+    if bin_os != host_os:
+        return False
+    if bin_arch in ("universal", host_arch):
+        return True
+    if host_os == "macos" and host_arch == "arm64" and bin_arch == "x86_64":
+        return _rosetta_available()
+    return False
 
 
 def check_binary_format(name, env_bin, extra_dirs=()):
@@ -574,12 +827,25 @@ def check_binary_format(name, env_bin, extra_dirs=()):
 _SUBDIR_TARGET = {"osx-64": ("macos", "x86_64"), "osx-arm64": ("macos", "arm64"),
                   "linux-64": ("linux", "x86_64"), "linux-aarch64": ("linux", "arm64")}
 
-# A basename that names a platform is a package selecting per-platform payloads
-# on purpose, not a broken install — see foreign_arch_files.
+# A path component that names a platform is a package selecting per-platform
+# payloads on purpose, not a broken install — see foreign_arch_files. Applied
+# to EVERY component of the env-relative path, not the basename alone: node
+# trees ship '@img/sharp-linux-x64/libvips-cpp.so' and conda cross-toolchains
+# ship 'lib/gcc/aarch64-conda-linux-gnu/.../libgcc_s.so.1' — neutral basenames
+# inside platform-tagged directories, the exact ont-fast5-api vendoring class
+# one directory level up, and flagging those healthy files is the credibility
+# cost this exclusion exists to avoid.
 _ARCH_TAGGED_NAME = re.compile(
     r"(?:^|[-_.])(?:aarch64|arm64|x86[-_]?64|amd64|i[36]86|ppc64(?:le)?|s390x|"
     r"armv\d+|m1|win(?:32|64)|universal2?|manylinux\w*|musllinux\w*)(?=[-_.]|$)",
     re.IGNORECASE)
+
+# One compiled "is this a native-library filename" test for the lib/ walk:
+# *.so, *.so.N..., *.dylib, *.bundle. A single pattern over a single os.walk
+# replaced four rglob passes that each re-traversed the same subtrees — on an
+# env carrying R or Qt (10k-100k files under lib/) that was a stat-and-open
+# storm repeated for all nine tools on every routine doctor run.
+_NATIVE_LIB_NAME = re.compile(r"\.(?:so|dylib|bundle)(?:$|\.)")
 
 
 def foreign_arch_files(envdir):
@@ -602,57 +868,71 @@ def foreign_arch_files(envdir):
     perl. The disk is the authority; read it.
 
     Scope: <env>/bin plus native libraries under <env>/lib, EXCEPT the
-    lib/python* tree. Two reasons that tree is out of scope, both learned from
-    the first machine this ran on: (1) it is already proven the strong way —
-    check_modules imports it in the env's own interpreter, so a wrong-arch .so
-    there fails with the exact loader error and shared_lib_fix names the owner;
-    (2) it is where packages DELIBERATELY vendor one plugin per platform
-    (ont-fast5-api ships _m1.dylib, _aarch64.so and _x86_64.so side by side and
-    picks at run time) — flagging those is a false positive that costs doctor
-    its credibility. Basenames carrying an explicit platform tag are skipped
-    everywhere for the same vendoring reason; the incident class this audit
-    exists for (perl, openssl, libdb) always wears neutral names. Scripts and
-    data files are skipped by the magic-byte check itself; symlinks are skipped
-    so a target is judged once, where it lives.
+    lib/python* tree and any node_modules tree. Two reasons lib/python* is out
+    of scope, both learned from the first machine this ran on: (1) it is
+    already proven the strong way — check_modules imports it in the env's own
+    interpreter, so a wrong-arch .so there fails with the exact loader error
+    and shared_lib_fix names the owner; (2) it is where packages DELIBERATELY
+    vendor one plugin per platform (ont-fast5-api ships _m1.dylib,
+    _aarch64.so and _x86_64.so side by side and picks at run time) — flagging
+    those is a false positive that costs doctor its credibility. node_modules
+    is the same vendoring pattern with the tag one level up (@img/
+    sharp-linux-x64/...), so it is pruned without descending. Path components
+    carrying an explicit platform tag are skipped for the same reason; the
+    incident class this audit exists for (perl, openssl, libdb) always wears
+    neutral names in neutral directories. Scripts and data files are skipped
+    by the magic-byte check itself; symlinks are skipped so a target is
+    judged once, where it lives. One os.walk, one compiled name pattern — the
+    previous four rglob passes re-traversed every subtree four times.
     """
     subdir = env_conda_subdir(envdir)
     want = _SUBDIR_TARGET.get(subdir)
     if not want:
         return []
-    env = Path(envdir)
+    env = str(envdir)
     candidates = []
-    bindir = env / "bin"
-    if bindir.is_dir():
-        candidates += [p for p in bindir.iterdir()
-                       if p.is_file() and not p.is_symlink()]
-    libdir = env / "lib"
-    if libdir.is_dir():
-        for child in libdir.iterdir():
-            if child.name.startswith("python"):
-                continue                      # the import probe's jurisdiction
-            if child.is_file() and not child.is_symlink():
-                if child.suffix in (".so", ".dylib", ".bundle") or ".so." in child.name:
-                    candidates.append(child)
-                continue
-            if not child.is_dir() or child.is_symlink():
-                continue
-            for pat in ("*.so", "*.so.*", "*.dylib", "*.bundle"):
-                candidates += [p for p in child.rglob(pat)
-                               if p.is_file() and not p.is_symlink()]
+    bindir = os.path.join(env, "bin")
+    if os.path.isdir(bindir):
+        try:
+            with os.scandir(bindir) as it:
+                candidates += [e.path for e in it
+                               if e.is_file(follow_symlinks=False)]
+        except OSError:
+            pass
+    libdir = os.path.join(env, "lib")
+    if os.path.isdir(libdir):
+        for dirpath, dirnames, filenames in os.walk(libdir):
+            if dirpath == libdir:
+                # the import probe's jurisdiction — pruned, never descended
+                dirnames[:] = [d for d in dirnames
+                               if not d.startswith("python")]
+            dirnames[:] = [d for d in dirnames if d != "node_modules"]
+            for fn in filenames:
+                if _NATIVE_LIB_NAME.search(fn):
+                    candidates.append(os.path.join(dirpath, fn))
     bad = []
     for p in candidates:
-        if _ARCH_TAGGED_NAME.search(p.name):
+        rel = os.path.relpath(p, env)
+        if any(_ARCH_TAGGED_NAME.search(part) for part in rel.split(os.sep)):
             continue                          # honest multi-platform vendoring
-        target = _binary_target(str(p))
+        if os.path.islink(p):
+            continue
+        target = _binary_target(p)
         if target is None or target[1] == "universal":
             continue
         if target != want:
-            bad.append((str(p.relative_to(env)), "%s/%s" % target))
+            bad.append((rel, "%s/%s" % target))
     return sorted(set(bad))
 
 
 def _packages_owning(envdir, relpaths):
-    """{relpath: (name, channel)} for the conda packages shipping these files."""
+    """{relpath: owner} for the conda packages shipping these files, where owner
+    carries name, channel, the package's own recorded subdir (which platform
+    THAT record claims — the fact that separates an interrupted transaction
+    from a deliberate CONDA_SUBDIR install), the dist string
+    (name-version-build, which is the conda-meta filename and the pkgs-cache
+    directory name), and the cache paths conda recorded at install time
+    (extracted_package_dir, tarball)."""
     want = set(relpaths)
     owners = {}
     for meta in Path(envdir, "conda-meta").glob("*.json"):
@@ -660,11 +940,64 @@ def _packages_owning(envdir, relpaths):
             rec = json.loads(meta.read_text(encoding="utf-8"))
         except Exception:
             continue
-        for f in want.intersection(rec.get("files") or []):
-            owners[f] = (rec.get("name", ""), rec.get("channel", ""))
+        hits = want.intersection(rec.get("files") or [])
+        if not hits:
+            continue
+        owner = {
+            "name": rec.get("name", ""),
+            "channel": rec.get("channel", ""),
+            "subdir": rec.get("subdir", ""),
+            "dist": meta.name[:-5],
+            "extracted": rec.get("extracted_package_dir", "") or "",
+            "tarball": rec.get("package_tarball_full_path", "") or "",
+        }
+        for f in hits:
+            owners[f] = owner
         if len(owners) == len(want):
             break
     return owners
+
+
+# Packages whose PUBLISHED build for a platform is itself wrong — files inside
+# the official package do not match the platform it is published under. No
+# local action can fix these: purging the cache re-downloads the same wrong
+# bytes (verified for libdb by downloading BOTH conda-forge osx-arm64 builds
+# straight from anaconda.org on 2026-08-22 — every one ships x86_64 binaries).
+# Reporting them as failures forever would teach people to ignore doctor, and
+# the remedy doctor would print (force-reinstall) provably does nothing — it
+# was run, twice, with the cache purged in between, and the files never
+# changed. So they are downgraded to a note WHEN the suite does not execute
+# them, with the evidence stated. Keyed by (package name, env subdir).
+KNOWN_UPSTREAM_FOREIGN = {
+    ("libdb", "osx-arm64"):
+        "every published conda-forge osx-arm64 build of libdb ships x86_64 "
+        "binaries (upstream packaging defect, verified by direct download "
+        "2026-08-22). Harmless here: only perl's DB_File links libdb and no "
+        "declared tool uses it — but anything that ever does will fail with "
+        "'incompatible architecture', and no reinstall can fix it.",
+}
+
+
+def _cache_copy_foreign(owner, relpath, want):
+    """Is the pkgs-cache copy of this file ALSO the wrong architecture?
+
+    If it is, the force-reinstall remedy is a no-op: conda re-links the same
+    wrong bytes out of the cache and reports a successful transaction. Observed
+    live (libdb, 2026-08-22): the env record said osx-arm64, the cache directory
+    NAMED as the arm64 package held x86_64 files, and two qualified
+    force-reinstalls "succeeded" without changing a byte. The remedy must purge
+    the poisoned cache entry first, so conda re-downloads and re-extracts.
+    Returns (is_foreign, cache_dir) — (False, "") when the cache copy is absent
+    or healthy.
+    """
+    extracted = owner.get("extracted", "")
+    if not extracted or not os.path.isdir(extracted):
+        return False, ""
+    cached = os.path.join(extracted, relpath)
+    target = _binary_target(cached)
+    if target is None or target[1] == "universal":
+        return False, ""
+    return (target != want), extracted
 
 
 def script_interpreter(path):
@@ -703,7 +1036,7 @@ _LIBROOT_PROBE = {
 }
 
 
-def interpreter_library_root(path, name):
+def interpreter_library_root(path, name, pin=()):
     """Directories an interpreter will load its libraries from, or [].
 
     WHY ASKING IS NECESSARY. That an interpreter FILE lives inside the env says
@@ -718,13 +1051,18 @@ def interpreter_library_root(path, name):
     printed the LEGACY env's perl as $^X and loaded that env's @INC. kraken2, a
     perl script, therefore ran an x86_64 interpreter against arm64 modules and
     died at launch, while doctor reported the tool ready.
+
+    Runs under the caller's `pin` (fat interpreters only — see _pin_for_exec)
+    and the sanitized probe environment: a site module exporting PYTHONHOME
+    makes the answer here point at the module's prefix, which read exactly
+    like the hardlinked-interpreter incident on a healthy env.
     """
     probe = _LIBROOT_PROBE.get(name)
     if not probe:
         return []
     try:
-        out = subprocess.run([path, *probe], capture_output=True, text=True,
-                             timeout=30)
+        out = subprocess.run([*pin, path, *probe], capture_output=True,
+                             text=True, timeout=30, env=_probe_env())
     except Exception:
         return []
     if out.returncode != 0:
@@ -741,7 +1079,7 @@ _SMOKE_TEST = {
 }
 
 
-def interpreter_smoke_test(path, name):
+def interpreter_smoke_test(path, name, pin=()):
     """(error, module) if the interpreter cannot load its own native module.
 
     WHY EXECUTION IS THE ONLY HONEST TEST. Every check above reasons about
@@ -763,8 +1101,8 @@ def interpreter_smoke_test(path, name):
         return None, None
     args, module = probe
     try:
-        out = subprocess.run([path, *args], capture_output=True, text=True,
-                             timeout=60)
+        out = subprocess.run([*pin, path, *args], capture_output=True, text=True,
+                             timeout=60, env=_probe_env())
     except Exception:
         return None, None
     if out.returncode == 0:
@@ -799,7 +1137,7 @@ def interpreter_findings(envdir, env_bin, binaries, extra_dirs=()):
     want = _SUBDIR_TARGET.get(subdir)
     # Group by interpreter so kraken2 and ktImportText report once, not twice.
     users = {}
-    owned = [os.path.realpath(p) for p in ([envdir] + [d for d in extra_dirs if d])]
+    owned = [envdir] + [d for d in extra_dirs if d]
     for name in binaries:
         path = find_binary(name, env_bin, extra_dirs)
         if not path:
@@ -808,9 +1146,9 @@ def interpreter_findings(envdir, env_bin, binaries, extra_dirs=()):
         # vendored asset dir. A program found on the ambient PATH (a system
         # samtools, a module-loaded tool) brings its own interpreter with it by
         # definition, and flagging that would fire on every healthy machine
-        # whose tools are not all conda-installed.
-        real_path = os.path.realpath(path)
-        if not any(real_path == o or real_path.startswith(o + os.sep) for o in owned):
+        # whose tools are not all conda-installed. Ownership is identity, not
+        # string prefix — see _same_or_under for the case-folding lie.
+        if not any(_same_or_under(path, o) for o in owned):
             continue
         got = script_interpreter(path)
         if not got:
@@ -818,8 +1156,7 @@ def interpreter_findings(envdir, env_bin, binaries, extra_dirs=()):
         interp, env_form = got
         # An absolute shebang pointing inside this env is self-contained by
         # construction — conda writes those and PATH cannot divert them.
-        if not env_form and os.path.realpath(interp).startswith(
-                os.path.realpath(envdir) + os.sep):
+        if not env_form and _same_or_under(interp, envdir):
             continue
         users.setdefault((interp, env_form), []).append(name)
 
@@ -843,18 +1180,31 @@ def interpreter_findings(envdir, env_bin, binaries, extra_dirs=()):
                 install, None))
             continue
         real = os.path.realpath(resolved)
-        env_real = os.path.realpath(envdir)
-        if real.startswith(env_real + os.sep):
+        if _same_or_under(resolved, envdir):
             # Inside the env by PATH — but is it this env's interpreter? Ask it
             # where its libraries are; a mis-prefixed or hardlinked-in binary
             # answers with another prefix and no PATH fix can reach it.
-            roots = interpreter_library_root(real, name)
-            # realpath BOTH sides: an interpreter reports the paths it was
-            # configured with, and on macOS an env under /tmp or /var reports
-            # /var/... against a realpath of /private/var/... . Comparing those
-            # raw flags every healthy env behind a symlinked parent — the same
-            # cry-wolf failure the /bin/bash rule above exists to avoid.
-            smoke_err, smoke_mod = interpreter_smoke_test(real, name)
+            # Probe under the SAME architecture pin the launcher applies —
+            # but ONLY when the interpreter is a FAT binary. Doctor certifies
+            # production, and production launches pinned: an unpinned probe
+            # run from a Rosetta-translated dashboard took the x86_64 slice
+            # of a universal perl, failed, and flagged "needs setup" over a
+            # tool that was running analyses at that moment (2026-08-22, the
+            # false-positive twin of the original bug). The fat gate is the
+            # other half of the same lesson: /usr/bin/arch ENFORCES an
+            # architecture while the launcher's inherited preference only
+            # SELECTS among slices, so pinning a THIN foreign-arch
+            # interpreter kills a binary Rosetta runs every day — see
+            # _pin_for_exec.
+            pin = _arch_pin(envdir) if len(_macho_slices(real)) > 1 else []
+            roots = interpreter_library_root(real, name, pin=pin)
+            # Compare roots by identity, not string prefix: an interpreter
+            # reports the paths it was configured with, and on macOS an env
+            # under /tmp or /var reports /var/... against a realpath of
+            # /private/var/... . Comparing those raw flags every healthy env
+            # behind a symlinked parent — the same cry-wolf failure the
+            # /bin/bash rule above exists to avoid.
+            smoke_err, smoke_mod = interpreter_smoke_test(real, name, pin=pin)
             if smoke_err:
                 arches = _macho_slices(real)
                 extra = ""
@@ -870,13 +1220,13 @@ def interpreter_findings(envdir, env_bin, binaries, extra_dirs=()):
                     f"module that ships with it, so every script above dies at "
                     f"startup.{extra}"))
                 continue
-            real_roots = [os.path.realpath(r) for r in roots]
-            if roots and not any(r == env_real or r.startswith(env_real + os.sep)
-                                 for r in real_roots):
-                owner, chan = _packages_owning(envdir, [f"bin/{name}"]).get(
-                    f"bin/{name}", (name, ""))
-                spec = (f'"{_channel_name(chan)}/{subdir}::{owner or name}"'
-                        if subdir else (owner or name))
+            if roots and not any(_same_or_under(r, envdir) for r in roots):
+                _own = _packages_owning(envdir, [f"bin/{name}"]).get(
+                    f"bin/{name}", {})
+                owner = _own.get("name") or name
+                chan = _own.get("channel", "")
+                spec = (f'"{_channel_name(chan)}/{subdir}::{owner}"'
+                        if subdir else owner)
                 out.append((
                     f"{who} run under {resolved}, which is inside this env but "
                     f"loads its libraries from {roots[0]} — it is another env's "
@@ -896,6 +1246,14 @@ def interpreter_findings(envdir, env_bin, binaries, extra_dirs=()):
         target = _binary_target(real)
         arch_bad = bool(want and target and target[1] != "universal"
                         and target != want)
+        # "Foreign to the env" is not "cannot run": the env's subdir constrains
+        # the env's OWN libraries, not a self-contained outside interpreter's.
+        # An Intel Mac migrated to Apple Silicon keeps an x86_64 Homebrew perl
+        # that runs its own x86_64 module tree under Rosetta every day —
+        # calling that "cannot run in this env" was factually wrong. The hard
+        # verdict is reserved for combos this HOST genuinely cannot exec
+        # (x86_64 on aarch64 Linux, wrong-OS binaries).
+        runnable = _host_can_run(target) if arch_bad else True
         foreign_env = os.path.dirname(os.path.dirname(real))
         borrowed = os.path.isdir(os.path.join(foreign_env, "conda-meta"))
         # An OS interpreter (/bin/bash, /usr/bin/perl) is not a defect: it is
@@ -903,10 +1261,10 @@ def interpreter_findings(envdir, env_bin, binaries, extra_dirs=()):
         # wrapper scripts name it deliberately. Only three things are worth a
         # finding — an interpreter that is MISSING (handled above), one BORROWED
         # from another conda env (the 2026-08 incident: PATH order and that
-        # env's health silently decide whether this tool runs), or one that
-        # cannot execute in this env's architecture. Anything else would fire on
-        # every healthy machine and teach people to ignore doctor.
-        if not borrowed and not arch_bad:
+        # env's health silently decide whether this tool runs), or one this
+        # host cannot execute at all. Anything else would fire on every
+        # healthy machine and teach people to ignore doctor.
+        if not borrowed and not (arch_bad and not runnable):
             continue
 
         detail = f"{who} run under {resolved}, which is OUTSIDE this env"
@@ -927,9 +1285,10 @@ def interpreter_findings(envdir, env_bin, binaries, extra_dirs=()):
                 note = (f"cause: this tool's scripts depend on PATH order and on an "
                         f"environment nothing here grades; giving this env its own "
                         f"{name} makes the tool self-contained.")
-        if arch_bad:
-            detail += (f" and is {target[0]}/{target[1]}, which cannot run in "
-                       f"this {subdir} env")
+        if arch_bad and not runnable:
+            host_os, host_arch = _host_target()
+            detail += (f" and is {target[0]}/{target[1]}, which this "
+                       f"{host_os} {host_arch} host cannot execute")
         fix = (f"{install}   # give this env its own {name} so the shebang "
                f"stops resolving outside it")
         out.append((detail, fix, note))
@@ -938,16 +1297,28 @@ def interpreter_findings(envdir, env_bin, binaries, extra_dirs=()):
 
 # A dynamic-loader failure, in the words each platform uses. These are the
 # messages that mean "the file is right there and still cannot execute" —
-# distinct from a program that ran and disliked its arguments.
+# distinct from a program that ran and disliked its arguments. Consulted ONLY
+# when the process actually failed (nonzero exit or a signal): output alone
+# is not a verdict, because GPU-probing tools on CPU-only nodes print "Could
+# not load dynamic library libcudart.so..." as a WARNING and exit 0 — a
+# process that exits 0 has proven it can start, whatever it printed.
 _LOADER_ERRORS = re.compile(
     r"incompatible architecture"          # macOS: wrong slice / wrong arch
     r"|Library not loaded"                # macOS: missing dylib
     r"|image not found"                   # macOS: missing dylib (older wording)
     r"|Bad CPU type"                      # macOS: no slice this host can run
+    r"|Symbol not found"                  # macOS: lib loaded, symbol absent
     r"|cannot open shared object file"    # Linux: missing .so
+    r"|symbol lookup error"               # glibc: run-time relocation failure
+    r"|undefined symbol"                  # glibc/ImportError variant of the same
+    r"|(?:GLIBC|GLIBCXX|CXXABI)_[0-9.]+'? not found"  # host libc/libstdc++ too old
+    r"|Error loading shared library"      # musl: missing .so
+    r"|Error relocating"                  # musl: symbol not found
+    r"|bad ELF interpreter"               # missing/foreign ld.so
     r"|wrong ELF class"                   # Linux: 32/64 mismatch
     r"|Exec format error"                 # Linux/WSL: wrong-arch or wrong-OS binary
-    r"|cannot execute binary file",       # the shell's version of the same
+    r"|cannot execute binary file"        # the shell's version of the same
+    r"|cannot execute: required file not found",  # bash>=5.1: missing/CRLF interpreter
     re.IGNORECASE)
 
 # Arguments that make a program start up and exit immediately. Tried in order;
@@ -976,8 +1347,36 @@ def _arch_pin(envdir):
     return []
 
 
+def _pin_for_exec(envdir, path, env_bin="", extra_dirs=()):
+    """The arch pin to launch `path` with — _arch_pin(envdir), or [].
+
+    Pin only what the pin means. /usr/bin/arch ENFORCES an architecture;
+    production's inherited preference only SELECTS among the slices of a FAT
+    binary. The two agree only when the exec'd file IS fat: a thin x86_64
+    binary under an arm64-pinned parent still runs — Rosetta translates it,
+    which is exactly how production runs ksnp_gui's pre-Apple-Silicon
+    SourceForge payload every day — while `arch -arm64 <thin x86_64>` dies
+    with "Bad CPU type in executable". The unconditional pin therefore flagged
+    "installed but cannot start" on the SAME report whose format check had
+    just blessed those binaries as runnable: doctor contradicting itself on a
+    working machine, at every install. For a script, the file exec actually
+    loads is its shebang interpreter, so the fat-or-thin question is asked of
+    THAT binary.
+    """
+    exec_path = path
+    got = script_interpreter(path)
+    if got:
+        interp, env_form = got
+        resolved = (find_binary(os.path.basename(interp), env_bin, extra_dirs)
+                    if env_form else (interp if os.path.exists(interp) else None))
+        if not resolved:
+            return []      # nothing will exec; the interpreter check owns that
+        exec_path = os.path.realpath(resolved)
+    return _arch_pin(envdir) if len(_macho_slices(exec_path)) > 1 else []
+
+
 def loader_smoke_findings(envdir, env_bin, binaries, extra_dirs=()):
-    """[(label, fix, note)] for declared programs that cannot START.
+    """([(label, fix, note)], [note]) for declared programs that cannot START.
 
     WHY EXISTENCE IS NOT ENOUGH. Every check that came before this one asked
     where a file is, what its bytes claim, or what the package records say. A
@@ -987,54 +1386,373 @@ def loader_smoke_findings(envdir, env_bin, binaries, extra_dirs=()):
     one architecture. On the machine that motivated it, kraken2 was present,
     executable, correctly resolved, in a coherent env, and could not run.
 
-    Deliberately narrow: the program is launched with a harmless flag and the
-    result is inspected ONLY for dynamic-loader errors. A program that starts
-    and complains about its arguments has passed — this is not a test of the
-    tool, it is a test that the process can exist. That narrowness is what
-    makes it safe to run against tools nobody here has argument knowledge of.
+    Deliberately narrow, two ways. The program is launched with a harmless
+    flag and the result is inspected ONLY for dynamic-loader errors — and
+    only when the process actually FAILED (nonzero exit, or a signal). A
+    program that starts and complains about its arguments has passed, and so
+    has one that exits 0 while narrating a missed optional library (medaka's
+    CPU-only "Could not load dynamic library libcudart" warning wears loader
+    words and means nothing). This is not a test of the tool, it is a test
+    that the process can exist — that narrowness is what makes it safe to run
+    against tools nobody here has argument knowledge of.
+
+    Every launch runs in a throwaway working directory: check_binary_format
+    refuses to exec vendored payloads precisely because a bare invocation may
+    scaffold output into the cwd, and this probe launches those same binaries
+    with zero args as its last resort — it must not litter whatever directory
+    the user happened to run doctor from, nor inherit a read-only one.
+
+    The second return value carries notes, not findings: a soft wall-clock
+    budget (BDTOOLS_SMOKE_BUDGET_SECS, default 120s) stops LAUNCHING once
+    spent — 33 declared binaries at 60s per attempt on a wedged NFS mount is
+    an hour of silent serial hanging for the one report a user in a failure
+    state is waiting on — and the note names every binary not probed, because
+    a check that silently skips is indistinguishable from a check that passed.
     """
-    pin = _arch_pin(envdir)
-    env_real = os.path.realpath(envdir)
-    out = []
+    try:
+        budget = float(os.environ.get("BDTOOLS_SMOKE_BUDGET_SECS", "") or 120)
+    except ValueError:
+        budget = 120.0
+    start = time.monotonic()
+    out, skipped, budget_notes = [], [], []
+    with tempfile.TemporaryDirectory(prefix="bdtools-smoke.") as scratch:
+        for name in binaries:
+            path = find_binary(name, env_bin, extra_dirs)
+            if not path:
+                continue                  # the existence check owns absence
+            owned = _same_or_under(path, envdir) or any(
+                _same_or_under(path, d) for d in extra_dirs if d)
+            if not owned:
+                continue                  # a system tool brings its own runtime
+            if time.monotonic() - start > budget:
+                skipped.append(name)
+                continue
+            pin = _pin_for_exec(envdir, os.path.realpath(path),
+                                env_bin, extra_dirs)
+            detail = ""
+            for args in _SMOKE_ARGS:
+                try:
+                    res = subprocess.run(pin + [path, *args],
+                                         capture_output=True, text=True,
+                                         timeout=60, stdin=subprocess.DEVNULL,
+                                         cwd=scratch, env=_probe_env())
+                except subprocess.TimeoutExpired:
+                    break                 # it started; a hang is not a loader fault
+                except Exception:
+                    break
+                blob = (res.stderr or "") + (res.stdout or "")
+                # Both conditions, in this order: the process failed AND the
+                # text is the loader's. A returncode of 0 wins uncondition-
+                # ally — the process exists, whatever it printed.
+                if res.returncode != 0 and _LOADER_ERRORS.search(blob):
+                    detail = " ".join(blob.split())[:300]
+                    break
+                if res.returncode == 0 or blob.strip():
+                    detail = ""           # it started: nothing more to prove
+                    break
+            if detail:
+                pinned = (" (launched as %s, the way the tool is launched)"
+                          % " ".join(pin)) if pin else ""
+                out.append((
+                    f"{name} is installed but cannot start{pinned} — {detail}",
+                    f'CONDA_SUBDIR={env_conda_subdir(envdir)} conda install -y -p '
+                    f'"{envdir}" --no-deps --force-reinstall {name}'
+                    if env_conda_subdir(envdir) else "",
+                    "cause: the file exists and resolves correctly; the failure is in "
+                    "loading it, so no amount of reinstalling paths or rebuilding the "
+                    "env layout changes it. Reinstall the package that owns this "
+                    "program for this env's platform."))
+    if skipped:
+        budget_notes.append(
+            f"smoke test stopped after its {budget:.0f}s budget "
+            f"(BDTOOLS_SMOKE_BUDGET_SECS) — not probed: {', '.join(skipped)}. "
+            f"A slow filesystem, not a verdict on those programs; re-run "
+            f"--deep when it settles")
+    return out, budget_notes
+
+
+def crlf_findings(envdir, env_bin, binaries, extra_dirs=(), tool_dir=None):
+    """[(label, fix, note)] for owned scripts whose shebang line ends in CRLF.
+
+    git core.autocrlf=true on WSL (or a Windows editor touching a checkout)
+    rewrites every text file with \\r\\n, and execve then looks for an
+    interpreter literally named "perl\\r" — the kernel answers
+    "/usr/bin/env: 'perl\\r': No such file or directory", exit 127. NOTHING
+    else in this file can see it: script_interpreter .strip()s the decoded
+    shebang, which deletes the very \\r that kills the exec, so the
+    interpreter check resolves 'perl' cleanly and passes; and the smoke
+    test's exec raises FileNotFoundError inside subprocess, which the probe
+    loop treats as unjudgeable. Only reading the raw first-line BYTES catches
+    it before a user does. Judged with the same ownership rule as the loader
+    smoke — plus the tool checkout's own bin/*.py entry scripts, which arrive
+    by git clone and are the likeliest CRLF victims. Healthy files are
+    silent: no OK line, no note.
+    """
+    paths = []
     for name in binaries:
         path = find_binary(name, env_bin, extra_dirs)
         if not path:
-            continue                      # the existence check owns absence
+            continue
+        if not (_same_or_under(path, envdir) or any(
+                _same_or_under(path, d) for d in extra_dirs if d)):
+            continue
+        paths.append(path)
+    if tool_dir:
+        bindir = Path(tool_dir) / "bin"
+        if bindir.is_dir():
+            paths.extend(str(p) for p in sorted(bindir.glob("*.py")))
+    out, seen = [], set()
+    for path in paths:
         real = os.path.realpath(path)
-        owned = real.startswith(env_real + os.sep) or any(
-            real.startswith(os.path.realpath(d) + os.sep) for d in extra_dirs if d)
-        if not owned:
-            continue                      # a system tool brings its own runtime
-        detail = ""
-        for args in _SMOKE_ARGS:
-            try:
-                res = subprocess.run(pin + [path, *args], capture_output=True,
-                                     text=True, timeout=60,
-                                     stdin=subprocess.DEVNULL)
-            except subprocess.TimeoutExpired:
-                break                     # it started; a hang is not a loader fault
-            except Exception:
-                break
-            blob = (res.stderr or "") + (res.stdout or "")
-            if _LOADER_ERRORS.search(blob):
-                detail = " ".join(blob.split())[:300]
-                break
-            if res.returncode == 0 or blob.strip():
-                detail = ""               # it started: nothing more to prove
-                break
-        if detail:
-            pinned = (" (launched as %s, the way the tool is launched)"
-                      % " ".join(pin)) if pin else ""
-            out.append((
-                f"{name} is installed but cannot start{pinned} — {detail}",
-                f'CONDA_SUBDIR={env_conda_subdir(envdir)} conda install -y -p '
-                f'"{envdir}" --no-deps --force-reinstall {name}'
-                if env_conda_subdir(envdir) else "",
-                "cause: the file exists and resolves correctly; the failure is in "
-                "loading it, so no amount of reinstalling paths or rebuilding the "
-                "env layout changes it. Reinstall the package that owns this "
-                "program for this env's platform."))
+        if real in seen:
+            continue
+        seen.add(real)
+        try:
+            with open(path, "rb") as fh:
+                first = fh.readline(512)
+        except OSError:
+            continue
+        if not first.startswith(b"#!") or not first.rstrip(b"\n").endswith(b"\r"):
+            continue
+        tokens = first[2:].rstrip(b"\r\n").split()
+        shown = (tokens[-1].decode("utf-8", "replace") if tokens else "") + "\\r"
+        out.append((
+            f"{os.path.basename(path)} has Windows line endings (CRLF) — the "
+            f"shebang names '{shown}', an interpreter that does not exist "
+            f"({path})",
+            f"perl -pi -e 's/\\r$//' \"{path}\"",   # not sed -i: BSD sed takes the script as the -i backup suffix and dies (adversarial-review catch, reproduced live)
+            "cause: the file was saved with \\r\\n line endings (git "
+            "core.autocrlf=true on this machine, or a Windows editor), and "
+            "execve keeps the \\r as part of the interpreter's name. Fix the "
+            "cause too — `git config core.autocrlf false` (or 'input') in the "
+            "checkout — or the next pull writes it right back."))
     return out
+
+
+# Patched to fixture files in tests; absent on macOS, which is the silence.
+_PROC_MOUNTS = "/proc/mounts"
+_PROC_VERSION = "/proc/version"
+
+
+def _mount_fstype(path):
+    """Filesystem type of the mount holding `path` (longest-prefix match over
+    /proc/mounts, octal-escape-aware), or "" when the table is unreadable.
+    The discriminator wsl_drvfs_findings needs: a path under /mnt/ can be 9p
+    (a real Windows drive) or ext4 (a `wsl --mount` disk), and only the mount
+    table can tell them apart."""
+    try:
+        lines = Path(_PROC_MOUNTS).read_text(encoding="utf-8",
+                                             errors="replace").splitlines()
+    except OSError:
+        return ""
+    best, best_type = "", ""
+    for ln in lines:
+        parts = ln.split()
+        if len(parts) < 3:
+            continue
+        mnt = parts[1].replace("\\040", " ").replace("\\011", "\t")
+        if (path == mnt or path.startswith(mnt.rstrip("/") + "/")
+                or mnt == "/") and len(mnt) > len(best):
+            best, best_type = mnt, parts[2]
+    return best_type
+
+
+def noexec_findings(envdir):
+    """[(label, fix, note)] when the env's bin sits on a noexec mount (Linux).
+
+    HPC scratch trees and some /home mounts carry noexec. Every file there
+    shows rwxr-xr-x, os.access() says executable (access() ignores mount
+    flags), and exec still fails EACCES — "Permission denied" on a file whose
+    permission bits are perfect, which reads exactly like corruption and gets
+    answered with chmods and reinstalls that cannot help. The mount table is
+    the authority: longest-prefix match, then the noexec flag. Silent when
+    /proc/mounts does not exist (macOS) — this is a Linux failure mode.
+    """
+    try:
+        text = Path(_PROC_MOUNTS).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    bindir = os.path.realpath(os.path.join(str(envdir), "bin"))
+    best = ("", "")
+    for line in text.splitlines():
+        fields = line.split()
+        if len(fields) < 4:
+            continue
+        # /proc/mounts octal-escapes spaces in mountpoints (\040).
+        mp = re.sub(r"\\(0[0-7]{2})",
+                    lambda m: chr(int(m.group(1), 8)), fields[1])
+        if ((bindir == mp or bindir.startswith(mp.rstrip("/") + "/"))
+                and len(mp) > len(best[0])):
+            best = (mp, fields[3])
+    mp, opts = best
+    if not mp or "noexec" not in opts.split(","):
+        return []
+    return [(
+        f"env is on a noexec filesystem — {mp} is mounted noexec, so nothing "
+        f"under it can ever execute, whatever its permission bits say",
+        "export BDTOOLS_HOME=<a filesystem mounted exec> && "
+        "bin/bdtools install <tool> --fresh",
+        f"cause: the mount at {mp} carries the noexec option; exec fails with "
+        f"'Permission denied' on files whose permissions are perfect, so no "
+        f"chmod and no reinstall-in-place can fix it — the install has to "
+        f"move to a filesystem that allows execution.")]
+
+
+def wsl_drvfs_findings(envdir):
+    """[(label, fix, note)] when a WSL install keeps its env on a Windows drive.
+
+    /mnt/c and friends are drvfs (9p) mounts of the Windows filesystem: no
+    hardlinks (conda's link phase falls back to copies or dies mid-
+    transaction), foreign symlink semantics (this suite's own sibling-symlink
+    remedy fails outright there), no POSIX locking, and 10-50x the latency of
+    the Linux filesystem — an env build that takes minutes on ext4 takes
+    hours on drvfs and breaks in ways that read as corruption.
+
+    Decided by FSTYPE, not by path: /mnt/ is not synonymous with drvfs.
+    `wsl --mount` attaches ext4 disks under /mnt/wsl/<name> (and /mnt/wslg is
+    WSLg's tmpfs) — native Linux filesystems with everything drvfs lacks, and
+    exactly where a careful user puts a big BDTOOLS_HOME. The adversarial
+    review caught the first version flagging those. The mount table names the
+    truth (9p on WSL2, drvfs on WSL1, virtiofs on newer builds); the /mnt/
+    prefix survives only as the fallback when /proc/mounts is unreadable,
+    with /mnt/wsl and /mnt/wslg exempted.
+    """
+    try:
+        version = Path(_PROC_VERSION).read_text(encoding="utf-8",
+                                                errors="replace")
+    except OSError:
+        return []
+    if "microsoft" not in version.lower():
+        return []
+    real = os.path.realpath(str(envdir))
+    fstype = _mount_fstype(real)
+    if fstype:
+        if fstype not in ("9p", "drvfs", "virtiofs"):
+            return []
+    else:
+        # No readable mount table: fall back to the path shape, exempting the
+        # wsl-mount locations that are Linux filesystems by construction.
+        if not (real == "/mnt" or real.startswith("/mnt/")):
+            return []
+        if real.startswith("/mnt/wsl/") or real.startswith("/mnt/wslg/"):
+            return []
+    return [(
+        f"conda env on a Windows drive (drvfs): {real} lives under /mnt/, "
+        f"the 9p-mounted Windows filesystem",
+        "export BDTOOLS_HOME=$HOME/.local/share/bdtools && "
+        "bin/bdtools install <tool> --fresh",
+        "cause: drvfs has no hardlinks, foreign symlink semantics and 10-50x "
+        "the latency of the Linux filesystem, so conda transactions crawl or "
+        "break there. Move BDTOOLS_HOME into the Linux filesystem (the "
+        "default, ~/.local/share/bdtools) and reach results from Windows via "
+        "\\\\wsl$\\<distro>\\home\\... instead of installing on C:.")]
+
+
+def loader_env_notes():
+    """[str] when doctor's own environment redirects the dynamic loader (Linux).
+
+    The Linux twin of the Rosetta slice redirect: LD_LIBRARY_PATH and
+    LD_PRELOAD silently decide what every child process loads, and HPC module
+    systems export them wholesale — a `module load gcc` has broken conda
+    binaries with 'symbol lookup error' pointing into /apps. Setting them is
+    not itself a defect (production may inherit the same values and run), so
+    this is a NOTE and never a failure: it names the variable so that when a
+    tool DOES die loading a library, the report already contains the
+    likeliest cause instead of sending the reader to a rebuild.
+    """
+    if platform.system() != "Linux":
+        return []
+    notes = []
+    for var in ("LD_PRELOAD", "LD_LIBRARY_PATH"):
+        val = (os.environ.get(var) or "").strip()
+        if val:
+            notes.append(
+                f"{var} is set ({val}) — it overrides this env's own libraries "
+                f"for every program launched, the way Rosetta's inherited "
+                f"slice preference redirected a universal perl. If a tool "
+                f"fails with 'symbol lookup error' or a version-not-found, "
+                f"retry after: module purge; unset LD_PRELOAD LD_LIBRARY_PATH")
+    return notes
+
+
+def _manifest_packages():
+    """{tool: [analysis package names]} from tools.yml's `packages:` pins.
+
+    Read from the manifest rather than restated here, so a re-pin (mlst ->
+    mlst2, a krakentools addition) is picked up without touching this file.
+    Located the way packages.py locates it: $BDTOOLS_MANIFEST, else the
+    umbrella repo's tools.yml. A spec 'bioconda::mlst=2.33.1' contributes the
+    bare name 'mlst'. Empty dict when the manifest cannot be read — the
+    stale-sibling check then stays silent rather than guessing.
+    """
+    try:
+        import manifest  # sibling module, stdlib-only
+    except Exception:
+        return {}
+    repo = Path(__file__).resolve().parents[2]
+    path = os.environ.get("BDTOOLS_MANIFEST", str(repo / "tools.yml"))
+    try:
+        _ver, tools = manifest.parse(path)
+    except Exception:
+        return {}
+    out = {}
+    for rec in tools:
+        pkgs = rec.get("packages") or []
+        if isinstance(pkgs, str):
+            pkgs = [pkgs]
+        names = []
+        for spec in pkgs:
+            name = re.split(r"[=<>]", spec.split("::", 1)[-1], 1)[0].strip()
+            if name:
+                names.append(name)
+        out[rec.get("name", "")] = names
+    return out
+
+
+def stale_sibling_packages(tool, envdir, sibling_tools):
+    """Sibling tools' analysis packages found inside THIS tool's own env.
+
+    WHY THIS EXISTS. Before the sibling split, some envs carried other tools'
+    analysis packages directly (amr_plus once held mlst and kraken2). Those
+    stale packages are not dead weight — they are solver constraints: on a
+    lab Mac, the stale mlst's perl closure made the manifest's
+    ncbi-amrfinderplus=4.2.7 pin unsatisfiable, so every `bdtools update`
+    "finished" successfully and changed nothing, forever, with no line of
+    output naming why. Nothing else here can see it: the modules import, the
+    binaries resolve, the arch audit is clean — the env is HEALTHY, it just
+    cannot move. Detection is a conda-meta filename scan (name-version-build
+    .json, prefix match on 'name-'), no JSON parse, so it is free on every
+    doctor run. Gated on the tool's own pins: kraken2 inside
+    kraken_id_parse_gui's env is that tool's OWN package, never stale.
+    """
+    if not sibling_tools:
+        return []
+    pkgs_by_tool = _manifest_packages()
+    own = set(pkgs_by_tool.get(tool, []))
+    wanted = []
+    for sib in sibling_tools:
+        for name in pkgs_by_tool.get(sib, []):
+            if name and name not in own and name not in wanted:
+                wanted.append(name)
+    if not wanted:
+        return []
+    try:
+        files = [p.name for p in Path(envdir, "conda-meta").iterdir()
+                 if p.name.endswith(".json")]
+    except OSError:
+        return []
+    # EXACT dist-name parse, never a prefix match: dist filenames are
+    # name-version-build.json with hyphens forbidden in version and build, so
+    # dropping the last two hyphen-separated fields recovers the name
+    # precisely. A prefix match on 'name-' claimed kraken2-server as a stale
+    # kraken2 and genoflu-multi as a stale genoflu (adversarial-review catch),
+    # while this still matches hyphenated names like ncbi-amrfinderplus.
+    installed = set()
+    for f in files:
+        fields = f[:-5].split("-")          # strip ".json"
+        if len(fields) >= 3:
+            installed.add("-".join(fields[:-2]))
+    return [name for name in wanted if name in installed]
 
 
 def resolve_asset_dirs(tool, tool_dir, asset_dirs):
@@ -1138,7 +1856,14 @@ def check_db(tool, db, env_bin=""):
     p = Path(val)
     kind = db["kind"]
     if kind == "dir":
-        ok = p.is_dir() and any(p.iterdir()) if p.is_dir() else False
+        # Same OSError guard as the paths_file loop above: a traversable but
+        # unreadable directory (mode 330 on a shared site root) makes iterdir
+        # raise PermissionError, and doctor must report a finding, never
+        # traceback (adversarial-review catch, reproduced live).
+        try:
+            ok = p.is_dir() and any(p.iterdir())
+        except OSError as e:
+            return False, f"{val} (cannot list: {e})"
     elif kind == "dir_marker":
         ok = (p / db["marker"]).exists()
     elif kind == "file_prefix":
@@ -1172,6 +1897,19 @@ def run_checks(tool, env_py, scope, tool_dir=None, deep=False):
     lines.append((OK, "environment present", None))
 
     failures = check_modules(env_py, spec.get("modules", []))
+    probe_timed_out = failures is MODULE_PROBE_TIMED_OUT
+    if probe_timed_out:
+        # A timeout is a fact about the FILESYSTEM, not the packages. Folding
+        # it into "python modules missing: <all fifteen>" — with a pip+conda
+        # remedy — was the highest-volume cry-wolf on cold NFS/Lustre caches,
+        # the platform where doctor is trusted least. Nothing was graded, so
+        # nothing is green and nothing is failed.
+        msg = (f"module probe timed out after {_MODULE_PROBE_SECS}s — slow "
+               f"filesystem, not missing packages; nothing was graded. Re-run "
+               f"when the filesystem settles (a warm cache usually passes)")
+        lines.append((SKIP, msg, None))
+        notes.append(msg)
+        failures = {}
     # Two different faults wear the same symptom, and they need opposite
     # remedies. ABSENT: the package isn't there, install it. BROKEN: it is
     # installed and raises on import — an install is a no-op ("All requested
@@ -1180,6 +1918,27 @@ def run_checks(tool, env_py, scope, tool_dir=None, deep=False):
     # command that cannot work.
     missing = [m for m, i in failures.items() if i.get("absent", True)]
     broken = [m for m, i in failures.items() if not i.get("absent", True)]
+    if missing and (os.environ.get("PYTHONPATH") or os.environ.get("PERL5LIB")):
+        # The probes run with PYTHONPATH/PERL5LIB stripped (an HPC module
+        # exporting PYTHONHOME once made a healthy env misreport sys.prefix),
+        # but production children INHERIT the ambient value — tool_launch
+        # prepends to it, never replaces it. So a module supplied only via the
+        # user's PYTHONPATH imports fine in production and reads "absent" to
+        # the sanitized probe (adversarial-review catch, reproduced live).
+        # Re-probe once with the ambient values restored: what imports cleanly
+        # there is a note about environment reliance, not a missing package.
+        re_fail = check_modules(env_py, missing, probe_env=dict(os.environ))
+        if re_fail is MODULE_PROBE_TIMED_OUT:
+            re_fail = {m: failures[m] for m in missing}
+        rescued = [m for m in missing if m not in re_fail]
+        if rescued:
+            msg = (f"modules {', '.join(rescued)} import only via the ambient "
+                   f"PYTHONPATH/PERL5LIB — production inherits it so the tool "
+                   f"runs, but the env does not own these modules; a cron job "
+                   f"or another user without that variable will not have them")
+            lines.append((SKIP, msg, None))
+            notes.append(msg)
+            missing = [m for m in missing if m not in rescued]
     if missing:
         # Install what is missing, in the env that is already here. The rebuild
         # remedy is the fallback for modules nothing here can name — not the
@@ -1225,7 +1984,7 @@ def run_checks(tool, env_py, scope, tool_dir=None, deep=False):
                    f"if the error is unclear: {default_fix}")
             lines.append((SKIP, why, None))
             notes.append(why)
-    if not failures and spec.get("modules"):
+    if not failures and spec.get("modules") and not probe_timed_out:
         lines.append((OK, f"python modules ({len(spec['modules'])}) import", None))
 
     # Vendored payloads (kSNP4's SourceForge package) live outside the conda env
@@ -1287,35 +2046,131 @@ def run_checks(tool, env_py, scope, tool_dir=None, deep=False):
     foreign_files = foreign_arch_files(envdir)
     if foreign_files:
         owners = _packages_owning(envdir, [rp for rp, _ in foreign_files])
-        pkg_chan = {}
-        for name, chan in owners.values():
-            if name:
-                pkg_chan.setdefault(name, chan)
-        shown = ", ".join(f"{rp} is {arch}" for rp, arch in foreign_files[:5])
-        if len(foreign_files) > 5:
-            shown += f", … ({len(foreign_files) - 5} more)"
-        label = f"binaries on disk cannot run in this {env_subdir} env: {shown}"
-        fix = None
-        if pkg_chan:
-            specs = " ".join(
-                f'"{_channel_name(chan)}/{env_subdir}::{name}"'
-                for name, chan in sorted(pkg_chan.items()))
+        want = _SUBDIR_TARGET.get(env_subdir)
+        # Split FOUR ways, because "foreign bytes" has four different truths
+        # behind it. KNOWN upstream mispackages: no local action exists.
+        # DELIBERATE foreign-subdir installs: the owning record's own subdir
+        # MATCHES the bytes, so records and disk AGREE — someone ran
+        # CONDA_SUBDIR=osx-64 on purpose (bioconda's osx-arm64 coverage is
+        # still partial), and calling that "an interrupted transaction" is a
+        # fabricated incident on a machine where conda-meta and the disk
+        # agree; whether it is even a problem depends on whether THIS HOST
+        # can execute it (osx-64 on Apple Silicon runs whole under Rosetta).
+        # ACTIONABLE splits: the owner's record CONTRADICTS the bytes — the
+        # actual incident signature, where the interrupted-transaction story
+        # is earned. And UNOWNED files, which no record claims — not conda's
+        # doing, so not conda corruption either.
+        known, actionable, deliberate, unowned = [], [], [], []
+        purge_dirs, pkg_chan = {}, {}
+        foreign_bad = False
+        for rp, arch in foreign_files:
+            owner = owners.get(rp, {})
+            oname = owner.get("name", "")
+            if (oname, env_subdir) in KNOWN_UPSTREAM_FOREIGN:
+                known.append((rp, arch, oname))
+                continue
+            target = tuple(arch.split("/", 1))
+            if oname and _SUBDIR_TARGET.get(owner.get("subdir", "")) == target:
+                deliberate.append((rp, arch, oname, owner.get("subdir", ""),
+                                   _host_can_run(target)))
+                continue
+            actionable.append((rp, arch))
+            if oname:
+                pkg_chan.setdefault(oname, owner.get("channel", ""))
+                poisoned, cache_dir = _cache_copy_foreign(owner, rp, want)
+                if poisoned:
+                    purge_dirs[cache_dir] = owner.get("tarball", "")
+            else:
+                unowned.append(rp)
+        if actionable:
+            foreign_bad = True
+            shown = ", ".join(f"{rp} is {arch}" for rp, arch in actionable[:5])
+            if len(actionable) > 5:
+                shown += f", … ({len(actionable) - 5} more)"
+            label = (f"binaries on disk cannot run in this {env_subdir} env: "
+                     f"{shown}")
+            fix = None
+            if pkg_chan:
+                specs = " ".join(
+                    f'"{_channel_name(chan)}/{env_subdir}::{name}"'
+                    for name, chan in sorted(pkg_chan.items()))
+                purge = ""
+                if purge_dirs:
+                    doomed = " ".join(
+                        f'"{d}"' + (f' "{t}"' if t else "")
+                        for d, t in sorted(purge_dirs.items()))
+                    purge = f"rm -rf {doomed} && "
+                fix = (f'{purge}CONDA_SUBDIR={env_subdir} conda install -y -p '
+                       f'"{envdir}" --no-deps --force-reinstall {specs}'
+                       f'   # re-links every file of the named package(s) for '
+                       f'{env_subdir}; a bare spec is already satisfied and '
+                       f're-links the same broken build')
+            lines.append((BAD, label, fix))
+            issues.append({"label": label, "fix": fix or ""})
+            # The interrupted-transaction story is told ONLY about files whose
+            # owner's record contradicts their bytes — that is its signature.
+            why_bits = []
+            if pkg_chan:
+                why_bits.append(
+                    "cause: an interrupted conda transaction left files from "
+                    "two extractions in one prefix — conda-meta still records "
+                    f"{env_subdir}, so record-level checks pass while the "
+                    f"files above cannot load; they belong to: "
+                    f"{', '.join(sorted(pkg_chan))}")
+            if unowned:
+                why_bits.append(
+                    f"{len(unowned)} file(s) ({', '.join(unowned[:3])}"
+                    + ("…" if len(unowned) > 3 else "")
+                    + ") are not conda-managed — no installed package claims "
+                      "them (dropped in by hand, or by a non-conda "
+                      "installer), so remove or replace them by hand; a "
+                      "rebuild helps only if whatever put them there stops: "
+                    + default_fix)
+            why = "; ".join(why_bits)
+            if purge_dirs:
+                why += (". The pkgs-cache copy is ALSO wrong, so a plain "
+                        "force-reinstall re-links the same bytes and reports "
+                        "success — the remedy purges the poisoned cache entry "
+                        "first (observed live: two 'successful' reinstalls of "
+                        "libdb that changed nothing)")
+            lines.append((SKIP, why, None))
+            notes.append(why)
+        for rp, arch, oname, osub, runnable in deliberate:
+            if runnable:
+                msg = (f"note: {rp} is {arch} because {oname} was installed "
+                       f"for {osub} on purpose (its own record and its bytes "
+                       f"agree — a deliberate foreign-platform install, not "
+                       f"an interrupted transaction); this host can execute "
+                       f"it, so it is reported, not failed")
+                lines.append((SKIP, msg, None))
+                notes.append(msg)
+                continue
+            foreign_bad = True
+            label = (f"{rp} is {arch}: {oname} was deliberately installed for "
+                     f"{osub}, but this host cannot execute {arch} binaries")
             fix = (f'CONDA_SUBDIR={env_subdir} conda install -y -p "{envdir}" '
-                   f'--no-deps --force-reinstall {specs}'
-                   f'   # re-links every file of the named package(s) for '
-                   f'{env_subdir}; a bare spec is already satisfied and re-links '
-                   f'the same broken build')
-        lines.append((BAD, label, fix))
-        issues.append({"label": label, "fix": fix or ""})
-        why = ("cause: an interrupted conda transaction left files from two "
-               "extractions in one prefix — conda-meta still records "
-               f"{env_subdir}, so record-level checks pass while the files "
-               "above cannot load"
-               + (f"; they belong to: {', '.join(sorted(pkg_chan))}" if pkg_chan
-                  else "; no installed conda package claims them, so rebuild: "
-                       + default_fix))
-        lines.append((SKIP, why, None))
-        notes.append(why)
+                   f'--no-deps --force-reinstall '
+                   f'"{_channel_name(owners.get(rp, {}).get("channel", ""))}/'
+                   f'{env_subdir}::{oname}"'
+                   if env_subdir else default_fix)
+            lines.append((BAD, label, fix))
+            issues.append({"label": label, "fix": fix})
+            why = (f"cause: not corruption — the {oname} record says {osub} "
+                   f"and the bytes agree, so this package was installed for a "
+                   f"foreign platform on purpose; it simply cannot execute on "
+                   f"this host, so install the build that can")
+            lines.append((SKIP, why, None))
+            notes.append(why)
+        for _rp, _arch, _oname in known[:1]:
+            why = (f"note: {len(known)} file(s) from {_oname} are {known[0][1]} "
+                   f"in this {env_subdir} env — "
+                   + KNOWN_UPSTREAM_FOREIGN[(_oname, env_subdir)])
+            lines.append((SKIP, why, None))
+            notes.append(why)
+        if not foreign_bad and _SUBDIR_TARGET.get(env_subdir):
+            lines.append((OK, f"on-disk binaries match the env platform "
+                              f"({env_subdir}; noted exceptions are deliberate "
+                              f"or upstream)", None))
     elif _SUBDIR_TARGET.get(env_subdir):
         lines.append((OK, f"on-disk binaries match the env platform "
                           f"({env_subdir})", None))
@@ -1335,18 +2190,40 @@ def run_checks(tool, env_py, scope, tool_dir=None, deep=False):
     if not interp_bad and spec.get("binaries"):
         lines.append((OK, "script interpreters resolve inside this env", None))
 
+    # Windows line endings in shebangs (WSL/Windows-editor damage), mount-level
+    # Linux failure modes (noexec, drvfs) and loader-redirecting environment
+    # variables. All three are byte- or table-reads — free enough for every
+    # doctor run — and all three stay silent on a healthy machine.
+    platform_bad = (crlf_findings(envdir, env_bin, spec.get("binaries", []),
+                                  found_assets, tool_dir=tool_dir)
+                    + noexec_findings(envdir)
+                    + wsl_drvfs_findings(envdir))
+    for label, fix, why in platform_bad:
+        lines.append((BAD, label, fix))
+        issues.append({"label": label, "fix": fix or ""})
+        if why:
+            lines.append((SKIP, why, None))
+            notes.append(why)
+    for msg in loader_env_notes():
+        lines.append((SKIP, msg, None))
+        notes.append(msg)
+
     # Can each declared program actually START? Runs at install time (scope
     # "env") and on demand (--deep), not on every routine doctor: it launches
     # every binary, which costs seconds. Install time is the right default —
     # that is where a fresh machine should discover it cannot run, instead of
     # discovering it mid-analysis weeks later.
     if deep or scope == "env":
-        for label, fix, why in loader_smoke_findings(
-                envdir, env_bin, spec.get("binaries", []), found_assets):
+        smoke_bad, smoke_notes = loader_smoke_findings(
+            envdir, env_bin, spec.get("binaries", []), found_assets)
+        for label, fix, why in smoke_bad:
             lines.append((BAD, label, fix or default_fix))
             issues.append({"label": label, "fix": fix or default_fix})
             lines.append((SKIP, why, None))
             notes.append(why)
+        for msg in smoke_notes:
+            lines.append((SKIP, msg, None))
+            notes.append(msg)
 
     optional_missing = [
         b for b in spec.get("optional_binaries", [])
@@ -1357,6 +2234,31 @@ def run_checks(tool, env_py, scope, tool_dir=None, deep=False):
                "(core analysis is still runnable)")
         lines.append((SKIP, msg, None))
         notes.append(msg)
+
+    # The inverse of the sibling hand-off below: sibling tools' packages left
+    # INSIDE this env from before the split. They are not dead weight, they
+    # are solver constraints — on a lab Mac whose amr_plus env predated the
+    # mlst/kraken2 split, the stale mlst's perl closure made the manifest pin
+    # ncbi-amrfinderplus=4.2.7 unsatisfiable, so every update "finished" and
+    # changed nothing, forever, with no output naming the cause. `--rebuild`
+    # is additive and cannot remove a package; only --fresh can.
+    stale = stale_sibling_packages(tool, envdir, spec.get("sibling_tools", []))
+    if stale:
+        label = (f"stale copies of sibling tools' packages are inside this "
+                 f"env: {', '.join(stale)} — they cap this env's solve (the "
+                 f"documented case: mlst's perl closure held "
+                 f"ncbi-amrfinderplus at 3.12.8)")
+        fix = (f"bin/bdtools install {tool} --fresh   # --rebuild is additive "
+               f"and cannot remove them")
+        lines.append((BAD, label, fix))
+        issues.append({"label": label, "fix": fix})
+        why = ("cause: these packages predate the sibling split and now live "
+               "in their own envs; left here, their dependency closures pin "
+               "this env's solve, so updates succeed without moving anything "
+               "— an update loop that never converges until the env is "
+               "rebuilt fresh")
+        lines.append((SKIP, why, None))
+        notes.append(why)
 
     # Sibling hand-offs: software this tool runs from ANOTHER tool's env
     # (amr_plus -> mlst/kraken2, irma -> genoflu, vsnp -> the Kraken GUI).

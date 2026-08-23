@@ -1,0 +1,54 @@
+# CI for the bdtools suite — the mechanical half of "this never happens again".
+#
+# The suite deploys on macOS (Apple Silicon), Windows WSL2, and Linux/HPC, and
+# its regression tests encode every real incident to date (mixed-architecture
+# conda envs, records-vs-disk splits, universal-binary slice selection, loader
+# failures, resolver divergence, stale build state). Until this file existed the
+# tests ran only when a maintainer remembered to run them, on whichever machine
+# they happened to be at — so a fix verified on macOS could silently regress the
+# Linux behaviour and vice versa. Both platforms now gate every push.
+#
+# WSL2 is Linux from the suite's point of view (same kernel interface, same GNU
+# userland), so the ubuntu job stands in for it; the WSL-specific hazards
+# (CRLF, /mnt/c interop) are covered by unit tests that fabricate those
+# conditions rather than by needing a real Windows runner.
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  unit:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: shell syntax — every shipped script must parse
+        run: |
+          set -e
+          for f in bin/*.sh bin/bdtools; do
+            bash -n "$f"
+          done
+      - name: python syntax — every shipped module must parse
+        run: |
+          python3 - <<'PY'
+          import ast, pathlib, sys
+          bad = []
+          for p in pathlib.Path("bin").rglob("*.py"):
+              try:
+                  ast.parse(p.read_text())
+              except SyntaxError as e:
+                  bad.append(f"{p}: {e}")
+          sys.exit("\n".join(bad) if bad else 0)
+          PY
+      - name: unit tests
+        run: python3 -m unittest discover -s tests -t . -v

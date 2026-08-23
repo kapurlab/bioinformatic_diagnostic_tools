@@ -25,8 +25,11 @@
 #                 (Step 2 VCF comparison DBs; seeded ONCE into the GUI's
 #                 vcf_db_folders root — later removals/additions are yours)
 #
-# Consumers wired automatically:
-#   kraken,blast  -> kraken_id_parse_gui  (~/.config/kraken_id_parse_gui/config.json)
+# Consumers wired automatically (a database is wired into EVERY tool that reads
+# it — amr_plus_gui has its own kraken_db key for organism detection, and a
+# second, unwired copy of that path is how a stale /srv value survived):
+#   kraken        -> kraken_id_parse_gui, amr_plus_gui
+#   blast         -> kraken_id_parse_gui  (~/.config/kraken_id_parse_gui/config.json)
 #   amrfinder     -> amr_plus_gui         (~/.config/amr_plus_gui/config.json)
 #   vsnp-*        -> vsnp_gui             (reference locations + config.json)
 #   vcf-dbs       -> vsnp_gui             (vcf_db_folders root, one-time)
@@ -70,7 +73,7 @@ while [[ $# -gt 0 ]]; do
     --shared)  LOC="shared"; shift;;
     --root)    ROOT="$2";    shift 2;;
     --dry-run) DRY_RUN=1; export DRY_RUN; shift;;
-    -h|--help) sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
+    -h|--help) sed -n '2,35p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
     kraken|blast|amrfinder|vsnp-refs|vsnp-deps|vcf-dbs) WANT+=("$1"); shift;;
     all) shift;;                       # explicit "all" == default
     -*)  die "unknown option: $1";;
@@ -83,9 +86,19 @@ done
 if [[ -z "${ROOT}" ]]; then
   if [[ -z "${LOC}" ]]; then
     if [[ -t 0 && -t 1 ]]; then
+      # What option 2 offers is whatever this machine DECLARES. With nothing
+      # declared, or with the same path Home already offers, printing it as
+      # "Shared" reads like two different choices that happen to agree.
+      if [[ -z "${SHARED_ROOT_DEFAULT}" ]]; then
+        shared_label="you type the path — nothing declared on this machine"
+      elif [[ "${SHARED_ROOT_DEFAULT}" == "${HOME_ROOT_DEFAULT}" ]]; then
+        shared_label="${SHARED_ROOT_DEFAULT} — same as Home; no separate shared root is declared here"
+      else
+        shared_label="${SHARED_ROOT_DEFAULT}"
+      fi
       echo "Where should reference databases be installed?"
       echo "  1) Home    (${HOME_ROOT_DEFAULT})        — just this user"
-      echo "  2) Shared  (${SHARED_ROOT_DEFAULT})  — one copy for the whole machine/lab"
+      echo "  2) Shared  (${shared_label})  — one copy for the whole machine/lab"
       echo "  3) Custom  (you type the path)"
       read -r -p "Choose [1/2/3] (default 1): " ans
       case "${ans}" in 2) LOC="shared";; 3) LOC="custom";; *) LOC="home";; esac
@@ -357,23 +370,37 @@ fetch_vsnp_deps() {
 # ---- wire the GUIs --------------------------------------------------------
 wire_kraken() {
   local args=()
-  want kraken && [[ -d "${KRAKEN_DEST}" ]] && args+=(--kraken-db "${KRAKEN_DEST}")
+  # Complete, not merely present: pointing a config at a half-extracted DB is
+  # how a path that looks configured produces `does not contain necessary file
+  # taxo.k2d` at run time.
+  want kraken && kraken_db_complete "${KRAKEN_DEST}" && args+=(--kraken-db "${KRAKEN_DEST}")
   want blast  && compgen -G "${BLAST_DB}.*" >/dev/null 2>&1 && args+=(--blast-db "${BLAST_DB}")
   [[ ${#args[@]} -gt 0 ]] || return 0
   if [[ ${DRY_RUN} -eq 1 ]]; then echo "  [dry-run] db_config.py kraken ${args[*]}"; return; fi
   "${PYBIN}" "${KT_BIN_DIR}/lib/db_config.py" kraken "${args[@]}"
 }
 
+# amr_plus_gui reads TWO of these databases: AMRFinderPlus, and the same Kraken2
+# DB kraken_id_parse_gui uses — under its own `kraken_db` key. Wiring only the
+# Kraken GUI left that second copy of the path untouched, and a lab Mac kept a
+# /srv/... value there long after the local DB was installed. Doctor now grades
+# that key, which is how the stale path surfaced (2026-08-23) — and the remedy it
+# printed, `setup-databases kraken`, could not fix the finding it printed it for.
+# One database, every consumer of it, in one place.
 wire_amr() {
-  want amrfinder || return 0
-  [[ -f "${AMR_DEST}/latest/version.txt" ]] || return 0
-  if [[ "${AMR_DB_VERDICT}" == "no" ]]; then
-    warn "not pointing amr_plus_gui at ${AMR_DEST}/latest — its amrfinder cannot read it"
-    info "  the tool keeps using the database in its own env until the remedy above is applied"
-    return 0
+  local args=()
+  want kraken && kraken_db_complete "${KRAKEN_DEST}" && args+=(--kraken-db "${KRAKEN_DEST}")
+  if want amrfinder && [[ -f "${AMR_DEST}/latest/version.txt" ]]; then
+    if [[ "${AMR_DB_VERDICT}" == "no" ]]; then
+      warn "not pointing amr_plus_gui at ${AMR_DEST}/latest — its amrfinder cannot read it"
+      info "  the tool keeps using the database in its own env until the remedy above is applied"
+    else
+      args+=(--amrfinder-db "${AMR_DEST}/latest")
+    fi
   fi
-  if [[ ${DRY_RUN} -eq 1 ]]; then echo "  [dry-run] db_config.py amr --amrfinder-db ${AMR_DEST}/latest"; return; fi
-  "${PYBIN}" "${KT_BIN_DIR}/lib/db_config.py" amr --amrfinder-db "${AMR_DEST}/latest"
+  [[ ${#args[@]} -gt 0 ]] || return 0
+  if [[ ${DRY_RUN} -eq 1 ]]; then echo "  [dry-run] db_config.py amr ${args[*]}"; return; fi
+  "${PYBIN}" "${KT_BIN_DIR}/lib/db_config.py" amr "${args[@]}"
 }
 
 # vsnp_gui keys its reference root off VSNP_GUI_SITE_ROOT and the launcher

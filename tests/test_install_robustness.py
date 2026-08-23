@@ -1564,7 +1564,8 @@ class AmrfinderDatabaseTargetTests(unittest.TestCase):
         src = self.SETUP.read_text(encoding="utf-8")
         self.assertIn("kraken|blast|amrfinder|vsnp-refs", src)
         self.assertIn("WANT=(kraken blast amrfinder vsnp-refs", src)
-        self.assertIn("db_config.py\" amr --amrfinder-db", src)
+        self.assertIn('db_config.py" amr "${args[@]}"', src)
+        self.assertIn('args+=(--amrfinder-db "${AMR_DEST}/latest")', src)
 
     def test_unknown_target_lists_amrfinder(self):
         r = subprocess.run(["bash", str(self.SETUP), "--home", "--dry-run", "nope"],
@@ -1592,6 +1593,25 @@ class AmrfinderDatabaseTargetTests(unittest.TestCase):
         self.assertIn('AMR_DB_VERDICT="no"', src)
         wire = src.split("wire_amr()", 1)[1].split("\n}", 1)[0]
         self.assertIn('if [[ "${AMR_DB_VERDICT}" == "no" ]]', wire)
+
+    def test_every_consumer_of_a_database_is_wired_to_it(self):
+        """amr_plus_gui reads the same Kraken2 DB under its own key. Wiring only
+        the Kraken GUI left a stale /srv path there — and doctor, which now
+        grades that key, printed `setup-databases kraken` as the remedy for a
+        finding that command could not fix (a lab Mac, 2026-08-23)."""
+        setup = self.SETUP.read_text(encoding="utf-8")
+        wire = setup.split("wire_amr()", 1)[1].split("\n}", 1)[0]
+        self.assertIn("--kraken-db", wire)
+        self.assertIn("kraken_db", (ROOT / "bin/lib/db_config.py").read_text(encoding="utf-8")
+                      .split('sub.add_parser("amr")', 1)[1][:400])
+
+    def test_an_incomplete_database_is_never_wired_into_a_config(self):
+        """A config pointing at a half-extracted DB is what produces `does not
+        contain necessary file taxo.k2d` mid-run."""
+        setup = self.SETUP.read_text(encoding="utf-8")
+        for func in ("wire_kraken()", "wire_amr()"):
+            block = setup.split(func, 1)[1].split("\n}", 1)[0]
+            self.assertIn('kraken_db_complete "${KRAKEN_DEST}"', block, func)
 
     def test_kraken_completeness_uses_every_file_kraken2_needs(self):
         src = self.SETUP.read_text(encoding="utf-8")

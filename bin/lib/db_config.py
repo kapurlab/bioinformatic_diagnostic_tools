@@ -11,7 +11,7 @@ Config locations mirror each tool's own config.py (XDG_CONFIG_HOME, else
 
 Usage:
   db_config.py kraken  --kraken-db PATH --blast-db PATH
-  db_config.py amr     --amrfinder-db PATH
+  db_config.py amr     --amrfinder-db PATH --kraken-db PATH
   db_config.py vsnp    --refs-root PATH        # only when there is NO local
                                                # vsnp3 site (setup-databases
                                                # re-points the site symlink
@@ -61,6 +61,9 @@ def main() -> None:
 
     a = sub.add_parser("amr")
     a.add_argument("--amrfinder-db")
+    # Its own key for the SAME database kraken_id_parse_gui reads: amr_plus_gui
+    # uses Kraken2 for read-based organism detection.
+    a.add_argument("--kraken-db")
 
     v = sub.add_parser("vsnp")
     v.add_argument("--refs-root")
@@ -78,6 +81,7 @@ def main() -> None:
         # the normal order — is never picked up until someone edits Settings.
         update("amr_plus_gui", {
             "amrfinder_db": args.amrfinder_db,
+            "kraken_db": args.kraken_db,
         })
     elif args.tool == "vsnp":
         update("vsnp_gui", {

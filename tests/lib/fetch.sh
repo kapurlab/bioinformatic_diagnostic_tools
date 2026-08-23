@@ -43,22 +43,73 @@ fetch_genome() {
   echo "${fna}"
 }
 
+# ---- architecture pin for env-resolved sra-tools ---------------------------
+# _ensure_sra_tools may satisfy prefetch/fasterq-dump from ANY conda env's bin.
+# An env's binaries were linked for the platform its conda-meta records, not
+# for whatever slice preference this test process happened to inherit — the
+# August macOS incident shape: launched from a translated caller, a universal
+# binary picks the slice the env was never built with and dies, and here that
+# surfaces as "SRA download failed" with nothing on disk to explain it, blamed
+# on the network before the pipeline even starts. So when the tools come from a
+# conda env, run them under that env's /usr/bin/arch pin, exactly like the
+# production launchers (install-local.sh:arch_prefix); when they resolve from
+# ordinary PATH outside any env, there is no recorded platform to assert, so
+# run them unpinned.
+_SRA_ARCH_PREFIX=""   # set by _ensure_sra_tools; consumed by fetch_sra
+
+_sra_arch_prefix() {  # ENVDIR -> echoes "/usr/bin/arch -<arch>" or nothing
+  local envdir="${1:-}" sub
+  [[ "$(uname -s)" == "Darwin" ]] || return 0
+  [[ -x /usr/bin/arch ]] || return 0
+  # From conda-meta, NEVER `uname -m`: inside a translated process uname -m
+  # reports x86_64 — false exactly when the caller is the Rosetta process whose
+  # preference needs overriding. This suite already shipped that guard once.
+  sub="$(env_conda_subdir "${envdir}" 2>/dev/null || true)"
+  case "${sub}" in
+    osx-arm64) printf '%s' "/usr/bin/arch -arm64";;
+    osx-64)    printf '%s' "/usr/bin/arch -x86_64";;
+  esac
+  return 0
+}
+
+# Set _SRA_ARCH_PREFIX from wherever `prefetch` actually resolved. A bin dir
+# whose parent carries conda-meta is a conda env — env prefixes don't have to
+# contain "/envs/" (checkout-local envs live at <tool>/env), so the marker on
+# disk is the test, not the path's spelling. Anything else is a system install
+# with no recorded platform: leave the prefix empty.
+_sra_arch_from_resolved() {
+  _SRA_ARCH_PREFIX=""
+  local p envdir
+  p="$(command -v prefetch 2>/dev/null || true)"
+  [[ -n "${p}" ]] || return 0
+  envdir="$(dirname "$(dirname "${p}")")"
+  [[ -d "${envdir}/conda-meta" ]] && _SRA_ARCH_PREFIX="$(_sra_arch_prefix "${envdir}")"
+  return 0
+}
+
 # Make sra-tools (prefetch + fasterq-dump) available on PATH. On macOS there is
 # usually no system sra-tools, so look inside the conda envs too — `[[ -x ]]`
 # follows symlinks (conda often symlinks these into <env>/bin), unlike
 # `find -type f`. Returns 0 if usable, non-zero if sra-tools can't be found.
+# Every successful path also records the tools' arch pin (see above): even
+# tools already on PATH may live inside an env somebody activated.
 _ensure_sra_tools() {
-  command -v prefetch >/dev/null 2>&1 && command -v fasterq-dump >/dev/null 2>&1 && return 0
+  if command -v prefetch >/dev/null 2>&1 && command -v fasterq-dump >/dev/null 2>&1; then
+    _sra_arch_from_resolved; return 0
+  fi
   local conda envroot; conda="$(detect_conda 2>/dev/null || true)"
   if [[ -n "${conda}" ]]; then
     while read -r envroot; do
       [[ -n "${envroot}" ]] || continue
       if [[ -x "${envroot}/bin/prefetch" && -x "${envroot}/bin/fasterq-dump" ]]; then
-        export PATH="${envroot}/bin:${PATH}"; return 0
+        export PATH="${envroot}/bin:${PATH}"
+        _SRA_ARCH_PREFIX="$(_sra_arch_prefix "${envroot}")"
+        return 0
       fi
     done < <("${conda}" env list 2>/dev/null | awk '{print $NF}' | grep '^/')
   fi
-  command -v prefetch >/dev/null 2>&1 && command -v fasterq-dump >/dev/null 2>&1
+  command -v prefetch >/dev/null 2>&1 && command -v fasterq-dump >/dev/null 2>&1 || return 1
+  _sra_arch_from_resolved
 }
 
 fetch_sra() {
@@ -68,8 +119,15 @@ fetch_sra() {
   if [[ -s "${r1}" ]]; then echo "${r1}"; return 0; fi
   # exit 2 = sra-tools missing (caller SKIPs); exit 1 = a real download failure.
   _ensure_sra_tools || { echo "SRATOOLS_MISSING: prefetch/fasterq-dump not found on PATH or in any conda env" >&2; return 2; }
-  ( cd "${out}" && prefetch -O . "${acc}" >/dev/null 2>&1 \
-       && fasterq-dump --split-files -O . "${acc}" >/dev/null 2>&1 ) \
+  # APPLY the pin _ensure_sra_tools computed. The adversarial review caught the
+  # first version of this feature computing and testing the pin without ever
+  # splicing it into the invocation — fully inert while its detection tests
+  # passed. The consumption test in test_platform_guards now runs a stubbed
+  # prefetch and asserts the argv it actually received begins with the pin.
+  local _pin=()
+  [[ -n "${_SRA_ARCH_PREFIX}" ]] && read -ra _pin <<< "${_SRA_ARCH_PREFIX}"
+  ( cd "${out}" && ${_pin[@]+"${_pin[@]}"} prefetch -O . "${acc}" >/dev/null 2>&1 \
+       && ${_pin[@]+"${_pin[@]}"} fasterq-dump --split-files -O . "${acc}" >/dev/null 2>&1 ) \
     || { echo "SRA download failed for ${acc}" >&2; return 1; }
   # gzip the split files (fasterq-dump leaves them uncompressed)
   [[ -f "${out}/${acc}_1.fastq" ]] && gzip -f "${out}/${acc}_1.fastq"

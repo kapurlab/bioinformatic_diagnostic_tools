@@ -167,6 +167,32 @@ fetch_kraken() {
   ok "kraken2 DB ready: ${KRAKEN_DEST}"
 }
 
+# arch_prefix ENVDIR — the /usr/bin/arch pin under which a program from this
+# env must run, derived from the platform the env was BUILT for (conda-meta)
+# and never from `uname -m` (a translated process reports x86_64 exactly when
+# its inherited slice preference is the thing that must be overridden). Mirrors
+# the production launchers (install-local.sh:arch_prefix).
+#
+# It exists here because update_blastdb.pl is an env PERL SCRIPT run outside
+# any pinned launcher — the exact shape of the August incident: a universal
+# env perl with single-arch XS bundles, launched from a process tree preferring
+# the other slice, dies loading Cwd with a mach-o error nothing on disk
+# explains. This script is spawned by `bdtools install` and `bdtools
+# setup-databases` (bin/bdtools), i.e. possibly under a translated dashboard or
+# terminal, so the caller's inherited preference is precisely what cannot be
+# trusted.
+arch_prefix() {
+  local envdir="${1:-}" sub
+  [[ "$(uname -s)" == "Darwin" ]] || return 0
+  [[ -x /usr/bin/arch ]] || return 0
+  sub="$(env_conda_subdir "${envdir}" 2>/dev/null || true)"
+  case "${sub}" in
+    osx-arm64) printf '%s' "/usr/bin/arch -arm64";;
+    osx-64)    printf '%s' "/usr/bin/arch -x86_64";;
+  esac
+  return 0
+}
+
 # update_blastdb.pl ships with the `blast` conda package (now in the
 # kraken_id_parse_gui env). Find it there first, then on PATH.
 find_update_blastdb() {
@@ -184,8 +210,15 @@ fetch_blast() {
   fi
   log "downloading BLAST ${BLAST_DBNAME} (large; tens of GB) -> ${BLAST_DIR}"
   run mkdir -p "${BLAST_DIR}"
-  if [[ ${DRY_RUN} -eq 1 ]]; then echo "  [dry-run] (cd ${BLAST_DIR} && ${ublast} --decompress ${BLAST_DBNAME})"; return; fi
-  ( cd "${BLAST_DIR}" && "${ublast}" --decompress "${BLAST_DBNAME}" ) \
+  # Pin from the env the script actually resolved from (its bin's parent) —
+  # covers both the kraken env path and a PATH hit that happens to live inside
+  # some other env; a system install has no conda-meta and stays unpinned.
+  # Prepended as argv, not spliced into a command string.
+  local _archp _arch_cmd=()
+  _archp="$(arch_prefix "$(dirname "$(dirname "${ublast}")")")"
+  [[ -n "${_archp}" ]] && read -ra _arch_cmd <<< "${_archp}"
+  if [[ ${DRY_RUN} -eq 1 ]]; then echo "  [dry-run] (cd ${BLAST_DIR} && ${_archp:+${_archp} }${ublast} --decompress ${BLAST_DBNAME})"; return; fi
+  ( cd "${BLAST_DIR}" && ${_arch_cmd[@]+"${_arch_cmd[@]}"} "${ublast}" --decompress "${BLAST_DBNAME}" ) \
     || die "update_blastdb.pl failed for ${BLAST_DBNAME}"
   ok "BLAST DB ready: ${BLAST_DB}"
 }

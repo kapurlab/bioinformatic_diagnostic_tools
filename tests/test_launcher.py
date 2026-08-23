@@ -14,6 +14,9 @@ where "Open Dashboard.command" did not:
     cannot take a running analysis with it,
   * a failure to come up is reported to the user, not just dropped.
 
+OpenUrlWslTests covers the same silent-failure family one step later: the
+launch worked, but the browser the user is waiting for never opens.
+
 No macOS needed: a .app is a directory, and BDTOOLS_LAUNCHER_PLATFORM selects the
 target explicitly for exactly this reason.
 """
@@ -27,6 +30,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 BDTOOLS = ROOT / "bin/bdtools"
+COMMON = ROOT / "bin/lib/common.sh"
 
 
 def make_launcher(home, platform, *args):
@@ -161,6 +165,71 @@ class LinuxEntryTests(unittest.TestCase):
         copy = desktop / "Kapur Lab Dashboard.desktop"
         self.assertTrue(copy.exists())
         self.assertTrue(os.access(copy, os.X_OK))
+
+
+class OpenUrlWslTests(unittest.TestCase):
+    """open_url (common.sh) on WSL prefers the Windows-side opener over xdg-open.
+
+    The launcher's whole journey ends with a browser opening; on WSL it often
+    didn't, silently. xdg-utils is routinely installed as a dependency there
+    while no Linux browser is, so xdg-open exists, gets picked, is backgrounded
+    with output discarded — and the URL never opens, with no hint why, while
+    wslview (or the Windows shell) one line down would have worked. The old
+    order even labeled wslview "# WSL" while making it unreachable whenever
+    xdg-open existed.
+
+    Exercised with a fabricated kernel string and PATH shims that record which
+    opener ran — no real WSL, and no real browser, involved.
+    """
+
+    WSL = "Linux version 5.15.167.4-microsoft-standard-WSL2 (gcc ...)"
+    LINUX = "Linux version 6.5.0-41-generic (buildd@lcy02) ..."
+
+    def _open(self, kernel, shims):
+        """Run open_url with only `shims` resolvable; return what got called."""
+        with tempfile.TemporaryDirectory() as td:
+            bindir = Path(td) / "bin"
+            outfile = Path(td) / "called"
+            bindir.mkdir()
+            for name in shims:
+                shim = bindir / name
+                shim.write_text(f'#!/bin/sh\necho "{name} $1" >> "{outfile}"\n')
+                shim.chmod(0o755)
+            script = (
+                f'set -euo pipefail\n'
+                f'source "{COMMON}"\n'
+                f'_wsl_kernel() {{ printf \'%s\' "{kernel}"; }}\n'
+                f'PATH="{bindir}:${{PATH}}"\n'
+                f'open_url "http://127.0.0.1:8123/"\n'
+                f'wait\n'   # the opener is backgrounded; let it finish writing
+            )
+            env = dict(os.environ)
+            env.pop("DRY_RUN", None)
+            r = subprocess.run(["bash", "-c", script],
+                               capture_output=True, text=True, env=env)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            try:
+                return outfile.read_text()
+            except OSError:
+                return ""
+
+    def test_wsl_uses_wslview_even_when_xdg_open_exists(self):
+        called = self._open(self.WSL, ["wslview", "xdg-open"])
+        self.assertIn("wslview http://127.0.0.1:8123/", called)
+        self.assertNotIn("xdg-open", called,
+                         "xdg-open on WSL is commonly browserless — never first")
+
+    def test_wsl_without_wslview_falls_back_to_the_windows_shell(self):
+        called = self._open(self.WSL, ["powershell.exe", "xdg-open"])
+        self.assertIn("powershell.exe", called)
+        self.assertNotIn("xdg-open", called)
+
+    def test_off_wsl_the_existing_chain_is_untouched(self):
+        # A plain Linux box with both installed keeps its native opener: the
+        # WSL preference must never leak onto real Linux desktops.
+        called = self._open(self.LINUX, ["wslview", "xdg-open"])
+        self.assertIn("xdg-open http://127.0.0.1:8123/", called)
+        self.assertNotIn("wslview", called)
 
 
 class ArgumentTests(unittest.TestCase):

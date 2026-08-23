@@ -42,6 +42,35 @@ done
 
 spec() { "${PYBIN}" "${TESTS_DIR}/lib/readspec.py" "$1" "$2"; }
 
+# arch_prefix ENVDIR — the /usr/bin/arch pin under which this env's pipeline
+# must run, derived from the platform the env was BUILT for (conda-meta) and
+# never from `uname -m` (a translated process reports x86_64 exactly when its
+# inherited slice preference is the thing that must be overridden). Mirrors the
+# production launchers (install-local.sh:arch_prefix, tool_launch._arch_prefix)
+# because a golden test must run the pipeline the way production launches it,
+# or it certifies a slice production never runs: that is the exact blindness
+# that let the August incident pass every terminal check (arm64 shell, arm64
+# slice of a universal perl) while the dashboard — a translated caller running
+# the same healthy env — failed on the same command all week.
+#
+# Pinning the `bash -c` wrapper below is safe even though /usr/bin/arch
+# ENFORCES on the binary it directly execs (a thin binary of another arch would
+# be refused, not translated): bash is universal or native, and everything the
+# pipeline spawns below it only inherits a PREFERENCE — a thin foreign binary
+# among the tools still runs via Rosetta, exactly as under the pinned
+# production backends. Do not move this pin onto any single tool binary.
+arch_prefix() {
+  local envdir="${1:-}" sub
+  [[ "$(uname -s)" == "Darwin" ]] || return 0
+  [[ -x /usr/bin/arch ]] || return 0
+  sub="$(env_conda_subdir "${envdir}" 2>/dev/null || true)"
+  case "${sub}" in
+    osx-arm64) printf '%s' "/usr/bin/arch -arm64";;
+    osx-64)    printf '%s' "/usr/bin/arch -x86_64";;
+  esac
+  return 0
+}
+
 # Resolve the tool's env python + its bin dir (so the pipeline's CLI deps — mlst,
 # shovill, kraken2, ... — are found). Mirrors install-local.sh:resolve_python.
 resolve_env_bin() {  # tool dir -> echoes "<python>|<bindir>" or empty
@@ -152,9 +181,16 @@ run_one() {  # tool -> prints a status; sets RC_FAIL on FAIL
   cmd="${cmd//\{r1\}/${r1}}"
   cmd="${cmd//\{r2\}/${r2}}"
 
-  # 3. run with the tool's env on PATH
-  log "running: ${cmd}"
-  if ! PATH="${envbin}:${PATH}" PYTHONPATH="${dir}/bin:${PYTHONPATH:-}" bash -c "${cmd}"; then
+  # 3. run with the tool's env on PATH, under the env's own architecture (see
+  #    arch_prefix above). The pin is prepended as argv, never spliced into
+  #    ${cmd} — the command string's quoting belongs to the spec, and a prefix
+  #    inside it would be re-parsed by the very shell it is meant to wrap.
+  local _archp _arch_cmd=()
+  _archp="$(arch_prefix "${envbin%/bin}")"
+  [[ -n "${_archp}" ]] && read -ra _arch_cmd <<< "${_archp}"
+  log "running: ${cmd}${_archp:+   [pinned: ${_archp}]}"
+  if ! PATH="${envbin}:${PATH}" PYTHONPATH="${dir}/bin:${PYTHONPATH:-}" \
+       ${_arch_cmd[@]+"${_arch_cmd[@]}"} bash -c "${cmd}"; then
     echo "FAIL  ${tool}: pipeline run failed"; RC_FAIL=1; return 0
   fi
 

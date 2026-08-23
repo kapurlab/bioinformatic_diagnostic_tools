@@ -36,6 +36,19 @@ SKIP_TOOLS=(vsnp_gui)
 # it is wired into all three of its log views.
 SHARED_ALL=(Citations.jsx Citations.css CopyLogButton.jsx)
 
+# md5sum is the GNU name, and macOS only gained /sbin/md5sum in Ventura (13):
+# on Monterey and earlier every hash below exited "command not found" mid-sweep,
+# which reads as a broken drift checker rather than the four-character
+# portability gap it is. BSD `md5 -q` prints the bare digest where md5sum
+# prints "digest  filename", and every caller here parses through
+# awk '{print $1}', so both forms yield the same value — resolve the name once
+# and use ${MD5[@]} everywhere. (A function so the resolution is testable:
+# tests/test_platform_guards.py exercises both branches by PATH shimming.)
+resolve_md5() {
+  if command -v md5sum >/dev/null 2>&1; then MD5=(md5sum); else MD5=(md5 -q); fi
+}
+resolve_md5
+
 ROOT=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -66,7 +79,7 @@ check_set() {
       warn "${SOURCE_TOOL} has no ${f} — nothing to compare against"
       continue
     fi
-    want="$(md5sum < "${ref}" | awk '{print $1}')"
+    want="$("${MD5[@]}" < "${ref}" | awk '{print $1}')"
     for d in "${ROOT}"/*/; do
       tool="$(basename "${d}")"
       [[ "${tool}" == "${SOURCE_TOOL}" ]] && continue
@@ -84,7 +97,7 @@ check_set() {
         continue
       fi
       checked=$((checked + 1))
-      got="$(md5sum < "${have_file}" | awk '{print $1}')"
+      got="$("${MD5[@]}" < "${have_file}" | awk '{print $1}')"
       if [[ "${got}" != "${want}" ]]; then
         warn "${tool}: ${f} has DRIFTED from ${SOURCE_TOOL}"
         warn "       fix: cp ${ref} ${have_file}   (then rebuild + re-tag ${tool})"
@@ -113,7 +126,7 @@ check_set every "${SHARED_ALL[@]}"
 # away (whitespace + trailing commas) for the same reason: a reflow is not a
 # change in the look.
 look_hash() {
-  tr -d '[:space:]' < "$1" | sed -e 's/,\([]})]\)/\1/g' | md5sum | awk '{print $1}'
+  tr -d '[:space:]' < "$1" | sed -e 's/,\([]})]\)/\1/g' | "${MD5[@]}" | awk '{print $1}'
 }
 LOOK=(App.css ThemeToggle.jsx)
 # vsnp_gui has its own native stylesheet (styles.css); mhc_gui deliberately owns

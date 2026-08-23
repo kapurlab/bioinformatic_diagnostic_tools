@@ -271,7 +271,15 @@ ensure_checkout() {
   fi
   log "cloning ${name} @ ${version}"
   run mkdir -p "$(dirname "${dir}")"
-  run git clone --branch "${version}" --depth 1 "${repo}" "${dir}" \
+  # -c core.autocrlf=false -c core.eol=lf on every managed clone/checkout: a
+  # user's global autocrlf=true (routinely copied from a Windows gitconfig onto
+  # WSL) materializes every tracked script with CRLF endings, and the first
+  # shebanged script then dies at exec with "/usr/bin/env: 'bash\r': No such
+  # file or directory". Managed checkouts are bdtools' own artifacts, so pinning
+  # the working-tree translation inside them overrides nothing the user owns.
+  # Kept in lock-step with install-local.sh:ensure_checkout, which pins the
+  # same flags on its clone/fetch/checkout.
+  run git clone --config core.autocrlf=false --config core.eol=lf --branch "${version}" --depth 1 "${repo}" "${dir}" \
     || die "git clone failed (${repo} @ ${version})"
   install_checkout_excludes "${dir}"
 }
@@ -289,12 +297,33 @@ s.close()
 PY
 }
 
+# _wsl_kernel — the running kernel's version string ("" when unreadable).
+# WSL is detected by the "microsoft" tag in /proc/version (both WSL1
+# "-Microsoft" and WSL2 "-microsoft-standard-WSL2" carry it). A function
+# rather than inline greps so (a) every caller detects WSL the same way and
+# (b) tests can override it with a fabricated kernel string instead of
+# needing a real WSL box.
+_wsl_kernel() { cat /proc/version 2>/dev/null || true; }
+
 # Open a URL in the user's browser, best-effort, cross-platform.
+#
+# On WSL the WINDOWS-side opener must be tried BEFORE xdg-open: xdg-utils is
+# routinely installed as a dependency while no Linux browser is, so xdg-open
+# exists, gets picked, is backgrounded with its output discarded — and the URL
+# silently never opens. wslview (or the Windows shell) one line down would have
+# worked. The user just sees a dashboard that "doesn't come up".
 open_url() {
   local url="$1"
+  case "$(_wsl_kernel)" in
+    *[Mm]icrosoft*)
+      if command -v wslview >/dev/null 2>&1; then wslview "$url" >/dev/null 2>&1 & return 0
+      elif command -v powershell.exe >/dev/null 2>&1; then powershell.exe -c "start '$url'" >/dev/null 2>&1 & return 0
+      elif command -v explorer.exe >/dev/null 2>&1; then explorer.exe "$url" >/dev/null 2>&1 & return 0
+      fi;;   # no Windows opener found: fall through to the generic chain
+  esac
   if command -v xdg-open >/dev/null 2>&1; then xdg-open "$url" >/dev/null 2>&1 &
   elif command -v open   >/dev/null 2>&1; then open "$url" >/dev/null 2>&1 &        # macOS
-  elif command -v wslview >/dev/null 2>&1; then wslview "$url" >/dev/null 2>&1 &     # WSL
+  elif command -v wslview >/dev/null 2>&1; then wslview "$url" >/dev/null 2>&1 &     # WSL without /proc/version access
   else warn "open ${url} in your browser"; fi
 }
 
@@ -308,9 +337,25 @@ detect_conda() {
   local base="${CONDA_BASE:-}" b p
   [[ -n "${base}" && -x "${base}/bin/conda" ]] && { echo "${base}/bin/conda"; return 0; }
   [[ -n "${CONDA_EXE:-}" && -x "${CONDA_EXE}" ]] && { echo "${CONDA_EXE}"; return 0; }
+  # This probe list is PINNED to tool_launch.py:_conda_bases() — same entries,
+  # same order (${HOME} there is spelled ~). If the two drift, the dashboard
+  # and doctor disagree about whether a tool is installed, which is a failure
+  # mode this suite has already paid for. Change both or neither, and keep the
+  # existing order first: it is the priority order deployments already rely on.
+  # The second block exists because the first missed the most common
+  # non-interactive install bases — /opt/conda (official Anaconda/Miniconda
+  # Docker/WSL images and many HPC site installs), /opt/anaconda3,
+  # /opt/mambaforge, /usr/local/{miniforge3,miniconda3}, and ~/opt/{anaconda3,
+  # miniconda3} (the macOS graphical installer's DEFAULT location). On such
+  # machines, any subprocess without an inherited CONDA_EXE (the dashboard,
+  # cron, a delegated deploy/install.sh) found no conda at all and every
+  # build/repair died "conda/mamba not found" while conda was installed.
   for b in "${HOME}/miniforge3" "${HOME}/miniconda3" "${HOME}/mambaforge" \
            "${HOME}/anaconda3" "/opt/miniforge3" "/opt/miniconda3" \
-           "/opt/homebrew/Caskroom/miniforge/base"; do
+           "/opt/homebrew/Caskroom/miniforge/base" \
+           "/opt/conda" "/opt/anaconda3" "/opt/mambaforge" \
+           "/usr/local/miniforge3" "/usr/local/miniconda3" \
+           "${HOME}/opt/anaconda3" "${HOME}/opt/miniconda3"; do
     [[ -x "${b}/bin/conda" ]] && { echo "${b}/bin/conda"; return 0; }
   done
   p="$(command -v mamba 2>/dev/null || true)"; [[ -n "${p}" && -x "${p}" ]] && { echo "${p}"; return 0; }
@@ -622,7 +667,9 @@ seed_vcf_db_directories() {  # <vcf_db_folders_root> <clone_parent_dir>
   local dest="${clone_parent}/vcf_db_directories"
   if [[ ! -d "${dest}" ]]; then
     mkdir -p "${clone_parent}"
-    if ! git clone --depth 1 "${VCF_DB_DIRS_REPO}" "${dest}" 2>/dev/null; then
+    # Same line-ending pin as ensure_checkout: a global autocrlf=true on WSL
+    # would put CRLF into every cloned VCF, which vSNP's parsers then choke on.
+    if ! git -c core.autocrlf=false -c core.eol=lf clone --depth 1 "${VCF_DB_DIRS_REPO}" "${dest}" 2>/dev/null; then
       warn "could not clone ${VCF_DB_DIRS_REPO} (offline?) — Step 2 VCF databases not seeded; re-run 'bdtools setup-databases vcf-dbs' later"
       return 0
     fi

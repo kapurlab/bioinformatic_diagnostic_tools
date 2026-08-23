@@ -38,6 +38,54 @@ done
 [[ -n "${TOOL}" ]] || die "name a tool (see: bdtools list)"
 manifest_has "${TOOL}" || die "unknown tool: ${TOOL}"
 
+# Refuse a BDTOOLS_HOME on a Windows drive under WSL, before anything clones or
+# solves. Users pick /mnt/c deliberately ("keep it on the big drive"), and
+# nothing used to warn — the failure then surfaced as an inscrutable conda
+# transaction error hours into a solve, not as a stated precondition. drvfs
+# (the 9p mount behind /mnt/*) cannot host a conda env: no hardlinks (conda
+# links packages out of its cache), unreliable symlink semantics (activate
+# scripts and the ensure_env_java link break), POSIX permissions are
+# approximated, and every metadata operation is 10-50x slower than the Linux
+# filesystem — so `conda env create` fails mid-transaction or yields an env
+# whose binaries do not run. A function (not inline top-level code) so tests
+# can exercise it with a fabricated kernel string; the optional argument
+# exists only for that.
+_require_linux_fs_home() {
+  local kernel="${1:-$(_wsl_kernel)}"
+  case "${kernel}" in *[Mm]icrosoft*) ;; *) return 0;; esac
+  [[ "${BDTOOLS_HOME}" == /mnt/* ]] || return 0
+  # /mnt/wsl and /mnt/wslg are NOT Windows drives: `wsl --mount` attaches ext4
+  # disks under /mnt/wsl/<name> (tmpfs parent, native Linux fs, full hardlink
+  # and symlink semantics) — Microsoft's documented way to give WSL a large
+  # disk, i.e. exactly where a careful user puts a big BDTOOLS_HOME. Refusing
+  # those punishes the person who followed the best advice.
+  case "${BDTOOLS_HOME}" in /mnt/wsl/*|/mnt/wslg/*) return 0;; esac
+  die "BDTOOLS_HOME is on a Windows drive (${BDTOOLS_HOME}), and conda envs cannot be built on one:
+       /mnt/* is a drvfs mount — no hardlinks, broken symlink semantics, 10-50x slower
+       metadata, so 'conda env create' fails mid-transaction or produces an env that
+       cannot run. Use a path inside the Linux filesystem instead:
+         unset BDTOOLS_HOME            # default: ~/.local/share/bdtools (ext4)
+         # or: bin/bdtools install ${TOOL} --prefix ~/bdtools   (any Linux-fs path)"
+}
+# Launch-only and query modes clone and solve nothing, so a legacy /mnt install
+# that limps along must stay LAUNCHABLE — the guard's own rationale is scoped
+# to build time, and dying here also broke --print-python, which check-updates
+# and the dashboard use to detect built tools (a hard die there misreported
+# every built env as unbuilt). Warn on those paths; die only when a build could
+# actually start. --dry-run keeps the die: a dry run's job is to report that
+# the real run would be refused.
+if [[ ${RUN_ONLY} -eq 1 || ${PRINT_PYTHON} -eq 1 ]]; then
+  case "$(_wsl_kernel)" in *[Mm]icrosoft*)
+    if [[ "${BDTOOLS_HOME}" == /mnt/* ]]; then
+      case "${BDTOOLS_HOME}" in /mnt/wsl/*|/mnt/wslg/*) ;; *)
+        warn "BDTOOLS_HOME is on a Windows drive (${BDTOOLS_HOME}) — launches may misbehave and builds here will be refused; move it to a Linux-fs path (see bin/bdtools doctor)";;
+      esac
+    fi;;
+  esac
+else
+  _require_linux_fs_home
+fi
+
 DIR="$(tool_dir "${TOOL}")"
 REPO="$(manifest_get "${TOOL}" repo)"
 VERSION="$(manifest_get "${TOOL}" version)"
@@ -102,7 +150,20 @@ _tree_cpu_ticks() {
     frontier="${next}"
   done
   [[ -n "${pids// /}" ]] || { echo 0; return; }
-  ps -o time= -p ${pids} 2>/dev/null | awk '
+  # ONE comma-separated pid operand, not word-split bare operands. The
+  # space-separated form happened to work on macOS BSD ps (extra numeric
+  # operands are taken as pids) and on procps (bare digits are legacy pid
+  # selectors), but neither behavior is the documented grammar — procps
+  # documents a blank-separated list only as a single quoted argument, and a
+  # busybox-class ps or a stricter parse silently returns nothing. "Silently
+  # returns nothing" here means _tree_cpu_ticks reports 0 forever, which
+  # re-opens the exact "no CPU signal -> stall-kill every long step" failure
+  # the comments above document from macOS. Commas are the one form procps,
+  # BSD/macOS, and busybox-with-procps all accept — and passing a single
+  # quoted argument also stops relying on word-splitting an unquoted variable.
+  local plist=""
+  for pid in ${pids}; do plist="${plist:+${plist},}${pid}"; done
+  ps -o time= -p "${plist}" 2>/dev/null | awk '
     {
       line = $0
       gsub(/^[ \t]+|[ \t]+$/, "", line)
@@ -133,6 +194,15 @@ _tree_cpu_ticks() {
 # detector saw NEITHER cpu nor disk progress ever — so every build step longer
 # than BDTOOLS_IDLE_TIMEOUT was killed and retried on macOS. That is what killed
 # the 1 GB kSNP4 Mac-package download at 300s, mid-transfer, twice.
+#
+# TODO(HPC): the watch list includes the shared conda pkgs cache, and on a
+# parallel/network filesystem (nfs/lustre/gpfs) a `du -sk` of a tens-of-GB,
+# hundreds-of-thousands-of-inodes cache is a full metadata sweep every
+# heartbeat — it can lag the monitor behind the build and hammer the metadata
+# servers site-wide. A safe fix needs longest-prefix mount matching against
+# the fstype (and macOS has no /proc/mounts), so it is deliberately not done
+# here as a drive-by; replace the full-cache walk with a newest-entry
+# freshness probe, or skip du for watch paths on those fstypes.
 _watched_bytes() {
   local p b total=0
   for p in "$@"; do
@@ -328,7 +398,16 @@ ensure_checkout() {
     if [[ ${RUN_ONLY} -eq 0 && -n "${VERSION}" ]]; then
       local want; want="$(git -C "${DIR}" rev-parse -q --verify "refs/tags/${VERSION}^{commit}" 2>/dev/null || true)"
       if [[ -z "${want}" ]]; then
-        run git -C "${DIR}" fetch --tags --depth 1 origin "${VERSION}" >/dev/null 2>&1 || true
+        # Every managed git operation that can materialize working-tree files
+        # carries -c core.autocrlf=false -c core.eol=lf. A user's global
+        # autocrlf=true (a Windows gitconfig copied onto WSL) otherwise writes
+        # every tracked script with CRLF, and the first shebanged one dies at
+        # exec with "/usr/bin/env: 'bash\r': No such file or directory" —
+        # breaking the INSTALLER itself, before any check can run. These
+        # checkouts are bdtools' own artifacts, so pinning the translation
+        # inside them overrides nothing the user owns. Same flags on the
+        # clone below and on common.sh:ensure_checkout.
+        run git -C "${DIR}" -c core.autocrlf=false -c core.eol=lf fetch --tags --depth 1 origin "${VERSION}" >/dev/null 2>&1 || true
         want="$(git -C "${DIR}" rev-parse -q --verify "refs/tags/${VERSION}^{commit}" 2>/dev/null \
                 || git -C "${DIR}" rev-parse -q --verify FETCH_HEAD 2>/dev/null || true)"
       fi
@@ -346,8 +425,8 @@ ensure_checkout() {
           # Carry site-localized OOD card config (ood/apps/**) across the force
           # checkout — a deployment's own cluster/account edits (common.sh).
           local _site_snap; _site_snap="$(snapshot_site_edits "${DIR}")"
-          run git -C "${DIR}" checkout -f -q "${VERSION}" 2>/dev/null \
-            || run git -C "${DIR}" checkout -f -q "${want}"
+          run git -C "${DIR}" -c core.autocrlf=false -c core.eol=lf checkout -f -q "${VERSION}" 2>/dev/null \
+            || run git -C "${DIR}" -c core.autocrlf=false -c core.eol=lf checkout -f -q "${want}"
           restore_site_edits "${DIR}" "${_site_snap}"
           at="$(git -C "${DIR}" describe --tags --always 2>/dev/null || echo '?')"
         else
@@ -369,7 +448,9 @@ ensure_checkout() {
   [[ ${RUN_ONLY} -eq 1 ]] && die "${TOOL} is not installed at ${DIR} (run: bdtools install ${TOOL})"
   log "cloning ${TOOL} @ ${VERSION}"
   run mkdir -p "$(dirname "${DIR}")"
-  run git clone --branch "${VERSION}" --depth 1 "${REPO}" "${DIR}" \
+  # Line-ending pin: see the fetch above — a global autocrlf=true on WSL would
+  # otherwise CRLF-corrupt every script this clone materializes.
+  run git clone --config core.autocrlf=false --config core.eol=lf --branch "${VERSION}" --depth 1 "${REPO}" "${DIR}" \
     || die "git clone failed (${REPO} @ ${VERSION}). If this said 'Disk quota exceeded', your home filesystem is full — on an HPC set BDTOOLS_HOME to a larger scratch/work/group filesystem and re-run (see docs/INSTALL_LOCAL.md)."
 }
 
@@ -570,6 +651,42 @@ _note_fresh_relocation() {
   info "--fresh: the old env was set aside from ${FRESH_ORIG}; the new one is built at ${DIR}/env (launches prefer the checkout env)"
 }
 
+# _npm_path — the npm `command -v` resolves, "" when there is none. Split out
+# of have_usable_npm so tests can override it with a fabricated path.
+_npm_path() { command -v npm 2>/dev/null || true; }
+
+# have_usable_npm — is there an npm on PATH this build can actually use?
+#
+# On WSL the answer is not "command -v npm succeeded": Windows' Node install
+# puts /mnt/c/Program Files/nodejs on PATH via interop, and it ships an
+# extensionless `npm` wrapper — so a default WSL session resolves the WINDOWS
+# npm. That npm runs Windows node.exe against a Linux-side checkout under
+# ~/.local/share/bdtools: it cannot resolve the working directory (a UNC/
+# virtual path from Windows' side), breaks on CRLF-vs-LF wrapper scripts, and
+# writes Windows-format node_modules — so `npm ci`/`npm run build` fails or
+# produces a broken dist, and the existing fallback warning then blames the
+# Node VERSION ("vite needs Node >=20.19"), sending the user down the wrong
+# path entirely. Same two-userlands confusion the suite already fixed for
+# conda. Treat a /mnt/* npm under WSL as "npm not found", loudly, so every
+# caller falls back to the committed prebuilt dist instead of half-building.
+#
+# One helper for all three call sites (generic_build, build_vsnp_local,
+# build's --skip-frontend decision) so they cannot drift. The optional
+# argument is a kernel-string override for tests; real callers pass nothing.
+have_usable_npm() {
+  local kernel="${1:-$(_wsl_kernel)}" np
+  np="$(_npm_path)"
+  [[ -n "${np}" ]] || return 1
+  case "${kernel}" in
+    *[Mm]icrosoft*)
+      if [[ "${np}" == /mnt/* ]]; then
+        warn "the npm on PATH is the WINDOWS npm (${np}) — it breaks on CRLF wrappers and writes Windows-format node_modules into a Linux checkout; install Linux node inside WSL (e.g. 'sudo apt install nodejs npm', or nvm) — treating npm as not found."
+        return 1
+      fi;;
+  esac
+  return 0
+}
+
 generic_build() {
   local conda; conda="$(detect_conda)" || die "conda/mamba not found. Install miniforge first."
   ok "conda: ${conda}"
@@ -610,7 +727,19 @@ generic_build() {
   ensure_env_java "${DIR}/env"
   if [[ -f "${DIR}/backend/requirements.txt" ]]; then
     log "pip install backend requirements"
-    run "${DIR}/env/bin/python" -m pip install -r "${DIR}/backend/requirements.txt"
+    # The pip layer is arch-pinned like the launch (see arch_prefix): pip
+    # selects — and, for sdists, compiles — wheels for the RUNNING
+    # interpreter's architecture, so a universal env python started from a
+    # translated ancestor (dashboard Update button -> bdtools update -> here)
+    # quietly fills the env with wrong-arch extension modules. conda-meta
+    # records stay clean, so the arch audit cannot see the damage, and the
+    # loader smoke test covers conda-declared binaries, not pip's. Array +
+    # ${arr[@]+...} guard: bash 3.2 (macOS /bin/bash) treats an empty array
+    # expansion as unbound under `set -u`.
+    local _pip_archp _pip_arch=()
+    _pip_archp="$(arch_prefix "${DIR}/env")"
+    [[ -n "${_pip_archp}" ]] && read -ra _pip_arch <<< "${_pip_archp}"
+    run ${_pip_arch[@]+"${_pip_arch[@]}"} "${DIR}/env/bin/python" -m pip install -r "${DIR}/backend/requirements.txt"
   fi
   if [[ -d "${DIR}/frontend" ]]; then
     # Rebuild the frontend whenever npm is available so a tool update actually
@@ -618,7 +747,7 @@ generic_build() {
     # hosts), so a stale committed dist is exactly what a skipped build would
     # leave serving — rebuild rather than trust it. Only fall back to the
     # committed dist when Node is genuinely absent or too old.
-    if command -v npm >/dev/null 2>&1; then
+    if have_usable_npm; then
       log "building frontend"
       # Non-fatal: a build failure (e.g. a Node older than the tool's vite needs
       # — vite 8 wants Node >=20.19) must not brick the tool when a committed
@@ -808,8 +937,14 @@ build_vsnp_local() {
       _conda_step "${ENVP}" "${conda}" create -y -p "${ENVP}" -c conda-forge -c bioconda "${create_specs[@]}"
   fi
   harden_conda_hooks "${ENVP}"
-  # 2. web layer (uvicorn is served from this same python)
-  [[ -x "${ENVP}/bin/pip" ]] && run "${ENVP}/bin/pip" install --upgrade \
+  # 2. web layer (uvicorn is served from this same python). Arch-pinned like
+  #    generic_build's pip step and for the same reason: pip keys wheel
+  #    selection off the RUNNING interpreter's architecture, so a translated
+  #    ancestor poisons the pip layer invisibly to conda records.
+  local _vpip_archp _vpip_arch=()
+  _vpip_archp="$(arch_prefix "${ENVP}")"
+  [[ -n "${_vpip_archp}" ]] && read -ra _vpip_arch <<< "${_vpip_archp}"
+  [[ -x "${ENVP}/bin/pip" ]] && run ${_vpip_arch[@]+"${_vpip_arch[@]}"} "${ENVP}/bin/pip" install --upgrade \
       fastapi uvicorn pydantic python-multipart aiofiles
   # 3. Kapur Lab vsnp3 patches (idempotent; safe on the packaged version)
   [[ -x "${DIR}/deploy/vsnp3-patches/apply.sh" ]] && \
@@ -837,7 +972,9 @@ build_vsnp_local() {
     else
       log "downloading vSNP reference options (USDA-VS) -> ${refs}"
       run mkdir -p "$(dirname "${refs}")"
-      run git clone --depth 1 "${VSNP_REFS_REPO}" "${refs}"
+      # Line-ending pin as on every managed clone (see ensure_checkout): a
+      # global autocrlf=true on WSL would CRLF-corrupt the reference fastas.
+      run git clone --config core.autocrlf=false --config core.eol=lf --depth 1 "${VSNP_REFS_REPO}" "${refs}"
     fi
   fi
   # 4b. Local "site root" so the GUI backend (config.py keys everything off
@@ -959,7 +1096,7 @@ build_vsnp_local() {
     # hosts), so a stale committed dist is exactly what a skipped build would
     # leave serving — rebuild rather than trust it. Only fall back to the
     # committed dist when Node is genuinely absent or too old.
-    if command -v npm >/dev/null 2>&1; then
+    if have_usable_npm; then
       log "building frontend"
       # Non-fatal: a build failure (e.g. a Node older than the tool's vite needs
       # — vite 8 wants Node >=20.19) must not brick the tool when a committed
@@ -1073,7 +1210,7 @@ build() {
     # frontend build — keeping the existing dist — when Node is absent, which is
     # also where the tool installers hard-fail if asked to build.
     if [[ -f "${DIR}/frontend/dist/index.html" ]] \
-       && ! command -v npm >/dev/null 2>&1 \
+       && ! have_usable_npm \
        && grep -q -- '--skip-frontend' "${DIR}/deploy/install.sh" 2>/dev/null; then
       args+=(--skip-frontend)
     fi
@@ -1091,6 +1228,25 @@ build() {
           args+=(--skip-ksnp)
         fi;;
     esac
+    # Hand the tool's installer a ready-to-splice architecture pin for anything
+    # it runs FROM the env it builds. CONDA_SUBDIR (exported by
+    # ensure_conda_subdir above) makes its conda SOLVES target the right
+    # platform, but says nothing about how macOS picks the slice of a universal
+    # binary: pip steps, version probes, post-install smoke tests, and
+    # vendored-payload unpackers inside deploy/install.sh all execute env
+    # interpreters under the CALLER's inherited preference — the suite cannot
+    # see inside these scripts to pin them itself (the 2026-08-22 incident
+    # class, one delegation away). Tool authors: prepend
+    # ${BDTOOLS_ARCH_PREFIX} (unquoted — it is empty or "/usr/bin/arch -<sub>",
+    # no other spaces) to commands that run an INTERPRETER OR WRAPPER out of
+    # the env being built (python, perl, bash scripts). Never splice it
+    # directly onto an individual tool binary: arch ENFORCES, so a thin
+    # foreign-arch binary that would run via Rosetta dies under it — the
+    # preference an interpreter passes down to its children is the safe
+    # mechanism, enforcement on leaves is not. Empty when there is nothing to
+    # pin (Linux, no env yet, noarch-only env), so splicing costs nothing.
+    BDTOOLS_ARCH_PREFIX="$(arch_prefix "$(resolve_env_prefix)")"
+    export BDTOOLS_ARCH_PREFIX
     with_progress "${TOOL}: building env + frontend (deploy/install.sh)" \
       "${DIR}/deploy/install.sh" ${args[@]+"${args[@]}"} || die "${TOOL} deploy/install.sh failed"
   elif [[ -f "${DIR}/conda_setup/environment.yml" ]]; then
@@ -1363,6 +1519,15 @@ arch_prefix() {
 
 launch() {
   local py envbin; py="$(resolve_python)"; envbin="$(dirname "${py}")"
+  # The env's architecture pin, computed ONCE at the top so that EVERY run of
+  # the env's interpreter inside launch() carries it — not just the final exec.
+  # The vsnp config-repair heredoc below used to run "${py}" a hundred lines
+  # before the pin was computed: a universal python whose off-preference slice
+  # cannot start then made launch() die on a loader error the pinned path
+  # would never show, before the pin existed to prevent it.
+  local _archp _arch_cmd=()
+  _archp="$(arch_prefix "${envbin%/bin}")"
+  [[ -n "${_archp}" ]] && read -ra _arch_cmd <<< "${_archp}"
   # Universal self-heal: ensure java resolves for any tool that needs it (covers
   # deploy/install.sh tools like mlst_gui that generic_build never touches, and
   # existing installs from before this fix). envbin is <env>/bin, so pass <env>.
@@ -1397,7 +1562,7 @@ launch() {
     # Self-heal a stale per-user config.json: load_config() froze /srv paths into
     # it on the first GUI load (before this fix). Repoint the derived shared-path
     # keys to the local site, preserving user prefs. No-op on a fresh machine.
-    VSNP_GUI_SITE_ROOT="${site}" "${py}" - <<'PY' || true
+    VSNP_GUI_SITE_ROOT="${site}" ${_arch_cmd[@]+"${_arch_cmd[@]}"} "${py}" - <<'PY' || true
 import json, os
 from pathlib import Path
 site = os.environ["VSNP_GUI_SITE_ROOT"]
@@ -1504,9 +1669,9 @@ for k in KEYS:
   cd "${DIR}/backend"
   # Pin the architecture for the whole backend tree (see arch_prefix): every
   # analysis subprocess inherits it, so a universal binary anywhere below here
-  # picks the slice this env is actually built for.
-  local _archp; _archp="$(arch_prefix "${envbin%/bin}")"
-  local _arch_cmd=(); [[ -n "${_archp}" ]] && read -ra _arch_cmd <<< "${_archp}"
+  # picks the slice this env is actually built for. _archp/_arch_cmd were
+  # computed once at the top of launch() — the heredoc repair above already
+  # ran under the same pin.
   [[ -n "${_archp}" ]] && echo "  arch:   ${_archp} (pinned from the env's platform)"
   PATH="${launch_path}:${PATH}" PYTHONPATH="${DIR}/bin:${PYTHONPATH:-}" \
     exec ${_arch_cmd[@]+"${_arch_cmd[@]}"} "${py}" -m uvicorn app.main:app --host 127.0.0.1 --port "${PORT}" --log-level info

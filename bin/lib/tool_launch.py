@@ -177,9 +177,20 @@ def _conda_bases():
     exe = os.environ.get("CONDA_EXE", "").strip()
     if exe:
         add(os.path.dirname(os.path.dirname(exe)))  # <base>/bin/conda -> <base>
+    # This literal list is PINNED to common.sh:detect_conda() — same entries,
+    # same order (~ here is spelled ${HOME} there). Drift between the two is
+    # how the dashboard and doctor come to disagree about "installed". The
+    # second block covers the common non-interactive install bases the first
+    # missed: /opt/conda (official Anaconda/Miniconda Docker/WSL images, many
+    # HPC site installs), /opt/anaconda3, /opt/mambaforge,
+    # /usr/local/{miniforge3,miniconda3}, and ~/opt/{anaconda3,miniconda3}
+    # (Anaconda's macOS graphical installer default). Change both or neither.
     for b in ("~/miniforge3", "~/miniconda3", "~/mambaforge", "~/anaconda3",
               "/opt/miniforge3", "/opt/miniconda3",
-              "/opt/homebrew/Caskroom/miniforge/base"):
+              "/opt/homebrew/Caskroom/miniforge/base",
+              "/opt/conda", "/opt/anaconda3", "/opt/mambaforge",
+              "/usr/local/miniforge3", "/usr/local/miniconda3",
+              "~/opt/anaconda3", "~/opt/miniconda3"):
         add(os.path.expanduser(b))
     return [b for b in bases if os.path.isdir(b)]
 
@@ -378,6 +389,34 @@ def resolve(tool, port, host="127.0.0.1"):
         _var = "BDTOOLS_SIBLING_ENV_" + _name.upper()
         env[_var] = _senv
         env_overrides[_var] = _senv
+        # The sibling's ARCH pin rides along with its env path. The launched
+        # backend runs under a pin derived from ITS OWN env (argv below), and
+        # every subprocess inherits that preference — including a sibling's
+        # binaries invoked via BDTOOLS_SIBLING_ENV_<TOOL>. When the sibling env
+        # was built for a DIFFERENT subdir (real today: mixed osx-64/osx-arm64
+        # envs on one Mac — a genoflu env built osx-arm64 beside osx-64
+        # kraken/mlst/vsnp envs), a universal interpreter in it picks the
+        # CALLER's slice and dies loading its own native modules — the exact
+        # Cwd.bundle failure of 2026-08-22, reintroduced through cross-tool
+        # invocation, invisible to every file check. So export a ready-to-splice
+        # prefix ("/usr/bin/arch -arm64", "/usr/bin/arch -x86_64", or "" when
+        # there is nothing to pin — no spaces beyond the one separator, so it is
+        # safe in shell strings and argv alike) for consumers to prepend.
+        # SPLICE IT ONLY ONTO A WRAPPER OR INTERPRETER — the env's python/perl/
+        # bash that then spawns the tools — never directly onto an individual
+        # tool binary: /usr/bin/arch ENFORCES its architecture, so a thin
+        # foreign-arch binary that would run happily via Rosetta dies under it
+        # with "Bad CPU type" (adversarial-review catch; the same rule
+        # check.py's _pin_for_exec applies by only pinning fat exec targets).
+        # Interpreters and wrappers are universal-or-matching by construction,
+        # and the preference they PASS DOWN to children only selects among a
+        # fat binary's slices — it never breaks a thin one. Exported
+        # unconditionally alongside each sibling env so consumers can splice
+        # without existence checks.
+        _avar = "BDTOOLS_SIBLING_ARCH_" + _name.upper()
+        _sarch = " ".join(_arch_prefix(_senv))
+        env[_avar] = _sarch
+        env_overrides[_avar] = _sarch
     if _sibs:
         env["BDTOOLS_SIBLING_ENVS"] = os.pathsep.join(_sibs)
         env_overrides["BDTOOLS_SIBLING_ENVS"] = env["BDTOOLS_SIBLING_ENVS"]
@@ -521,6 +560,14 @@ def reproduce_command(plan):
               "BDTOOLS_SHARED_PROJECTS_ROOT",
               "VSNP_GUI_SITE_ROOT", "VSNP_GUI_SHARED_PROJECTS_ROOT"):
         if k in ov:
+            assigns.append("%s=%s" % (k, shlex.quote(ov[k])))
+    # The sibling handoff (BDTOOLS_SIBLING_ENV_*/BDTOOLS_SIBLING_ARCH_*/
+    # BDTOOLS_SIBLING_ENVS) must ride along too: a terminal re-run that drops
+    # them resolves a sibling's binaries from a different env — or runs them
+    # under the wrong architecture slice — than the dashboard run it claims to
+    # reproduce, which is exactly the cross-env drift those exports prevent.
+    for k in sorted(ov):
+        if k.startswith("BDTOOLS_SIBLING_"):
             assigns.append("%s=%s" % (k, shlex.quote(ov[k])))
     argv = " ".join(shlex.quote(a) for a in plan["argv"])
     prefix = (" ".join(assigns) + " ") if assigns else ""

@@ -10,18 +10,28 @@
 #
 #   doctor.sh [tool ...]      (default: every installed tool)
 #   doctor.sh --scope env     (skip database checks — used by the build self-check)
+#   doctor.sh --deep          also LAUNCH every declared program to prove it can
+#                             start — catches the binary that resolves and exists
+#                             but dies on exec (wrong slice, missing loader lib).
+#                             Seconds per tool, so on demand rather than every
+#                             run; `bdtools diagnose` always uses it.
 set -uo pipefail   # NOTE: not -e; a failing tool check must not abort the sweep
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
 
-SCOPE="all"; JSON=0; ONLY=()
+SCOPE="all"; JSON=0; DEEP=0; ONLY=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --scope) SCOPE="$2"; shift 2;;
     --json)  JSON=1; shift;;          # machine-readable array (used by the dashboard)
-    -h|--help) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
+    --deep)  DEEP=1; shift;;          # forwarded to check.py (see header)
+    -h|--help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
     *) ONLY+=("$1"); shift;;
   esac
 done
+# check.py already accepts --deep; doctor just failed to offer it, so the only
+# way to launch-test the programs was `bdtools diagnose` (which always passes
+# it). Kept as an array so the no-flag case adds NOTHING to the argv.
+deep_args=(); [[ ${DEEP} -eq 1 ]] && deep_args=(--deep)
 
 targets() { if [[ ${#ONLY[@]} -gt 0 ]]; then printf '%s\n' "${ONLY[@]}"; else manifest_names; fi; }
 
@@ -94,7 +104,7 @@ while read -r name; do
 
   if [[ ${JSON} -eq 1 ]]; then
     item="$("${PYBIN}" "${KT_BIN_DIR}/lib/check.py" --tool "$name" --dir "${dir}" \
-              --python "${py}" --scope "${SCOPE}" --json)" || issues=$((issues + 1))
+              --python "${py}" --scope "${SCOPE}" ${deep_args[@]+"${deep_args[@]}"} --json)" || issues=$((issues + 1))
     if [[ -n "${item}" && ${#extra_labels[@]} -gt 0 ]]; then
       # Merge them into the tool's object rather than appending a second object:
       # the dashboard groups by tool, and the architecture of an env belongs to
@@ -116,7 +126,7 @@ MERGE
     [[ -n "${item}" ]] && json_items+=("${item}")
   else
     "${PYBIN}" "${KT_BIN_DIR}/lib/check.py" --tool "$name" --dir "${dir}" \
-            --python "${py}" --scope "${SCOPE}" || issues=$((issues + 1))
+            --python "${py}" --scope "${SCOPE}" ${deep_args[@]+"${deep_args[@]}"} || issues=$((issues + 1))
     for i in "${!extra_labels[@]}"; do
       warn "${name}: ${extra_labels[$i]}"
       info "  FIX: ${extra_fixes[$i]}   (an update cannot repair either of these; --fresh rebuilds the env)"

@@ -59,6 +59,70 @@ describe_file() {
   [[ "${head1}" == "#!" ]] && printf '    shebang: %s\n' "$(head -1 "${p}" 2>/dev/null)"
 }
 
+# env_for_pid PID — a running process's environment, one VAR=value per line.
+# `ps eww` is the BSD idiom; procps on Linux accepts it, but the parse it
+# forces (split on spaces) shreds any value containing a space — and on WSL
+# that is GUARANTEED, because interop appends the Windows PATH ("/mnt/c/
+# Program Files/..."), so the one variable this section exists to show would
+# print truncated at 'Program' with junk lines after it. Linux has the exact
+# answer: /proc/PID/environ is NUL-separated, so values with spaces survive.
+# It can be unreadable (another user's process, or /proc mounted hidepid, a
+# common HPC hardening) — the caller states that instead of showing an empty
+# section, because "we could not read it" and "it was empty" are different
+# diagnoses. Darwin has no /proc, so it keeps the ps path unchanged.
+env_for_pid() {
+  local p="${1:-}"
+  if [[ -r "/proc/${p}/environ" ]]; then
+    tr '\0' '\n' < "/proc/${p}/environ"
+  else
+    ps eww -o command= -p "${p}" 2>/dev/null | tr ' ' '\n'
+  fi
+}
+
+# is_wsl — same test make-launcher.sh uses to pick its platform. /proc/version
+# on any WSL kernel names microsoft; nothing else does.
+is_wsl() { grep -qi microsoft /proc/version 2>/dev/null; }
+
+# mount_opts_for PATH — the mount options of the filesystem holding PATH.
+# Needed because "Permission denied" on a file whose ls -l shows rwxr-xr-x is
+# not a permissions problem — it is a noexec mount (HPC /tmp, scratch, some
+# homes), and nothing about the file will ever say so. findmnt does the
+# longest-prefix mountpoint match for us; without it, do the same match over
+# /proc/mounts by hand. Prints nothing on hosts with neither (macOS).
+mount_opts_for() {
+  local p="${1:-}"
+  [[ -n "${p}" ]] || return 0
+  if command -v findmnt >/dev/null 2>&1; then
+    findmnt -no OPTIONS -T "${p}" 2>/dev/null
+  elif [[ -r /proc/mounts ]]; then
+    awk -v p="${p}/" '
+      { mp = ($2 == "/") ? "/" : $2 "/" }
+      index(p, mp) == 1 && length($2) >= best { best = length($2); opts = $4 }
+      END { if (opts != "") print opts }' /proc/mounts
+  fi
+}
+
+# conda_bases — every conda base this machine could plausibly hold, one per
+# line, deduped, the resolver's own pick FIRST. The old version of this list
+# hardcoded four $HOME names while detect_conda accepts system-wide installs
+# too (/opt/conda on HPC images and containers, /usr/local trees, the macOS
+# installer's ~/opt). A lookalike env under a base this list missed is exactly
+# the duplicate-env class this report exists to expose, so the list must be a
+# superset of what the resolvers search — anchored on conda_base_dir, the base
+# the launcher will actually use.
+conda_bases() {
+  {
+    conda_base_dir 2>/dev/null || true
+    local _b
+    for _b in "${HOME}/miniforge3" "${HOME}/miniconda3" "${HOME}/mambaforge" \
+              "${HOME}/anaconda3" "${HOME}/opt/anaconda3" "${HOME}/opt/miniconda3" \
+              /opt/conda /opt/miniconda3 /opt/miniforge3 /opt/anaconda3 \
+              /opt/mambaforge /usr/local/miniforge3 /usr/local/miniconda3; do
+      [[ -d "${_b}" ]] && printf '%s\n' "${_b}"
+    done
+  } | awk 'NF && !seen[$0]++'
+}
+
 sec "bdtools diagnose — $(date '+%Y-%m-%d %H:%M:%S %z')"
 echo "report:        ${OUT}"
 echo "suite repo:    ${REPO_DIR}"
@@ -96,12 +160,121 @@ echo "arch:       $(uname -m)   host conda subdir: $(host_conda_subdir)"
     echo "Rosetta 2:  NOT available (x86_64 binaries cannot run here)"
   fi
 }
+# The Linux twins of the Rosetta questions. Nothing translates binaries on
+# Linux, but three mechanisms redirect what actually loads and runs — the same
+# way Rosetta silently redirected slices — and each is invisible unless asked
+# about directly: the host glibc floor (a binary built against a newer glibc
+# dies with "version `GLIBC_2.34' not found" though every record matches), the
+# mount table (noexec makes a perfectly good rwxr-xr-x binary unexecutable),
+# and the loader's environment overrides (LD_LIBRARY_PATH/LD_PRELOAD, which
+# HPC `module load` sets and which then override every env's own libraries).
+if [[ "$(uname -s)" == "Linux" ]]; then
+  _glibc="$( (getconf GNU_LIBC_VERSION 2>/dev/null || ldd --version 2>/dev/null | head -1) | head -1 )"
+  echo "glibc:      ${_glibc:-(none reported — musl host? conda-forge binaries need glibc and will fail with 'No such file or directory' on files that exist)}"
+  _mopts="$(mount_opts_for "${BDTOOLS_HOME}")"
+  if printf '%s' "${_mopts}" | tr ',' '\n' | grep -qx noexec; then
+    echo "BDTOOLS_HOME mount: NOEXEC (${_mopts})"
+    echo "            Files under ${BDTOOLS_HOME} can NEVER be executed, whatever"
+    echo "            their permissions say — every env binary there fails with"
+    echo "            'Permission denied' while ls -l shows rwxr-xr-x. Set"
+    echo "            BDTOOLS_HOME to an exec-permitted filesystem and reinstall."
+  else
+    echo "BDTOOLS_HOME mount options: ${_mopts:-(could not determine)}"
+  fi
+  for _v in LD_LIBRARY_PATH LD_PRELOAD; do
+    _val="$(eval "printf '%s' \"\${${_v}:-}\"")"
+    if [[ -n "${_val}" ]]; then
+      echo "${_v} is SET: [${_val}]"
+      echo "            It redirects library loading for EVERY program launched — the"
+      echo "            Linux analog of Rosetta redirecting slices. HPC 'module load'"
+      echo "            sets it; conda binaries find their own libraries by RPATH and"
+      echo "            never need it. If a tool dies with 'symbol lookup error' or"
+      echo "            \"version ... not found\", run: module purge; unset ${_v}"
+      echo "            and relaunch bdtools."
+    else
+      echo "${_v}: unset"
+    fi
+  done
+  # The WSL twin of the Darwin translation block above. WSL is Linux with a
+  # Windows machine grafted on, and every graft point is a distinct failure
+  # mode: WSL1's syscall emulation predates what current conda-forge builds
+  # assume; interop appends the entire Windows PATH so Windows shims (npm,
+  # python.exe, CRLF .cmd wrappers) can shadow Linux tools AND every lookup
+  # walks 30+ 9p-mounted directories; and anything installed under /mnt/*
+  # sits on drvfs/9p, where symlinks, hardlinks, locking and speed are all
+  # degraded — conda env builds there fail outright or take hours.
+  if is_wsl; then
+    _osrel="$(cat /proc/sys/kernel/osrelease 2>/dev/null || echo '?')"
+    if printf '%s' "${_osrel}" | grep -qi 'microsoft-standard'; then
+      echo "WSL:        2 (kernel ${_osrel})"
+    else
+      echo "WSL:        1 (kernel ${_osrel})"
+      echo "            WSL 1's kernel emulation predates what current conda-forge"
+      echo "            builds assume; the suite is only supported on WSL 2. Convert"
+      echo "            (data survives): from PowerShell, wsl -l -v to find the"
+      echo "            distro name, then wsl --set-version <distro> 2, reopen."
+    fi
+    # WSLInterop OR WSLInterop-late: on systemd-enabled distros (the out-of-box
+    # Ubuntu 22.04/24.04 store images) systemd-binfmt flushes registrations at
+    # boot and WSL re-registers interop as WSLInterop-late (microsoft/WSL#8843).
+    # Probing only the classic name reported "not registered" on machines where
+    # interop worked fine — adversarial-review catch.
+    _interop_f=""
+    for _f in /proc/sys/fs/binfmt_misc/WSLInterop /proc/sys/fs/binfmt_misc/WSLInterop-late; do
+      [[ -f "${_f}" ]] && { _interop_f="${_f}"; break; }
+    done
+    if [[ -n "${_interop_f}" ]]; then
+      echo "interop:    $(head -1 "${_interop_f}" 2>/dev/null) (${_interop_f##*/})"
+    else
+      echo "interop:    not registered (Windows .exe cannot be run from WSL;"
+      echo "            opening the browser via wslview will fail)"
+    fi
+    _mnt_n="$(printf '%s' "${PATH}" | tr ':' '\n' | grep -c '^/mnt/[a-z]/' || true)"
+    echo "Windows PATH entries (/mnt/*): ${_mnt_n}"
+    if [[ "${_mnt_n}" != "0" ]]; then
+      echo "            Interop appended the Windows PATH. Windows shims there (npm,"
+      echo "            python.exe, Store app-execution aliases) can SHADOW Linux"
+      echo "            tools, and every 'command -v'/conda/tool launch scans those"
+      echo "            9p-mounted directories — a multi-second tax on each lookup."
+      echo "            To cut them: add to /etc/wsl.conf:  [interop]"
+      echo "            appendWindowsPath=false   then from PowerShell: wsl --shutdown"
+    fi
+    # /mnt/ is not synonymous with a Windows drive: `wsl --mount` puts ext4
+    # disks under /mnt/wsl/<name> (and /mnt/wslg is WSLg's tmpfs) — native
+    # Linux filesystems, exactly where a careful user parks a big
+    # BDTOOLS_HOME. Only flag the rest of /mnt/.
+    _on_windows_drive() {
+      case "$1" in /mnt/wsl/*|/mnt/wslg/*) return 1;; /mnt/*) return 0;; esac
+      return 1
+    }
+    _drv=""
+    _on_windows_drive "${BDTOOLS_HOME}" && _drv="BDTOOLS_HOME (${BDTOOLS_HOME})"
+    for _t in ${TOOLS[@]+"${TOOLS[@]}"}; do
+      _td="$(tool_dir "${_t}")"
+      _on_windows_drive "${_td}" && _drv="${_drv:+${_drv}; }checkout ${_t} (${_td})"
+    done
+    if [[ -n "${_drv}" ]]; then
+      echo "ON A WINDOWS DRIVE (drvfs/9p): ${_drv}"
+      echo "            Windows drives mounted into WSL degrade symlinks, hardlinks,"
+      echo "            file locking and speed — conda cannot build reliable envs"
+      echo "            there ('failed to create symbolic link', interrupted hardlink"
+      echo "            phases, 10-50x slower). Move into the Linux filesystem:"
+      echo "            export BDTOOLS_HOME=\$HOME/.local/share/bdtools and reinstall;"
+      echo "            reach results from Windows via \\\\wsl\$\\<distro>\\home\\..."
+    fi
+  fi
+fi
 
 sec "SHELL ENVIRONMENT (what a tool inherits)"
 # Interpreter-path variables first: these override an interpreter's own library
-# root, so a stale one silently redirects every script the tool runs.
-for v in PERL5LIB PERLLIB PYTHONPATH PYTHONHOME RUBYLIB CONDA_PREFIX CONDA_EXE \
-         CONDA_DEFAULT_ENV CONDA_SUBDIR BDTOOLS_TOOLSDIR BDTOOLS_MANIFEST; do
+# root, so a stale one silently redirects every script the tool runs. Then the
+# LOADER's own overrides — LD_LIBRARY_PATH/LD_PRELOAD do to every compiled
+# binary what PERL5LIB does to perl scripts, and HPC module systems set them
+# behind the user's back. BDTOOLS_HOME because a nonstandard value relocates
+# every checkout and env this report is about.
+for v in PERL5LIB PERLLIB PYTHONPATH PYTHONHOME RUBYLIB LD_LIBRARY_PATH LD_PRELOAD \
+         CONDA_PREFIX CONDA_EXE CONDA_DEFAULT_ENV CONDA_SUBDIR \
+         BDTOOLS_HOME BDTOOLS_TOOLSDIR BDTOOLS_MANIFEST; do
   printf '%-20s [%s]\n' "${v}" "$(eval "printf '%s' \"\${${v}:-unset}\"")"
 done
 echo "PATH (in order):"
@@ -110,12 +283,19 @@ printf '%s\n' "${PATH}" | tr ':' '\n' | nl -ba | sed 's/^/  /'
 sec "CONDA"
 echo "detect_conda:   $(detect_conda 2>/dev/null || echo '(none found)')"
 echo "conda_base_dir: $(conda_base_dir 2>/dev/null || echo '(none)')"
-for b in "${HOME}/miniforge3" "${HOME}/miniconda3" "${HOME}/mambaforge" \
-         "${HOME}/anaconda3" "/opt/miniforge3" "/opt/miniconda3"; do
+# One list of bases, shared with the per-tool candidate scan below. This
+# report used to keep two different hardcoded lists here and there — a third
+# disagreement source in a report about resolver disagreements.
+while IFS= read -r b; do
   [[ -d "${b}" ]] && echo "  base present: ${b}"
-done
+done < <(conda_bases)
 
-for TOOL in "${TOOLS[@]}"; do
+# ${arr[@]+"${arr[@]}"} everywhere an array expands: macOS ships bash 3.2,
+# where "${TOOLS[@]}" on an EMPTY array is a fatal 'unbound variable' under
+# set -u — and the empty case is a machine with nothing installed, i.e. the
+# machine most likely to be running diagnose. Same idiom the rest of the
+# suite uses (fix.sh, install-local.sh).
+for TOOL in ${TOOLS[@]+"${TOOLS[@]}"}; do
   DIR="$(tool_dir "${TOOL}")"
   ENV_NAME="$(manifest_get "${TOOL}" env 2>/dev/null || true)"
   sec "TOOL: ${TOOL}"
@@ -152,11 +332,16 @@ PY
   # this incident had in common.
   echo
   echo "-- candidate environments --"
+  # Candidates come from the same base list the CONDA section prints — headed
+  # by conda_base_dir, the base the resolvers ACTUALLY use. The old hardcoded
+  # $HOME-only sweep missed system-wide bases (/opt/conda on HPC, /usr/local),
+  # so on exactly those machines the duplicate named env — the thing this
+  # section exists to expose — was silently absent from the report.
   cands=("${DIR}/env")
-  for b in "${HOME}/miniforge3" "${HOME}/miniconda3" "${HOME}/mambaforge" "${HOME}/anaconda3"; do
+  while IFS= read -r b; do
     [[ -n "${ENV_NAME}" && -d "${b}/envs/${ENV_NAME}" ]] && cands+=("${b}/envs/${ENV_NAME}")
-  done
-  for e in "${cands[@]}"; do
+  done < <(conda_bases)
+  for e in ${cands[@]+"${cands[@]}"}; do
     [[ -d "${e}" ]] || continue
     echo "  ENV ${e}"
     printf '    records say: %s' "$(env_conda_subdir "${e}")"
@@ -279,15 +464,58 @@ else
       echo "          Ctrl-C on the dashboard (start_new_session). Restart it:"
       echo "            pkill -f 'uvicorn app.main:app' && bdtools dashboard"
     fi
-    ps eww -o command= -p "${pid}" 2>/dev/null | tr ' ' '\n' | grep -E '^(PATH|PERL5LIB|PYTHONPATH)=' \
-      | sed 's/^/    /' | while IFS= read -r l; do
+    # The Linux twin of that staleness note. A long-lived backend keeps the
+    # python, env, and working directory it had WHEN IT STARTED; an update
+    # that rebuilds the env replaces those files on disk, and the kernel then
+    # marks the process's view of them '(deleted)' in /proc. That backend is
+    # executing code an update has already replaced — doctor says the modules
+    # are present (they are, in the NEW env) while the process imports from
+    # the old, deleted one. Only /proc shows this.
+    if [[ "$(uname -s)" == "Linux" ]]; then
+      _exe="$(readlink "/proc/${pid}/exe" 2>/dev/null || true)"
+      _cwd="$(readlink "/proc/${pid}/cwd" 2>/dev/null || true)"
+      [[ -n "${_exe}" ]] && echo "    exe: ${_exe}"
+      [[ -n "${_cwd}" ]] && echo "    cwd: ${_cwd}"
+      if [[ "${_exe}" == *" (deleted)"* || "${_cwd}" == *" (deleted)"* ]]; then
+        echo "    STALE: this backend is running code/an env that an update has since"
+        echo "           replaced (its executable or working directory is deleted on"
+        echo "           disk). Updates never reach a running process. Restart it:"
+        echo "             pkill -f 'uvicorn app.main:app' && bdtools dashboard"
+      fi
+    fi
+    # Can THIS machine reach the backend's port? A live pid proves the process
+    # exists, not that it is answering — and "answers here but not in the
+    # browser" moves the fault outside the process entirely. install-local.sh
+    # always launches with --port N, so the port is on the command line.
+    _port="$(printf '%s' "${cmdline}" | sed -n 's/.*--port[= ][= ]*\([0-9][0-9]*\).*/\1/p')"
+    if [[ -n "${_port}" ]]; then
+      if "${PYBIN}" -c "import socket; socket.create_connection(('127.0.0.1', ${_port}), 2).close()" 2>/dev/null; then
+        echo "    port ${_port}: listening (reachable at 127.0.0.1:${_port} from this shell)"
+        if is_wsl; then
+          echo "      NOTE (WSL): if a WINDOWS browser still cannot open localhost:${_port},"
+          echo "      the backend is fine — the WSL->Windows localhost forwarding layer"
+          echo "      is what failed (typical after Windows sleep/resume). Reset it from"
+          echo "      PowerShell:  wsl --shutdown   then reopen the terminal and relaunch."
+        fi
+      else
+        echo "    port ${_port}: NOT reachable at 127.0.0.1:${_port} from this shell"
+      fi
+    fi
+    _envlines="$(env_for_pid "${pid}" | grep -E '^(PATH|PERL5LIB|PYTHONPATH|LD_LIBRARY_PATH|LD_PRELOAD)=' || true)"
+    if [[ -n "${_envlines}" ]]; then
+      printf '%s\n' "${_envlines}" | sed 's/^/    /' | while IFS= read -r l; do
           printf '%s\n' "${l}" | sed 's/:/\n        /g'
         done
+    else
+      # Say so, rather than printing an empty section: "unreadable" and
+      # "unset" are different diagnoses.
+      echo "    (environment unreadable — another user's process, or /proc mounted hidepid)"
+    fi
   done
 fi
 
 sec "DOCTOR (deep: every program is launched to prove it can start)"
-for _t in "${TOOLS[@]}"; do
+for _t in ${TOOLS[@]+"${TOOLS[@]}"}; do
   _d="$(tool_dir "${_t}")"
   _py="$(tool_env_python "${_d}" "$(manifest_get "${_t}" env 2>/dev/null || true)" "${_t}")"
   "${PYBIN}" "${KT_BIN_DIR}/lib/check.py" --tool "${_t}" --dir "${_d}" \

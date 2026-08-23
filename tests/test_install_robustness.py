@@ -12,7 +12,9 @@ No conda and no network: the conda parts are exercised against synthetic
 conda-meta/ and hook files, and the update parts against local git repos.
 """
 import os
+import re
 import subprocess
+import sys
 import tempfile
 import textwrap
 import unittest
@@ -412,6 +414,97 @@ class ArchPinTests(unittest.TestCase):
                 self.assertEqual(" ".join(tl._arch_prefix(str(envdir))), expected,
                                  "tool_launch and install-local must agree")
                 self.assertEqual(self._prefix(records), expected)
+
+    def test_sibling_arch_handoff_matches_each_siblings_own_env(self):
+        # One backend runs binaries from ANOTHER tool's env via
+        # BDTOOLS_SIBLING_ENV_<TOOL> — under the CALLER's inherited pin. When
+        # the sibling env's subdir differs (real: mixed osx-64/osx-arm64 envs
+        # on one Mac), that is the Cwd.bundle incident again, one cross-tool
+        # call away and invisible to every file check. So each sibling env
+        # export must be accompanied by BDTOOLS_SIBLING_ARCH_<TOOL>: a
+        # ready-to-splice pin derived from the SIBLING's env, not the caller's.
+        import importlib.util
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td) / "home"
+            # caller osx-arm64, sibling osx-64: the pins MUST differ, or the
+            # test could pass with the caller's pin leaking onto the sibling.
+            for name, subdir in (("toola", "osx-arm64"), ("toolb", "osx-64")):
+                d = home / "checkouts" / name
+                (d / "backend").mkdir(parents=True)
+                meta(d / "env", [("python", subdir)])
+                write(d / "env/bin/python", "#!/bin/sh\n", mode=0o755)
+            manifest = write(Path(td) / "tools.yml", """\
+                suite_version: test-1
+                tools:
+                  - name: toola
+                    repo: file:///dev/null
+                    version: v0.1.0
+                    env: toola
+                  - name: toolb
+                    repo: file:///dev/null
+                    version: v0.1.0
+                    env: toolb
+                """)
+            keys = ("BDTOOLS_MANIFEST", "BDTOOLS_HOME", "BDTOOLS_TOOLSDIR")
+            saved = {k: os.environ.get(k) for k in keys}
+            os.environ["BDTOOLS_MANIFEST"] = str(manifest)
+            os.environ["BDTOOLS_HOME"] = str(home)
+            os.environ.pop("BDTOOLS_TOOLSDIR", None)
+            try:
+                spec = importlib.util.spec_from_file_location(
+                    "tool_launch_sibling_fixture", ROOT / "bin/lib/tool_launch.py")
+                tl = importlib.util.module_from_spec(spec)
+                try:
+                    spec.loader.exec_module(tl)
+                except Exception as exc:
+                    self.skipTest(f"tool_launch not importable here: {exc}")
+                plan = tl.resolve("toola", 0)
+            finally:
+                for k, v in saved.items():
+                    if v is None:
+                        os.environ.pop(k, None)
+                    else:
+                        os.environ[k] = v
+            ov = plan["env_overrides"]
+            sib_env = str(home / "checkouts/toolb/env")
+            self.assertEqual(ov.get("BDTOOLS_SIBLING_ENV_TOOLB"), sib_env)
+            # present whenever the env export is (even when empty), and equal
+            # to the pin the launcher itself would derive for that env — so a
+            # consumer can splice it unconditionally.
+            self.assertIn("BDTOOLS_SIBLING_ARCH_TOOLB", ov)
+            self.assertEqual(ov["BDTOOLS_SIBLING_ARCH_TOOLB"],
+                             " ".join(tl._arch_prefix(sib_env)))
+            if os.uname().sysname == "Darwin":
+                self.assertEqual(ov["BDTOOLS_SIBLING_ARCH_TOOLB"],
+                                 "/usr/bin/arch -x86_64",
+                                 "the sibling's pin comes from the SIBLING's subdir")
+                self.assertEqual(plan["argv"][:2], ["/usr/bin/arch", "-arm64"],
+                                 "the caller stays pinned to its OWN env")
+            # A terminal reproduce that drops the handoff resolves the sibling
+            # differently from the run it claims to copy — it must ride along.
+            repro = tl.reproduce_command(plan)
+            self.assertIn("BDTOOLS_SIBLING_ENV_TOOLB=", repro)
+            self.assertIn("BDTOOLS_SIBLING_ARCH_TOOLB=", repro)
+
+    def test_launch_pins_before_the_first_env_interpreter_run(self):
+        # launch()'s vsnp config-repair heredoc runs the env python. It used to
+        # run a hundred lines BEFORE the arch pin was computed, so a universal
+        # python whose off-preference slice cannot start failed launch() with a
+        # loader error the pinned path would never show. Asserted against the
+        # source shape because the heredoc is unreachable under --dry-run and
+        # the pinned path ends in an exec — there is no cheap behavioral probe.
+        src = (ROOT / "bin/install-local.sh").read_text(encoding="utf-8")
+        start = src.index("launch() {")
+        body = src[start:src.index("\nensure_checkout", start)]
+        pin_at = body.index('_archp="$(arch_prefix')
+        heredoc_at = body.index("<<'PY'")
+        self.assertLess(pin_at, heredoc_at,
+                        "the pin must exist before the heredoc python runs")
+        # both env-python runs carry the same splice, computed exactly once
+        self.assertIn('${_arch_cmd[@]+"${_arch_cmd[@]}"} "${py}" - <<\'PY\'', body)
+        self.assertIn('exec ${_arch_cmd[@]+"${_arch_cmd[@]}"} "${py}"', body)
+        self.assertEqual(body.count('_archp="$(arch_prefix'), 1,
+                         "one pin, computed once — two computations can drift")
 
 
 class FreshGateTests(unittest.TestCase):
@@ -968,3 +1061,452 @@ class CondaStepGuardTests(unittest.TestCase):
             self.assertTrue(log.exists())
             self.assertIn("SOLVE DIED: fake", log.read_text(),
                           "the payload's output must be captured, not discarded")
+
+
+class PipArchPinTests(unittest.TestCase):
+    """The pip layer is built under the env's arch pin, like the launch.
+
+    pip keys wheel selection — and sdist compilation — off the RUNNING
+    interpreter's architecture. A universal env python started from a
+    translated ancestor (dashboard Update button -> bdtools update -> the pip
+    step) therefore fills the env with wrong-arch extension modules while
+    conda-meta stays clean, so the arch audit cannot see the damage and the
+    loader smoke test (conda-declared binaries only) never exercises it.
+    Exercised with a stubbed arch_prefix so the tests run identically on
+    every platform; ArchPinTests already proves arch_prefix itself.
+    """
+
+    def _generic_build(self, pin):
+        with tempfile.TemporaryDirectory() as td:
+            checkout = Path(td) / "checkout"
+            write(checkout / "conda_setup/environment.yml", "name: fake\n")
+            write(checkout / "backend/requirements.txt", "fastapi\n")
+            write(checkout / "env/bin/python", "#!/bin/sh\n", mode=0o755)
+            r = sh(f'''
+              DIR="{checkout}"; TOOL=faketool; ENV_NAME=fake; REBUILD=0; FRESH=0
+              detect_conda() {{ printf 'fake-conda'; }}
+              harden_conda_hooks() {{ :; }}
+              ensure_env_java() {{ :; }}
+              arch_prefix() {{ printf '%s' "{pin}"; }}
+              run() {{ echo "RUN: $*"; }}
+              eval "$(sed -n '/^generic_build()/,/^}}/p' "{ROOT}/bin/install-local.sh")"
+              generic_build
+            ''')
+            self.assertEqual(r.returncode, 0, r.stderr)
+            return checkout, r.stdout
+
+    def test_backend_pip_install_carries_the_envs_pin(self):
+        checkout, out = self._generic_build("/usr/bin/arch -x86_64")
+        self.assertIn(
+            f"RUN: /usr/bin/arch -x86_64 {checkout}/env/bin/python -m pip "
+            f"install -r {checkout}/backend/requirements.txt", out,
+            "pip must run under the env's pin, ahead of the interpreter")
+
+    def test_no_pin_means_a_clean_unprefixed_pip_command(self):
+        # The bash-3.2 ${arr[@]+...} guard: an empty pin must contribute NO
+        # argv word — a stray empty first argument would become the command.
+        checkout, out = self._generic_build("")
+        self.assertIn(
+            f"RUN: {checkout}/env/bin/python -m pip install -r "
+            f"{checkout}/backend/requirements.txt", out)
+
+    def test_vsnp_web_layer_pip_carries_the_envs_pin(self):
+        # build_vsnp_local's pip targets ENVP (which can be an EXTERNAL env),
+        # so its pin must come from ENVP — verified through --dry-run, which
+        # prints the exact command without needing conda or the network.
+        with tempfile.TemporaryDirectory() as td:
+            checkout = Path(td) / "checkout"
+            checkout.mkdir(parents=True)
+            envp = Path(td) / "external-env"
+            write(envp / "bin/pip", "#!/bin/sh\n", mode=0o755)
+            r = sh(f'''
+              DIR="{checkout}"; TOOL=vsnp_gui; ENV_NAME=vsnp3; FRESH=0
+              BDTOOLS_HOME="{td}/bdhome"; DRY_RUN=1
+              VSNP_REFS_REPO="https://example.invalid/refs.git"
+              detect_conda() {{ printf 'fake-conda'; }}
+              resolve_env_prefix() {{ printf '%s' "{envp}"; }}
+              harden_conda_hooks() {{ :; }}
+              arch_prefix() {{ [[ "$1" == "{envp}" ]] && printf '%s' "/usr/bin/arch -x86_64"; }}
+              eval "$(sed -n '/^build_vsnp_local()/,/^}}/p' "{ROOT}/bin/install-local.sh")"
+              build_vsnp_local
+            ''')
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn(
+                f"[dry-run] /usr/bin/arch -x86_64 {envp}/bin/pip install --upgrade",
+                r.stdout, "the web-layer pip must run under ENVP's pin")
+            # and the managed reference clone carries the line-ending pin —
+            # as --config, which PERSISTS in the new checkout's .git/config so
+            # every later fetch/checkout inherits it too (adversarial-review
+            # upgrade from the transient -c form).
+            self.assertIn("[dry-run] git clone --config core.autocrlf=false "
+                          "--config core.eol=lf", r.stdout)
+
+
+class DelegatedInstallerArchTests(unittest.TestCase):
+    """build() hands a tool's own deploy/install.sh a ready-to-splice pin.
+
+    CONDA_SUBDIR makes the delegated installer's SOLVES target the right
+    platform, but anything it runs FROM the env — pip, version probes,
+    post-install smoke, vendored-payload unpackers — executes under the
+    caller's inherited arch, and the suite cannot see inside those scripts.
+    BDTOOLS_ARCH_PREFIX is the suite-side half of the fix; the tool repos
+    adopt it in their installers.
+    """
+
+    def _build(self, pin):
+        with tempfile.TemporaryDirectory() as td:
+            checkout = Path(td) / "checkout"
+            write(checkout / "deploy/install.sh",
+                  '#!/bin/sh\necho "ARCHPREFIX=[${BDTOOLS_ARCH_PREFIX-unset}]"\n',
+                  mode=0o755)
+            r = sh(f'''
+              DIR="{checkout}"; TOOL=faketool; DRY_RUN=0
+              discard_env_for_fresh() {{ :; }}
+              ensure_conda_subdir() {{ :; }}
+              harden_conda_hooks() {{ :; }}
+              resolve_env_prefix() {{ printf '%s' "{checkout}/env"; }}
+              arch_prefix() {{ printf '%s' "{pin}"; }}
+              enforce_package_pins() {{ :; }}
+              enforce_env_constraints() {{ :; }}
+              with_progress() {{ shift; "$@"; }}
+              eval "$(sed -n '/^build()/,/^}}/p' "{ROOT}/bin/install-local.sh")"
+              build
+            ''')
+            self.assertEqual(r.returncode, 0, r.stderr)
+            return r.stdout
+
+    def test_the_installer_receives_the_resolved_envs_pin(self):
+        self.assertIn("ARCHPREFIX=[/usr/bin/arch -x86_64]",
+                      self._build("/usr/bin/arch -x86_64"))
+
+    def test_no_pin_is_exported_as_empty_not_unset(self):
+        # Empty-but-present is the contract: installers splice
+        # ${BDTOOLS_ARCH_PREFIX} unconditionally, with no existence checks.
+        self.assertIn("ARCHPREFIX=[]", self._build(""))
+
+
+class NpmWslGuardTests(unittest.TestCase):
+    """A Windows npm reached through WSL interop must count as 'npm not found'.
+
+    /mnt/c/Program Files/nodejs is on PATH in a default WSL session and ships
+    an extensionless `npm` wrapper, so `command -v npm` finds the WINDOWS npm.
+    That npm runs Windows node.exe against a Linux-side checkout — it cannot
+    resolve the working directory, breaks on CRLF wrappers, and writes
+    Windows-format node_modules — and the resulting build failure used to be
+    blamed on the Node VERSION, sending users down the wrong path. Exercised
+    with fabricated kernel strings and npm paths, never a real WSL box.
+    """
+
+    WSL = "Linux version 5.15.167.4-microsoft-standard-WSL2 (gcc ...)"
+    LINUX = "Linux version 6.5.0-41-generic (buildd@lcy02) ..."
+
+    def _probe(self, kernel, npm_path):
+        return sh(f'''
+          eval "$(sed -n '/^_npm_path()/,/^}}/p' "{ROOT}/bin/install-local.sh")"
+          _npm_path() {{ printf '%s' "{npm_path}"; }}
+          if have_usable_npm "{kernel}"; then echo USABLE; else echo NOT-USABLE; fi
+        ''')
+
+    def test_a_windows_npm_under_wsl_is_rejected_loudly(self):
+        r = self._probe(self.WSL, "/mnt/c/Program Files/nodejs/npm")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("NOT-USABLE", r.stdout)
+        # loud, and actionable: name the npm it found and the fix
+        self.assertIn("WINDOWS npm", r.stderr)
+        self.assertIn("/mnt/c/Program Files/nodejs/npm", r.stderr)
+        self.assertIn("install Linux node inside WSL", r.stderr)
+
+    def test_a_linux_npm_under_wsl_is_accepted_silently(self):
+        r = self._probe(self.WSL, "/usr/bin/npm")
+        self.assertIn("USABLE", r.stdout)
+        self.assertNotIn("WINDOWS npm", r.stderr)
+
+    def test_a_mnt_path_off_wsl_is_not_windows(self):
+        # A genuine Linux box can mount anything at /mnt — only the WSL kernel
+        # makes a /mnt npm the Windows one.
+        r = self._probe(self.LINUX, "/mnt/tools/node/bin/npm")
+        self.assertIn("USABLE", r.stdout)
+        self.assertNotIn("WINDOWS npm", r.stderr)
+
+    def test_no_npm_at_all_is_quietly_not_found(self):
+        # The callers own that message ("npm not found and no prebuilt dist");
+        # the guard must not add a Windows warning about an npm that isn't there.
+        r = self._probe(self.WSL, "")
+        self.assertIn("NOT-USABLE", r.stdout)
+        self.assertNotIn("WINDOWS npm", r.stderr)
+
+    def test_macos_with_no_proc_version_is_untouched(self):
+        # _wsl_kernel returns "" where /proc/version does not exist (macOS);
+        # the guard must be inert there.
+        r = self._probe("", "/usr/local/bin/npm")
+        self.assertIn("USABLE", r.stdout)
+        self.assertEqual(r.stderr.strip(), "", r.stderr)
+
+
+class WslHomeGuardTests(unittest.TestCase):
+    """BDTOOLS_HOME on a Windows drive under WSL is refused up front.
+
+    drvfs (/mnt/*) has no hardlinks, unreliable symlink semantics, and 10-50x
+    slower metadata, so a conda env cannot be built there — and without this
+    guard the failure surfaced as an inscrutable transaction error hours into
+    a solve. Fabricated kernel strings, no real WSL needed.
+    """
+
+    def _guard(self, kernel, home):
+        return sh(f'''
+          TOOL=faketool
+          BDTOOLS_HOME="{home}"
+          eval "$(sed -n '/^_require_linux_fs_home()/,/^}}/p' "{ROOT}/bin/install-local.sh")"
+          _require_linux_fs_home "{kernel}"
+          echo GUARD-PASSED
+        ''')
+
+    def test_a_windows_drive_home_under_wsl_dies_with_the_remedy(self):
+        r = self._guard(NpmWslGuardTests.WSL, "/mnt/c/bdtools")
+        self.assertNotEqual(r.returncode, 0, "the install must not proceed")
+        self.assertNotIn("GUARD-PASSED", r.stdout)
+        out = r.stdout + r.stderr
+        self.assertIn("Windows drive", out)
+        self.assertIn("/mnt/c/bdtools", out)          # name what it found
+        self.assertIn("--prefix", out)                # ...and the way out
+        self.assertIn("~/.local/share/bdtools", out)
+
+    def test_a_linux_fs_home_under_wsl_passes_silently(self):
+        r = self._guard(NpmWslGuardTests.WSL, "/home/user/.local/share/bdtools")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("GUARD-PASSED", r.stdout)
+        self.assertEqual(r.stderr.strip(), "")
+
+    def test_a_mnt_home_off_wsl_is_not_a_windows_drive(self):
+        # /mnt on a real Linux box (an HPC scratch mount, say) is fine.
+        r = self._guard(NpmWslGuardTests.LINUX, "/mnt/scratch/bdtools")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("GUARD-PASSED", r.stdout)
+
+
+class GitLineEndingTests(unittest.TestCase):
+    """Managed git operations pin core.autocrlf=false core.eol=lf.
+
+    A user's global autocrlf=true — routinely copied from a Windows gitconfig
+    onto WSL — makes every clone/checkout materialize tracked scripts with
+    CRLF, and the first shebanged one dies at exec with "/usr/bin/env:
+    'bash\\r': No such file or directory". That breaks the INSTALLER itself,
+    before any check can run. Managed checkouts are bdtools' own artifacts, so
+    overriding the user's global preference inside them is correct. These
+    tests run the real git operations under a hostile global config.
+    """
+
+    CRLF_CONFIG = "[core]\n\tautocrlf = true\n"
+
+    def _git_env(self, gitconfig):
+        return dict(os.environ,
+                    GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@e",
+                    GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@e",
+                    GIT_CONFIG_GLOBAL=str(gitconfig),
+                    GIT_CONFIG_SYSTEM="/dev/null")
+
+    def _source_repo(self, td):
+        """A tool repo with a shebanged script, tagged v0.1.0 and v0.2.0."""
+        src = td / "src/toolln"
+        write(src / "deploy/run.sh", "#!/usr/bin/env bash\necho v1\n", mode=0o755)
+        env = self._git_env(write(td / "neutral-gitconfig", ""))
+
+        def git(*args, cwd):
+            subprocess.run(["git", *args], cwd=cwd, check=True,
+                           capture_output=True, text=True, env=env)
+
+        git("init", "-q", "-b", "main", cwd=src)
+        git("add", "-A", cwd=src)
+        git("commit", "-qm", "v1", cwd=src)
+        git("tag", "v0.1.0", cwd=src)
+        write(src / "deploy/run.sh", "#!/usr/bin/env bash\necho v2\n", mode=0o755)
+        git("add", "-A", cwd=src)
+        git("commit", "-qm", "v2", cwd=src)
+        git("tag", "v0.2.0", cwd=src)
+        return src
+
+    def test_the_hostile_config_really_corrupts_an_unpinned_clone(self):
+        # The control: prove this environment reproduces the corruption, so
+        # the passing tests below are evidence and not vacuous.
+        with tempfile.TemporaryDirectory() as tdname:
+            td = Path(tdname)
+            src = self._source_repo(td)
+            crlf = write(td / "crlf-gitconfig", self.CRLF_CONFIG)
+            dest = td / "plain-clone"
+            subprocess.run(
+                ["git", "clone", "-q", "--branch", "v0.1.0", "--depth", "1",
+                 f"file://{src}", str(dest)],
+                check=True, capture_output=True, env=self._git_env(crlf))
+            self.assertIn(b"\r\n", (dest / "deploy/run.sh").read_bytes(),
+                          "expected autocrlf=true to CRLF the working tree")
+
+    def test_install_local_clone_is_immune_to_global_autocrlf(self):
+        with tempfile.TemporaryDirectory() as tdname:
+            td = Path(tdname)
+            src = self._source_repo(td)
+            crlf = write(td / "crlf-gitconfig", self.CRLF_CONFIG)
+            dest = td / "checkout"
+            r = sh(f'''
+              DIR="{dest}"; TOOL=toolln; REPO="file://{src}"; VERSION=v0.1.0; RUN_ONLY=0
+              eval "$(sed -n '/^ensure_checkout()/,/^}}/p' "{ROOT}/bin/install-local.sh")"
+              ensure_checkout
+            ''', env={"GIT_CONFIG_GLOBAL": str(crlf), "GIT_CONFIG_SYSTEM": "/dev/null"})
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            body = (dest / "deploy/run.sh").read_bytes()
+            self.assertNotIn(b"\r", body,
+                             "the managed clone must materialize LF endings")
+            self.assertIn(b"echo v1", body)
+
+    def test_pin_advance_checkout_is_immune_to_global_autocrlf(self):
+        # The other write path: an existing checkout moved onto a new pinned
+        # tag re-materializes changed files through `git checkout -f`.
+        with tempfile.TemporaryDirectory() as tdname:
+            td = Path(tdname)
+            src = self._source_repo(td)
+            crlf = write(td / "crlf-gitconfig", self.CRLF_CONFIG)
+            dest = td / "checkout"
+            subprocess.run(
+                ["git", "clone", "-q", "--branch", "v0.1.0", "--depth", "1",
+                 f"file://{src}", str(dest)],
+                check=True, capture_output=True,
+                env=self._git_env(write(td / "neutral2", "")))
+            r = sh(f'''
+              DIR="{dest}"; TOOL=toolln; REPO="file://{src}"; VERSION=v0.2.0; RUN_ONLY=0
+              eval "$(sed -n '/^ensure_checkout()/,/^}}/p' "{ROOT}/bin/install-local.sh")"
+              ensure_checkout
+            ''', env={"GIT_CONFIG_GLOBAL": str(crlf), "GIT_CONFIG_SYSTEM": "/dev/null"})
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            body = (dest / "deploy/run.sh").read_bytes()
+            self.assertIn(b"echo v2", body, "the pin must actually advance")
+            self.assertNotIn(b"\r", body,
+                             "the forced checkout must materialize LF endings")
+
+    def test_common_sh_clone_is_immune_to_global_autocrlf(self):
+        # common.sh has its own ensure_checkout (used by the sandbox/server
+        # paths) with its own clone — pinned the same way.
+        with tempfile.TemporaryDirectory() as tdname:
+            td = Path(tdname)
+            src = self._source_repo(td)
+            crlf = write(td / "crlf-gitconfig", self.CRLF_CONFIG)
+            home = td / "home"
+            manifest = write(td / "tools.yml", f"""\
+                suite_version: test-1
+                tools:
+                  - name: toolln
+                    repo: file://{src}
+                    version: v0.1.0
+                    env: toolln
+                """)
+            r = sh("ensure_checkout toolln",
+                   env={"BDTOOLS_HOME": str(home),
+                        "BDTOOLS_MANIFEST": str(manifest),
+                        "GIT_CONFIG_GLOBAL": str(crlf),
+                        "GIT_CONFIG_SYSTEM": "/dev/null"})
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            body = (home / "checkouts/toolln/deploy/run.sh").read_bytes()
+            self.assertNotIn(b"\r", body)
+
+
+class PsPortabilityTests(unittest.TestCase):
+    """_tree_cpu_ticks passes ONE comma-separated pid operand to ps.
+
+    The space-separated form happened to work on macOS BSD ps and on procps,
+    but neither behavior is documented; a busybox-class ps or a stricter parse
+    silently returns nothing — and "nothing" here means the stall detector
+    sees no CPU signal ever and stall-kills every long step, the exact macOS
+    failure the surrounding comments in install-local.sh document.
+    """
+
+    def test_pid_list_is_one_comma_separated_operand(self):
+        # Two real pids (this test's bash and its parent), discovered through
+        # an overridden pgrep so no real process tree is required; the real ps
+        # answers, proving the comma grammar works on THIS platform too. The
+        # ps override records its argv to a file — the function discards ps's
+        # stderr, so nothing asserted on may travel through it.
+        with tempfile.TemporaryDirectory() as td:
+            argfile = Path(td) / "ps-args"
+            r = sh(f'''
+              eval "$(sed -n '/^_tree_cpu_ticks()/,/^}}/p' "{ROOT}/bin/install-local.sh")"
+              pgrep() {{ case "${{2:-}}" in "$$") echo "${{PPID}}";; esac; }}
+              ps() {{ echo "PSARGS=$*" >> "{argfile}"; command ps "$@"; }}
+              echo "TICKS=$(_tree_cpu_ticks $$)"
+            ''')
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertRegex(r.stdout, r"TICKS=\d+",
+                             "the tick count must stay a plain integer")
+            args = argfile.read_text()
+            self.assertRegex(args, r"PSARGS=-o time= -p \d+,\d+",
+                             "the pid list must be one comma-separated operand")
+            self.assertNotRegex(args, r"-p \d+ \d+",
+                                "no word-split bare pid operands")
+
+    def test_a_single_process_still_reports_ticks(self):
+        # The everyday healthy case, with the real pgrep and the real ps.
+        r = sh(f'''
+          eval "$(sed -n '/^_tree_cpu_ticks()/,/^}}/p' "{ROOT}/bin/install-local.sh")"
+          echo "TICKS=$(_tree_cpu_ticks $$)"
+        ''')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertRegex(r.stdout, r"TICKS=\d+")
+
+
+class CondaBaseListTests(unittest.TestCase):
+    """detect_conda (common.sh) and _conda_bases (tool_launch.py) stay mirrored.
+
+    The two resolvers answering "where is conda" differently is how the
+    dashboard and doctor come to disagree about whether a tool is installed.
+    Both lists gained the common non-interactive bases (/opt/conda in official
+    Docker/WSL images and HPC site installs, /usr/local/*, and ~/opt/* — the
+    macOS graphical installer's default); this pins them to each other so they
+    cannot drift again.
+    """
+
+    OLD_ORDER = ["~/miniforge3", "~/miniconda3", "~/mambaforge", "~/anaconda3",
+                 "/opt/miniforge3", "/opt/miniconda3",
+                 "/opt/homebrew/Caskroom/miniforge/base"]
+    NEW_BASES = ["/opt/conda", "/opt/anaconda3", "/opt/mambaforge",
+                 "/usr/local/miniforge3", "/usr/local/miniconda3",
+                 "~/opt/anaconda3", "~/opt/miniconda3"]
+
+    def _bash_list(self):
+        src = (ROOT / "bin/lib/common.sh").read_text(encoding="utf-8")
+        body = src[src.index("detect_conda() {"):]
+        loop = body[body.index("for b in"):body.index("; do")]
+        return [e.replace("${HOME}", "~") for e in re.findall(r'"([^"]+)"', loop)]
+
+    def _python_list(self):
+        src = (ROOT / "bin/lib/tool_launch.py").read_text(encoding="utf-8")
+        start = src.index("for b in (", src.index("def _conda_bases"))
+        return re.findall(r'"([^"]+)"', src[start:src.index("):", start)])
+
+    def test_the_two_probe_lists_are_identical_and_ordered(self):
+        bash, py = self._bash_list(), self._python_list()
+        self.assertEqual(bash, py, "common.sh and tool_launch.py must probe "
+                                   "the same bases in the same order")
+        # existing priority order first — deployments rely on it
+        self.assertEqual(py[:len(self.OLD_ORDER)], self.OLD_ORDER)
+        for b in self.NEW_BASES:
+            self.assertIn(b, py)
+
+    def test_conda_bases_finds_the_macos_gui_installer_default(self):
+        # Behavioral, with a fabricated HOME: a conda at ~/opt/anaconda3 (the
+        # Anaconda macOS graphical installer's default) must be probed even
+        # with no CONDA_BASE/CONDA_EXE inherited — the dashboard/cron case.
+        with tempfile.TemporaryDirectory() as td:
+            fake_home = Path(td) / "home"
+            (fake_home / "opt/anaconda3").mkdir(parents=True)
+            code = textwrap.dedent(f'''
+                import importlib.util, os
+                os.environ["HOME"] = {str(fake_home)!r}
+                os.environ.pop("CONDA_BASE", None)
+                os.environ.pop("CONDA_EXE", None)
+                spec = importlib.util.spec_from_file_location(
+                    "tl", {str(ROOT / "bin/lib/tool_launch.py")!r})
+                tl = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(tl)
+                print({str(fake_home / "opt/anaconda3")!r} in tl._conda_bases())
+            ''')
+            r = subprocess.run([sys.executable, "-c", code],
+                               capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("True", r.stdout)

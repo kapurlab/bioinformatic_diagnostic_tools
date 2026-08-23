@@ -26,10 +26,10 @@
 #   bdtools setup-databases [opts]      download shared reference DBs + wire the GUIs
 #   bdtools doctor  [tool ...]          check installs are runnable; print fixes
 #   bdtools fix     [tool|all]          run the repairs doctor recommends
-#   bdtools diagnose [tool ...]         dump EVERYTHING about how a tool
-#                                       resolves and runs, into one file to send
 #                   [--apply]           (preview by default; data fetches only —
 #                                        env rebuilds are proposed, never run)
+#   bdtools diagnose [tool ...]         dump EVERYTHING about how a tool
+#                                       resolves and runs, into one file to send
 #   bdtools lint    [tool ...]          (maintainer) flag dependency drift in repos
 #   bdtools test    <tool|all> [opts]   validate a deployment on a known sample
 #
@@ -47,8 +47,10 @@
 #   2. bdtools doctor              what is wrong + the exact fix command per finding
 #   3. bdtools fix --apply         auto-runs the safe fixes (DB fetches, web layer, links);
 #                                  env-changing fixes are printed for you to run yourself
-#   4. run the command doctor/fix printed for anything left
-#   5. bdtools test <tool>         prove it on a known sample
+#   4. bdtools diagnose <tool>     when doctor is green but the tool still fails, or nothing
+#                                  above fixed it — writes one pasteable report file
+#   5. run the fix it printed      whatever doctor/fix/diagnose told you to run
+#   6. bdtools test <tool>         prove it on a known sample
 #
 # Common options: --prefix DIR, --site-conf PATH (server/site-init), --dry-run, -h|--help
 set -euo pipefail
@@ -66,7 +68,7 @@ done
 _bdt_dir="$(cd -P "$(dirname "${_bdt_src}")" && pwd)"
 source "${_bdt_dir}/lib/common.sh"
 
-usage() { sed -n '2,51p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,53p' "$0" | sed 's/^# \{0,1\}//'; }
 
 cmd_list() {
   printf '%-22s %-26s %s\n' "TOOL" "VERSION (pinned)" "OOD APP(S)"
@@ -294,6 +296,32 @@ cmd_local() {
   "${KT_BIN_DIR}/install-local.sh" --run-only "$@"
 }
 
+# arch_prefix ENVDIR — the /usr/bin/arch pin under which a python from this env
+# must run, derived from the platform the env was BUILT for (conda-meta), never
+# from `uname -m` (a translated process reports x86_64 exactly when its
+# inherited preference is the thing to override). Mirrors the production
+# launchers (install-local.sh:arch_prefix, tool_launch._arch_prefix).
+#
+# It exists here for the dashboard itself: _dashboard_proxy_python picks the
+# first TOOL-CHECKOUT env python that imports starlette/httpx/uvicorn, and on
+# Apple Silicon those envs are deliberately osx-64 — so the dashboard ran under
+# Rosetta BY CONSTRUCTION. That translated dashboard was the hidden x86_64
+# ancestor behind this month's universal-binary incident (every tool it
+# launched inherited its slice preference), and it flips platform.machine()
+# for everything the dashboard itself computes. Stating the env's architecture
+# at launch makes the dashboard's arch deterministic instead of inherited.
+arch_prefix() {
+  local envdir="${1:-}" sub
+  [[ "$(uname -s)" == "Darwin" ]] || return 0
+  [[ -x /usr/bin/arch ]] || return 0
+  sub="$(env_conda_subdir "${envdir}" 2>/dev/null || true)"
+  case "${sub}" in
+    osx-arm64) printf '%s' "/usr/bin/arch -arm64";;
+    osx-64)    printf '%s' "/usr/bin/arch -x86_64";;
+  esac
+  return 0
+}
+
 # Pick a python that can run the reverse-proxy dashboard (needs starlette+httpx+
 # uvicorn — present in every tool's conda env). Prints its path, or nothing.
 #
@@ -319,8 +347,15 @@ _dashboard_proxy_python() {
   local condabin; condabin="$(command -v conda 2>/dev/null || true)"
   [[ -n "${condabin}" ]] && bases+=("$(dirname "$(dirname "${condabin}")")")
   [[ -n "${CONDA_PREFIX:-}" ]] && bases+=("${CONDA_PREFIX}")  # the active env itself
+  # Kept in lock-step with common.sh:detect_conda and tool_launch.py:_conda_bases
+  # — three copies of one list, and a base present in two of them but not the
+  # third is a dashboard that silently cannot see envs the CLI can.
   bases+=("${HOME}/miniforge3" "${HOME}/miniconda3" "${HOME}/mambaforge" \
-          "${HOME}/anaconda3" /opt/miniforge3 /opt/miniconda3)
+          "${HOME}/anaconda3" /opt/miniforge3 /opt/miniconda3 \
+          /opt/homebrew/Caskroom/miniforge/base \
+          /opt/conda /opt/anaconda3 /opt/mambaforge \
+          /usr/local/miniforge3 /usr/local/miniconda3 \
+          "${HOME}/opt/anaconda3" "${HOME}/opt/miniconda3")
 
   # Tool checkouts first (own <dir>/env), then every conda base's envs + base
   # python. The checkout roots are RESOLVED, never literal: an explicit
@@ -687,6 +722,20 @@ cmd_dashboard() {
     _dashboard_wants_token && warn "  This mode has NO session key — other accounts on this host could reach it."
     rundir="${KT_BIN_DIR}"
     runcmd=("${PYBIN}" "${KT_BIN_DIR}/dashboard.py" ${rest[@]+"${rest[@]}"})
+  fi
+
+  # Pin the dashboard to its python's env architecture (see arch_prefix above):
+  # everything the dashboard launches inherits ITS slice preference, so an
+  # unpinned dashboard silently decides the architecture of every analysis it
+  # starts. runcmd[0] is the chosen python on both branches; a python outside
+  # any conda env has no conda-meta and stays unpinned. Argv prefix, never a
+  # string splice.
+  local _archp _arch_cmd=()
+  _archp="$(arch_prefix "${runcmd[0]%/bin/python*}")"
+  if [[ -n "${_archp}" ]]; then
+    read -ra _arch_cmd <<< "${_archp}"
+    runcmd=("${_arch_cmd[@]}" "${runcmd[@]}")
+    echo "  arch: ${_archp} (pinned from the dashboard env's platform)"
   fi
 
   cd "${rundir}" || die "cannot cd to ${rundir}"

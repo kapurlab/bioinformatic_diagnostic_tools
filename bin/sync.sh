@@ -101,7 +101,7 @@ sync_one() {
       log "${name}: WOULD fast-forward ${branch} by ${behind} commit(s) (${before} → origin/${branch})"
       return 0
     fi
-    if ! git -C "${dir}" merge --ff-only --quiet "origin/${branch}"; then
+    if ! git -C "${dir}" -c core.autocrlf=false -c core.eol=lf merge --ff-only --quiet "origin/${branch}"; then
       warn "${name}: ${branch} has DIVERGED from origin/${branch} — not touching it. Reconcile by hand."
       FAILED+=("${name} (diverged)")
       return 0
@@ -125,7 +125,7 @@ sync_one() {
       log "${name}: WOULD move ${before} → ${pin}"
       return 0
     fi
-    if ! git -C "${dir}" -c advice.detachedHead=false checkout --quiet "${pin}"; then
+    if ! git -C "${dir}" -c advice.detachedHead=false -c core.autocrlf=false -c core.eol=lf checkout --quiet "${pin}"; then
       warn "${name}: checkout of ${pin} failed — see git output above"
       FAILED+=("${name} (checkout)")
       return 0

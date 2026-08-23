@@ -165,7 +165,11 @@ apply_one() {
   fi
 
   log "updating ${name} -> ${target}"
-  run git -C "$dir" fetch --tags --force --depth 1 origin "${target}"
+  # Line-ending pin on every mutating git op (lock-step with install-local.sh
+  # and common.sh): checkouts cloned before the persisted --config existed
+  # still inherit a global autocrlf=true on WSL, and a CRLF checkout turns
+  # every shell script's shebang into 'bash\r' — adversarial-review catch.
+  run git -C "$dir" -c core.autocrlf=false -c core.eol=lf fetch --tags --force --depth 1 origin "${target}"
   # Site-localized OOD card config (ood/apps/**, e.g. a submit.yml.erb carrying
   # this cluster's name/account) is a deployment's own deliberate edit — carried
   # across the force checkout below, never a reason to refuse the update and
@@ -179,8 +183,8 @@ apply_one() {
   # plain `git checkout <tag>` aborts on that; -f is safe here because the very
   # next step rebuilds env + frontend. Fall back to FETCH_HEAD when the tag
   # didn't materialize as a local ref (shallow tag fetches land there).
-  run git -C "$dir" checkout -f -q "${target}" \
-    || run git -C "$dir" checkout -f -q FETCH_HEAD
+  run git -C "$dir" -c core.autocrlf=false -c core.eol=lf checkout -f -q "${target}" \
+    || run git -C "$dir" -c core.autocrlf=false -c core.eol=lf checkout -f -q FETCH_HEAD
   restore_site_edits "${dir}" "${site_snapshot}"
   # The pin moves BEFORE the build, and has to: install-local.sh's
   # ensure_checkout resolves the checkout against the manifest pin, so building

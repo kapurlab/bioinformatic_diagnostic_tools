@@ -33,6 +33,7 @@ CLI:
 import json
 import os
 import platform
+import subprocess
 import re
 import sys
 import time
@@ -65,6 +66,33 @@ def _unsat_path():
     return os.path.join(_bdtools_home(), "cache", "unsatisfiable.json")
 
 
+def _hardware_machine():
+    """The MACHINE's architecture, not the interpreter's.
+
+    platform.machine() reports the architecture of the RUNNING PROCESS, and on
+    Apple Silicon a Rosetta-translated python says "x86_64" — the same lie that
+    broke the arch-pin host guards (commit b89e5d1). It broke this module too,
+    invisibly: the unsatisfiable record was WRITTEN by the CLI's python (arm64,
+    key darwin-arm64) and READ by the dashboard's python — which bdtools picks
+    from a tool-checkout env, deliberately built osx-64 on Apple Silicon, so it
+    runs translated and reads key darwin-x86_64. Writer and reader never met,
+    the suppression never fired, and the dashboard re-offered an update the
+    machine had already proven it cannot apply, forever — "it updates but then
+    goes back to this update as being available" (2026-08-22). One machine must
+    be one key, whatever interpreter asks.
+    """
+    m = platform.machine()
+    if platform.system() == "Darwin" and m == "x86_64":
+        try:
+            out = subprocess.run(["/usr/sbin/sysctl", "-n", "hw.optional.arm64"],
+                                 capture_output=True, text=True, timeout=10)
+            if out.stdout.strip() == "1":
+                return "arm64"
+        except Exception:
+            pass
+    return m
+
+
 def _platform_key():
     """This machine's identity for the unsatisfiable record.
 
@@ -72,8 +100,9 @@ def _platform_key():
     cluster), and "this cannot be installed" is very often a platform fact rather
     than a universal one: mlst 2.34+ is noarch but depends on libxcrypt1, which has
     no macOS build, so it installs on Linux and can never install on a Mac.
+    Derived from the hardware, never the interpreter — see _hardware_machine.
     """
-    return f"{platform.system()}-{platform.machine()}".lower()
+    return f"{platform.system()}-{_hardware_machine()}".lower()
 
 
 def pins_for(tool, specs=None):
@@ -125,12 +154,26 @@ def record_unsatisfiable(tool, package, version, reason=""):
 
 
 def unsatisfiable_here():
-    """{"tool/package": {"version","reason","at"}} recorded on this platform."""
+    """{"tool/package": {"version","reason","at"}} recorded on this platform.
+
+    On Darwin, records written before _hardware_machine existed may sit under
+    either darwin-arm64 or darwin-x86_64 (whichever interpreter happened to
+    write them). Merge both: they were written by THIS machine either way, and
+    honoring them is the whole point — a record nobody can read is how the
+    dashboard looped on an update it had already proven impossible.
+    """
     try:
         with open(_unsat_path(), encoding="utf-8") as fh:
-            return json.load(fh).get(_platform_key(), {})
+            data = json.load(fh)
     except (OSError, ValueError, AttributeError):
         return {}
+    merged = {}
+    if platform.system() == "Darwin":
+        for key in ("darwin-x86_64", "darwin-arm64"):
+            if key != _platform_key():
+                merged.update(data.get(key, {}))
+    merged.update(data.get(_platform_key(), {}))
+    return merged
 
 
 # ----- the manifest side ---------------------------------------------------
@@ -359,12 +402,16 @@ def report(tools=None, use_network=True):
                 why = (tried.get("reason") or "").strip()
                 held_reason = (f"{latest} was tried on this machine and could not be "
                                f"installed" + (f": {why}" if why else "."))
-                # An env conflict is fixable by rebuilding the env from its spec —
-                # which is precisely the amr_plus case tools.yml documents. A version
-                # that does not exist for a platform is not, so do not send anyone on
-                # a long rebuild that cannot help.
+                # An env conflict is fixable by REBUILDING FROM NOTHING — and only
+                # that. --rebuild is `conda env update`, additive by design: it
+                # cannot remove the stale sibling packages (mlst, kraken2) whose
+                # dependency closure causes the conflict, and on a named-env
+                # install generic_build skips it entirely — the two "appears to
+                # finish but nothing moves" paths a lab Mac actually hit. A
+                # version that does not exist for a platform is not fixable at
+                # all, so do not send anyone on a long rebuild that cannot help.
                 if pinned == blocked_version and not why.startswith("not installable on"):
-                    held_fix = f"bdtools install {tool} --rebuild"
+                    held_fix = f"bdtools install {tool} --fresh"
             elif newer and is_held:
                 status = f"held at {inst} (newer: {latest}; this env cannot take it)"
                 newer = False

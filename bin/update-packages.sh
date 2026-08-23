@@ -371,8 +371,10 @@ PYREC
       warn "${tool}: these versions cannot coexist in the existing env."
       [[ -n "${why}" ]] && info "  conda: ${why}"
       info "  This is a property of the env, not a failed download. Options:"
-      info "    • rebuild the env from its spec, which re-solves everything together:"
-      info "        bin/bdtools install ${tool}   (add --rebuild to refresh in place)"
+      info "    • rebuild the env FROM NOTHING, which re-solves everything together"
+      info "      and sheds stale packages the conflict comes from (--rebuild is"
+      info "      additive and cannot remove anything — it will loop right back here):"
+      info "        bin/bdtools install ${tool} --fresh"
       info "    • update one package only:  bin/bdtools update-packages ${tool} --to <pkg>=<ver>"
       info "    • leave it: the env keeps working on the versions it has."
     fi

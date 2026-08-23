@@ -289,10 +289,52 @@ class UnsatisfiableRecordTests(unittest.TestCase):
         # written there about this one, so sending anyone to look was a dead end.
         self.assertIn("libxcrypt1", rec["held_reason"])
 
-    def test_a_hold_from_an_env_conflict_names_the_rebuild_that_would_lift_it(self):
+    def test_the_platform_key_reports_the_hardware_not_the_interpreter(self):
+        # THE UPDATE LOOP (2026-08-22). The unsatisfiable record was WRITTEN by
+        # the CLI's arm64 python under darwin-arm64 and READ by the dashboard's
+        # python — which bdtools picks from a tool env deliberately built
+        # osx-64, so it runs translated and platform.machine() says x86_64.
+        # Writer and reader never met; the dashboard re-offered an update the
+        # machine had proven impossible, forever. One machine, one key.
+        with mock.patch.object(PKG.platform, "system", return_value="Darwin"), \
+             mock.patch.object(PKG.platform, "machine", return_value="x86_64"), \
+             mock.patch.object(PKG.subprocess, "run",
+                               return_value=mock.Mock(stdout="1\n")):
+            self.assertEqual(PKG._platform_key(), "darwin-arm64",
+                             "a translated interpreter must not fork the key")
+        # A REAL Intel Mac (sysctl says 0) keeps its own key.
+        with mock.patch.object(PKG.platform, "system", return_value="Darwin"), \
+             mock.patch.object(PKG.platform, "machine", return_value="x86_64"), \
+             mock.patch.object(PKG.subprocess, "run",
+                               return_value=mock.Mock(stdout="0\n")):
+            self.assertEqual(PKG._platform_key(), "darwin-x86_64")
+
+    def test_records_written_under_the_wrong_darwin_key_are_still_honored(self):
+        # Records from before the hardware key existed sit under whichever
+        # architecture the writing interpreter happened to be. They were written
+        # by THIS machine either way; a record nobody reads is the loop.
+        import json as _json
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp) / "cache"
+            cache.mkdir()
+            (cache / "unsatisfiable.json").write_text(_json.dumps({
+                "darwin-x86_64": {"amr_plus_gui/ncbi-amrfinderplus":
+                                  {"version": "4.2.7", "reason": "legacy key"}}}))
+            with mock.patch.dict(PKG.os.environ, {"BDTOOLS_HOME": tmp}), \
+                 mock.patch.object(PKG.platform, "system", return_value="Darwin"), \
+                 mock.patch.object(PKG.platform, "machine", return_value="arm64"):
+                rec = PKG.unsatisfiable_here()
+            self.assertIn("amr_plus_gui/ncbi-amrfinderplus", rec)
+
+    def test_a_hold_from_an_env_conflict_names_the_fresh_rebuild_that_lifts_it(self):
         # The amr_plus case: the pinned version is right and the EXISTING env cannot
-        # take it, so rebuilding from the spec is the way out and belongs on the
-        # record. A version that does not exist for this OS must NOT get that advice.
+        # take it. The remedy must be --fresh, and ONLY --fresh: --rebuild is
+        # `conda env update`, additive by design, so it cannot remove the stale
+        # sibling packages (mlst, kraken2) whose dependency closure causes the
+        # conflict — and on a named-env install generic_build skips it outright.
+        # A lab Mac followed the old --rebuild advice and looped forever: the
+        # update "finished" and the same offer came straight back (2026-08-22).
+        # A version that does not exist for this OS must get NO rebuild advice.
         with tempfile.TemporaryDirectory() as tmp:
             meta = Path(tmp) / "conda-meta"
             meta.mkdir()
@@ -312,7 +354,7 @@ class UnsatisfiableRecordTests(unittest.TestCase):
                                "can be installed")
             elsewhere = rec_for("not installable on osx-64 osx-arm64")
         self.assertEqual(conflict["held_fix"],
-                         "bdtools install amr_plus_gui --rebuild")
+                         "bdtools install amr_plus_gui --fresh")
         self.assertEqual(elsewhere["held_fix"], "",
                          "a rebuild cannot conjure a build that does not exist")
 

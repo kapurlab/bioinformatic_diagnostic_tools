@@ -147,6 +147,17 @@ tools:
     # simply stop being used; a rebuild sheds them:
     #     bin/bdtools install amr_plus_gui --rebuild
     packages: [bioconda::ncbi-amrfinderplus=4.2.7]
+    # KNOWN UPSTREAM DEFECT (2026-08-22): libdb in this env's osx-arm64 build is
+    # x86_64 — and that is upstream's doing, not a local split. Every published
+    # conda-forge osx-arm64 build of libdb (hbdafb3b_0 and h9f76cd9_0 both)
+    # ships x86_64 binaries, verified by downloading them straight from
+    # anaconda.org after purging the local cache. The usual repair is therefore
+    # a no-op: a subdir-QUALIFIED --force-reinstall "succeeds" without changing
+    # a byte (two live runs) — there is no correct build to fetch. Harmless in
+    # practice: only perl's DB_File links libdb, and no suite tool uses it.
+    # doctor records it as a known upstream defect (check.py
+    # KNOWN_UPSTREAM_FOREIGN) instead of an actionable failure, so it stops
+    # resurfacing on every audit. Revisit if conda-forge ships a real arm64 libdb.
 
   - name: irma_gui
     repo: https://github.com/kapurlab/irma_gui.git

@@ -81,7 +81,9 @@ bin/bdtools test all             # validate against known samples (PASS/FAIL/SKI
 >
 >     git pull && bin/bdtools install all && bin/bdtools doctor
 >
-> Full details in [🩺 Troubleshooting](#-troubleshooting-local-installs).
+> Full details in [🩺 Troubleshooting](#-troubleshooting-local-installs);
+> error messages are indexed by their exact text in
+> [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
 
 ## 🖥️ Opening your tools — the local dashboard
 
@@ -715,6 +717,12 @@ and it is safe to reach for:
 Expect it to take as long as the original install of that tool (minutes, mostly
 solving and downloading). `--rebuild`, by contrast, only *adds* newly declared
 dependencies to the environment that is already there.
+
+**Doctor is green but the tool still fails — or the error looks alien?** Run
+`bin/bdtools diagnose <tool>` — read-only, it writes one pasteable report file
+to send. And every error message this suite has seen is indexed by its exact
+text in [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md): find the line you
+saw, get one command to run and the fix.
 
 **A tool failed partway through `install all` — how do I resume (and pick up a
 fix)?** `install all` builds the tools in order and stops at the first failure;

@@ -15,6 +15,11 @@ This page routes you to the right runbook. All paths use the same CLI
 4. **You are standing up a new lab server from bare metal** (no OOD yet) →
    [docs/INSTALL_BARE_METAL.md](docs/INSTALL_BARE_METAL.md)
 
+5. **Already installed, but a tool won't run** →
+   [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) — find your exact error
+   message there. First command: `bin/bdtools doctor`; one-shot report to send:
+   `bin/bdtools diagnose <tool>`.
+
 Prerequisite for every path: a working `conda`/`miniforge` (the installer points
 you at one if missing) and `git`. The OOD paths additionally assume an existing
 or freshly-bootstrapped Open OnDemand install.

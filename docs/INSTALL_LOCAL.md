@@ -187,6 +187,10 @@ What to know:
 - **`bin/bdtools doctor <tool>`** says which modules/programs an env is actually
   missing, which is the fastest way to tell whether a failed update matters for
   the analyses you run.
+- **Still broken, or the error text looks alien?** `bin/bdtools diagnose <tool>`
+  writes one report file to send, and [TROUBLESHOOTING.md](TROUBLESHOOTING.md)
+  indexes every known error message by its exact text — with one command to run
+  and the fix for each.
 
 ## Where things live
 

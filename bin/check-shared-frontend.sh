@@ -34,7 +34,20 @@ SKIP_TOOLS=(vsnp_gui)
 # already defines) and it answers a need every tool's log pane has — getting the
 # whole log onto the clipboard to paste into an email. vsnp_gui included, where
 # it is wired into all three of its log views.
-SHARED_ALL=(Citations.jsx Citations.css CopyLogButton.jsx)
+# ResizableTable is the third: drag-to-resize columns is needed by every wide
+# table in the suite, and vsnp_gui owns the widest ones (Step 1 Results, the
+# post-hoc QC table). Its stylesheet is rt- prefixed and touches only --border
+# and --accent, which App.css and vsnp_gui's styles.css both declare, so like
+# Citations.css it drops into either without a port.
+#
+# SplitPane is the fourth, and the same argument one level up: the pane
+# proportions are as much a guess as the column widths were. It is listed here
+# rather than left per-tool because it reads the layout from the DOM — the
+# .row-grid convention, the gutter, the 900px stacking breakpoint — so one copy
+# is correct for every tool, and a divergent copy would silently disagree with
+# the stylesheet it is measuring.
+SHARED_ALL=(Citations.jsx Citations.css CopyLogButton.jsx ResizableTable.jsx ResizableTable.css
+            SplitPane.jsx SplitPane.css)
 
 # md5sum is the GNU name, and macOS only gained /sbin/md5sum in Ventura (13):
 # on Monterey and earlier every hash below exited "command not found" mid-sweep,

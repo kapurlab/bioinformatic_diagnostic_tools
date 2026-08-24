@@ -111,7 +111,7 @@ suite_version: "2026.08.13"
 tools:
   - name: vsnp_gui
     repo: https://github.com/kapurlab/vsnp_gui.git
-    version: v0.4.71
+    version: v0.4.72
     updates: install
     ood_apps: [vsnp_gui]
     dev_apps: [vsnp_gui_dev]
@@ -121,7 +121,7 @@ tools:
 
   - name: amr_plus_gui
     repo: https://github.com/kapurlab/amr_plus_gui.git
-    version: v0.3.13
+    version: v0.3.14
     updates: install
     ood_apps: [amr_plus_gui]
     dev_apps: [amr_plus_gui_dev]
@@ -164,7 +164,7 @@ tools:
 
   - name: irma_gui
     repo: https://github.com/kapurlab/irma_gui.git
-    version: v0.3.15
+    version: v0.3.16
     updates: install
     ood_apps: [irma_gui]
     dev_apps: [irma_gui_dev]
@@ -179,7 +179,7 @@ tools:
 
   - name: genoflu_gui
     repo: https://github.com/kapurlab/genoflu_gui.git
-    version: v0.3.9
+    version: v0.3.10
     updates: install
     ood_apps: [genoflu_gui]
     dev_apps: [genoflu_gui_dev]
@@ -190,7 +190,7 @@ tools:
 
   - name: mlst_gui
     repo: https://github.com/kapurlab/mlst_gui.git
-    version: v0.3.10
+    version: v0.3.11
     updates: install
     ood_apps: [mlst_gui]
     dev_apps: [mlst_gui_dev]
@@ -209,7 +209,7 @@ tools:
 
   - name: kraken_id_parse_gui
     repo: https://github.com/kapurlab/kraken_id_parse_gui.git
-    version: v0.2.20
+    version: v0.2.21
     updates: install
     ood_apps: [kraken_id_parse_gui]
     dev_apps: [kraken_id_parse_gui_dev]
@@ -267,7 +267,7 @@ tools:
   # unpacked into the checkout, so its version travels with the tool release.
   - name: ksnp_gui
     repo: https://github.com/kapurlab/ksnp_gui.git
-    version: v0.5.7
+    version: v0.5.8
     updates: install
     ood_apps: [ksnp_gui]
     dev_apps: [ksnp_gui_dev]
@@ -275,7 +275,7 @@ tools:
 
   - name: ncbi_submit_gui
     repo: https://github.com/kapurlab/ncbi_submit_gui.git
-    version: v0.2.8
+    version: v0.2.9
     updates: install
     ood_apps: [ncbi_submit_gui]
     dev_apps: [ncbi_submit_gui_dev]
@@ -288,7 +288,7 @@ tools:
   # reference bundle ships in-repo.
   - name: mhc_gui
     repo: https://github.com/kapurlab/bovine_mhc_typer.git
-    version: v0.2.5
+    version: v0.2.6
     updates: install
     ood_apps: [mhc_gui]
     dev_apps: [mhc_gui_dev]

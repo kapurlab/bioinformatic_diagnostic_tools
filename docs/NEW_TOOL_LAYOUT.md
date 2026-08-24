@@ -44,7 +44,9 @@ siblings.
 │   ├── index.html             theme bootstrap script (see §2)
 │   ├── vite.config.js         base: "./"   ← non-negotiable
 │   └── src/{App.jsx,App.css,main.jsx,ThemeToggle.jsx,
-│            ResultsPane.jsx,ResultsPane.css,useResults.js}
+│            ResultsPane.jsx,ResultsPane.css,useResults.js,
+│            ResizableTable.jsx,ResizableTable.css,
+│            SplitPane.jsx,SplitPane.css}
 ├── conda_setup/environment.yml
 ├── deploy/install.sh          idempotent, no-sudo, supports --personal
 └── ood/apps/<tool>/           manifest.yml form.yml submit.yml.erb template/
@@ -84,12 +86,16 @@ Key facts:
 | `ResultsPane.jsx` | `amr_plus_gui` | byte-identical; enforced |
 | `useResults.js` | `amr_plus_gui` | byte-identical; enforced |
 | `ResultsPane.css` | `amr_plus_gui` | byte-identical; enforced |
+| `ResizableTable.jsx` | `amr_plus_gui` | byte-identical; enforced |
+| `ResizableTable.css` | `amr_plus_gui` | byte-identical; enforced |
+| `SplitPane.jsx` | `amr_plus_gui` | byte-identical; enforced |
+| `SplitPane.css` | `amr_plus_gui` | byte-identical; enforced |
 | `App.css` | `mlst_gui` | copied verbatim, then append tool-specific rules at the end |
 | `ThemeToggle.jsx` | `mlst_gui` | copied verbatim |
 | `backend/app/request_safety.py` | any tool | byte-identical |
 
-`bin/check-shared-frontend.sh` in the umbrella proves the first three match and
-**advises** on the next two. Run it before tagging.
+`bin/check-shared-frontend.sh` in the umbrella proves the enforced files match
+and **advises** on `App.css` / `ThemeToggle.jsx`. Run it before tagging.
 
 Every Results-pane class is `rp-` prefixed and `App.css` is never touched by it.
 That is deliberate: `mhc_gui` already defines `.qc-badge` / `.qc-pass` /
@@ -169,6 +175,70 @@ const results = useResults(activeProject);
 
 `columns[].key` reads from the row's `metrics` object. Nothing else about the
 pane is per-tool.
+
+**Column widths are draggable and you get that for free.** `ResultsPane` wraps
+its table in `ResizableTable` and puts a `Grip` in every header, so each column
+edge can be dragged, nudged with ← / →, and reset by double-clicking a grip or
+with the *Reset widths* button that appears once a width has been changed. The
+choice is remembered in `localStorage` per tool, per table.
+
+**Pane proportions are draggable too, and that costs you one line.** Mount
+`<PaneSplitters />` once inside the app's root element:
+
+```jsx
+import { PaneSplitters } from "./SplitPane";
+…
+<div className="app">
+  <PaneSplitters />
+```
+
+It finds every `.row-grid` row on the page and gives each one a divider in the
+gutter — including rows that mount later and rows a future release adds. There
+is deliberately no per-row wrapper to write: a row is split only when it really
+is two panes side by side (exactly two element children AND two grid tracks),
+which is decided from the DOM at runtime, so single-column rows, 2×2 card grids
+and vSNP's seven- and thirteen-child Step rows are skipped without a list of
+exceptions to keep current. Each row remembers its split per tool in
+`localStorage`, keyed on the heading of its first pane; ← / → nudge, double-click
+resets, and below the 900px stacking breakpoint the divider is gone and the
+stored ratio is not applied.
+
+**This is why the row conventions matter.** `SplitPane` reads your layout rather
+than being told about it: the `.row-grid` class, the 20px gutter and the 900px
+breakpoint are the contract. A tool that invents its own row class gets no
+dividers, and a tool that stacks at a different width gets one that lingers a
+little too long — so use the conventions in §2 as they are.
+
+**Any other wide table you add should use the same primitive** rather than
+growing its own splitter — a table of variable-length biological text (taxon
+names, references, allele calls, file paths) is exactly the case it exists for:
+
+```jsx
+import { ResizableTable, Grip } from "./ResizableTable";
+
+<ResizableTable id="segments" className="result-table">
+  <thead><tr>
+    <th><span className="rt-th-label">Segment</span><Grip label="Segment" /></th>
+    …
+  </tr></thead>
+  <tbody>…</tbody>
+</ResizableTable>
+```
+
+`id` is the localStorage key within the tool — unique per table, stable across
+releases. A `Grip` needs no column index: it reads its own cell position from
+the DOM, so inserting a column cannot silently resize the wrong one. Until the
+first drag the table keeps the browser's automatic layout exactly, so adding
+grips never changes how a table looks. Own the state with `useColumnWidths(id)`
+and pass it as `widths=` only when the surrounding panel also needs it — that
+is what a *Reset widths* button in the panel header requires.
+
+A component that renders header cells must live at **module scope**, not inside
+the render body. A component redefined each render is a new type each render, so
+React remounts the whole header row on every keystroke in the filter box — which
+throws away keyboard focus on a grip after a single nudge. `SortHeader`
+(`ResultsPane.jsx`) and `QcSortTh` (`vsnp_gui`) both take the sort state as
+props for this reason.
 
 **Backend** — implement these four endpoints:
 

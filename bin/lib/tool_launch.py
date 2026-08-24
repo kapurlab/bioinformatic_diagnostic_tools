@@ -33,6 +33,7 @@ except ImportError:        # pragma: no cover — WSL/macOS/Linux all have it
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
+import config_hygiene  # noqa: E402  (sibling module, stdlib-only)
 import manifest  # noqa: E402  (sibling module, stdlib-only)
 import site_paths  # noqa: E402  (sibling module, stdlib-only)
 
@@ -224,6 +225,45 @@ def _sandbox_env(tool):
 # resolve() is on the dashboard's hot path (every discovery pass, every launch).
 _SCANNING_SIBLINGS = False
 
+# tool -> the warning lines its sweep produced. Caches the RESULT, not merely
+# the fact that it ran: the dashboard resolves each tool once during discovery
+# and again at launch, and only the launch shows warnings to anyone. A boolean
+# "already done" made the discovery pass consume the one report of a config it
+# had just rewritten, so the repair happened and nobody was told. The disk work
+# still happens once; what it found is repeated for as long as the process
+# lives.
+_CONFIG_SWEPT = {}
+
+
+def _sweep_foreign_config(tool):
+    """Strip another deployment's paths out of this tool's user config, and say
+    so. Returns warning lines for the launch plan.
+
+    Done HERE, at the single point every launch goes through, because the bug it
+    fixes is invisible at every other one. A GUI seeds
+    ~/.config/<tool>/config.json from its own DEFAULTS on first start, and
+    several tools used to default a database path to a site literal; the tool
+    then hands that path to every analysis run, on a machine where it cannot
+    exist. Removing the literal from a tool's DEFAULTS fixes the next config
+    created and no existing one — `load_config()` only setdefaults MISSING keys
+    — so the stale value outlives the fix, the tool update, and the env rebuild.
+    A real 2026-08-24 run: irma_gui invoked with
+    `--genoflu-db /srv/kapurlab/databases/genoflu/dependencies` on a cluster
+    that has no /srv/kapurlab, and a GenoFLU warning nobody there could act on.
+
+    See config_hygiene.py for the (deliberately conservative) rule and for why
+    nothing is deleted."""
+    if tool in _CONFIG_SWEPT:
+        return list(_CONFIG_SWEPT[tool])
+    try:
+        found = config_hygiene.sweep(tool, _REPO_DIR)
+    except Exception:      # noqa: BLE001 — never block a launch over hygiene
+        _CONFIG_SWEPT[tool] = []
+        return []
+    line = config_hygiene.describe(tool, found)
+    _CONFIG_SWEPT[tool] = [line] if line else []
+    return list(_CONFIG_SWEPT[tool])
+
 
 def _manifest_tool_names():
     try:
@@ -367,6 +407,12 @@ def resolve(tool, port, host="127.0.0.1"):
     for _k, _v in site_paths.as_env(_REPO_DIR).items():
         env[_k] = _v
         env_overrides[_k] = _v
+    # ...and take away the ones a PREVIOUS deployment left in this user's config
+    # for the same tool, which the env vars above cannot override because the
+    # tool reads its own config.json first. Skipped while scanning siblings:
+    # that pass is a cheap env lookup, not a launch.
+    if not _SCANNING_SIBLINGS:
+        warnings.extend(_sweep_foreign_config(tool))
     # Which conda env provides each OTHER tool's software.
     #
     # BDTOOLS_TOOLS_ROOT above says where the sibling checkouts are, which is enough

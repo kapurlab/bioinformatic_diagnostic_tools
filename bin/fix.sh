@@ -59,6 +59,7 @@ fix_class() {
   case "${c}" in
     *"rm -rf"*)                 echo manual;;   # destructive, never
     *"setup-databases"*)        echo auto;;     # fetches reference data
+    *"check-paths"*)            echo auto;;     # removes a configured path that belongs to ANOTHER deployment and resolves to nothing here. Touches one JSON config key, changes no software, and parks the old value under _bdtools_foreign_paths rather than deleting it — so the worst case is a key the user puts back by hand.
     "ln -sfn "*)                echo auto;;     # (re)points a symlink — additive: creates or repoints a link doctor derived from what is actually on disk (the sibling-env case); worst case is a link doctor flags again. Anchored to the START so a compound command that merely contains ln -sfn is not swept in.
     *"deploy/install.sh"*)      echo auto;;     # fetches a vendored payload (kSNP4)
     *"conda install"*)          echo manual;;   # a conda transaction on a live env: small, but it CHANGES analysis software — propose it, never unattended. Checked before the pip case because a combined remedy (missing web layer AND a missing analysis package) contains both.
@@ -114,8 +115,13 @@ while IFS=$'\t' read -r tool cmd labels; do
   # versions a diagnostic result depends on are untouched — without the web
   # layer the tool cannot even start to use them). Both stay allowed; anything
   # else needs the same explicit opt-in the update path requires.
+  # check-paths joins the exemption for the same reason as the other two: a
+  # tool's per-user CONFIG is not the tool's software. Leaving a foreign path in
+  # place because the tool is report-only would mean every run on that tool
+  # keeps being handed a directory that does not exist.
   if [[ "${klass}" == "auto" && "${policy}" != "install" && ${ALLOW_REPORT_ONLY} -eq 0 \
-        && "${cmd}" != *"setup-databases"* && "${cmd}" != *" -m pip install "* ]]; then
+        && "${cmd}" != *"setup-databases"* && "${cmd}" != *" -m pip install "* \
+        && "${cmd}" != *"check-paths"* ]]; then
     klass="manual"
     labels="${labels} [report-only tool]"
   fi

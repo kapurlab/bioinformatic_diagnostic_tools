@@ -26,6 +26,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import requirements  # noqa: E402
 
+try:
+    import config_hygiene  # noqa: E402  (sibling module, stdlib-only)
+except ImportError:        # pragma: no cover — doctor must never fail to load
+    config_hygiene = None
+
 G, Y, R, B, X = (
     ("\033[32m", "\033[33m", "\033[31m", "\033[1m", "\033[0m")
     if sys.stdout.isatty() else ("", "", "", "", "")
@@ -1966,6 +1971,92 @@ def check_amrfinder_db(configured, env_bin):
     return True, used
 
 
+def _foreign_config_paths(tool):
+    """Configured paths that belong to another deployment ([] when clean).
+
+    Never raises and never writes: a hygiene module that failed to import, or a
+    config that cannot be read, must cost a missing line in the report rather
+    than the whole report."""
+    if config_hygiene is None:
+        return []
+    try:
+        return config_hygiene.scan(tool, str(Path(__file__).resolve().parents[2]))
+    except Exception:      # noqa: BLE001
+        return []
+
+
+def _resolve_root(name):
+    """One of the roots requirements.py's `default_under` may name, or "".
+
+    Resolved, never assumed. site_paths reads an env var, then this machine's
+    recorded site file, then a defensible derivation; VSNP_GUI_SITE_ROOT is
+    asked of the LAUNCHER, so doctor grades the tree vsnp_gui will actually be
+    started with rather than a second guess at it."""
+    try:
+        import site_paths  # sibling module, stdlib-only
+    except Exception:
+        return ""
+    repo = str(Path(__file__).resolve().parents[2])
+    if name == "db_root":
+        return str(site_paths.db_root(repo) or "")
+    if name == "vsnp_site_root":
+        env = os.environ.get("VSNP_GUI_SITE_ROOT", "").strip()
+        if env:
+            return env
+        try:
+            import tool_launch  # sibling module, stdlib-only
+            outer = getattr(tool_launch, "_SCANNING_SIBLINGS", False)
+            tool_launch._SCANNING_SIBLINGS = True
+            try:
+                plan = tool_launch.resolve("vsnp_gui", 0)
+            finally:
+                tool_launch._SCANNING_SIBLINGS = outer
+            resolved = (plan.get("env_overrides") or {}).get("VSNP_GUI_SITE_ROOT", "")
+            if resolved:
+                return resolved
+        except Exception:      # noqa: BLE001
+            pass
+        return str(site_paths.site_root(repo) or "")
+    return ""
+
+
+_QUARANTINE_KEY = getattr(config_hygiene, "QUARANTINE_KEY", "_bdtools_foreign_paths")
+
+
+def _config_file(tool):
+    """The tool's config.json, honouring XDG_CONFIG_HOME as the tools do."""
+    if config_hygiene is not None:
+        try:
+            return config_hygiene.config_path(tool)
+        except Exception:      # noqa: BLE001
+            pass
+    return Path.home() / ".config" / tool / "config.json"
+
+
+def _quarantined_config_paths(tool):
+    """(when, entries) a previous sweep removed for this tool. Never raises."""
+    if config_hygiene is None:
+        return "", []
+    try:
+        return config_hygiene.quarantined(tool)
+    except Exception:      # noqa: BLE001
+        return "", []
+
+
+def _default_path(db):
+    """Where this database lives when its config key was never written, or "".
+
+    An empty answer is a real answer: it means nothing on this machine declares
+    a home for it, so doctor reports the key as unset instead of naming a
+    directory from another deployment as the thing to go and look at."""
+    under = db.get("default_under")
+    if under:
+        root, rel = under
+        base = _resolve_root(root)
+        return os.path.join(base, rel) if base else ""
+    return _expand(db["default"]) if db.get("default") else ""
+
+
 def check_db(tool, db, env_bin=""):
     # What the tool actually reads at run time wins over what a config key says.
     for root in _paths_file_roots(env_bin, db.get("paths_file", "")):
@@ -1979,8 +2070,8 @@ def check_db(tool, db, env_bin=""):
     # is what config.py falls back to when the key was never written). Check
     # whichever the tool would actually use.
     val = config_value(tool, db["config_key"])
-    if not val and db.get("default"):
-        val = _expand(db["default"])
+    if not val:
+        val = _default_path(db)
     kind = db["kind"]
     # Asked before the "nothing configured" bail-out below, because this one
     # resolves either way: amrfinder falls back to the database inside its own
@@ -2445,6 +2536,39 @@ def run_checks(tool, env_py, scope, tool_dir=None, deep=False):
             lines.append((OK, f"sibling {sib} env: {sib_env}", None))
 
     if scope == "all":
+        # Paths in this user's config for this tool that belong to a DIFFERENT
+        # deployment. Reported here as well as repaired at launch, because
+        # doctor is where someone looks when a run has already gone wrong, and
+        # because a config nobody has launched since the repair shipped still
+        # holds the value. Read-only: doctor diagnoses, the launcher and
+        # `bdtools fix --apply` are what change anything.
+        for f in _foreign_config_paths(tool):
+            msg = (f"config key '{f['key']}' points at another deployment: "
+                   f"{f['value']} — it does not exist here and is under none of "
+                   f"this machine's roots, so every run is handed a path that "
+                   f"cannot resolve")
+            fix = f"bin/bdtools check-paths {tool} --apply"
+            lines.append((BAD, msg, fix))
+            issues.append({"label": f"foreign path configured ({f['key']})", "fix": fix})
+
+        # ...and what a previous sweep already took out. Reported as a NOTE, not
+        # a finding: nothing is wrong now. It is here because the repair happens
+        # at launch, so by the time anyone reads a doctor report the finding
+        # above has usually already been cured — and "we changed your
+        # configuration" is not something to do silently. Names the tool's own
+        # fallback as the consequence, so a site that really owns the path knows
+        # to put it back.
+        removed_at, removed = _quarantined_config_paths(tool)
+        if removed:
+            keys = ", ".join(f"{r.get('key')}={r.get('value')}" for r in removed)
+            lines.append((SKIP,
+                          f"removed {len(removed)} configured path(s) belonging to "
+                          f"another deployment ({keys})"
+                          + (f" on {removed_at}" if removed_at else "")
+                          + f"; the tool now uses its own default. Kept under "
+                            f"'{_QUARANTINE_KEY}' in {_config_file(tool)}",
+                          None))
+
         for db in spec.get("databases", []):
             ok, detail = check_db(tool, db, env_bin=env_bin)
             if ok:

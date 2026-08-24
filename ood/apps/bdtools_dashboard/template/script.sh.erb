@@ -12,17 +12,35 @@
 echo "=== Bioinformatic Diagnostic Tools (bdtools) — session starting ==="
 echo "host:$(hostname)  dashboard-port:${port}"
 
+# ---- this deployment's shared tools root, if it has one ----
+# install-server.sh rewrites the path below to the site's TOOLS_ROOT
+# (bin/install-server.sh:subst), which is why the reference value is written out
+# literally: subst matches on it. A per-user or sandbox install never runs
+# subst, so on those machines this line arrives holding the reference site's
+# path — another institution's filesystem, not a fallback.
+#
+# So it is used only if it exists HERE, and otherwise replaced by whatever this
+# machine says. Everything downstream then derives from one variable instead of
+# repeating the literal: the python search below used to glob
+# /srv/kapurlab/tools/*/env/bin/python on every deployment in the world, which
+# found nothing and told nobody, and put a foreign path in front of anyone
+# reading the session log.
+SITE_TOOLS_ROOT=/srv/kapurlab/tools
+[ -d "${SITE_TOOLS_ROOT}" ] || SITE_TOOLS_ROOT="${BDTOOLS_TOOLS_ROOT:-${BDTOOLS_TOOLSDIR:-}}"
+
 # ---- locate the umbrella checkout (shared install, else per-user) ----
-SHARED_REPO=/srv/kapurlab/tools/bioinformatic_diagnostic_tools
-PERSONAL_REPO="${HOME}/bioinformatic_diagnostic_tools"
-if [ -d "${SHARED_REPO}/bin/ood_dashboard" ]; then
+SHARED_REPO=""
+[ -n "${SITE_TOOLS_ROOT}" ] && SHARED_REPO="${SITE_TOOLS_ROOT}/bioinformatic_diagnostic_tools"
+PERSONAL_REPO="${BDTOOLS_REPO:-${HOME}/bioinformatic_diagnostic_tools}"
+if [ -n "${SHARED_REPO}" ] && [ -d "${SHARED_REPO}/bin/ood_dashboard" ]; then
   REPO="${SHARED_REPO}"
-  export BDTOOLS_TOOLSDIR=/srv/kapurlab/tools
+  export BDTOOLS_TOOLSDIR="${SITE_TOOLS_ROOT}"
 elif [ -d "${PERSONAL_REPO}/bin/ood_dashboard" ]; then
   REPO="${PERSONAL_REPO}"
 else
   echo "ERROR: cannot find the bioinformatic_diagnostic_tools checkout (looked in" >&2
-  echo "       ${SHARED_REPO} and ${PERSONAL_REPO})." >&2
+  echo "       ${SHARED_REPO:-<no shared tools root configured>} and ${PERSONAL_REPO})." >&2
+  echo "       Set BDTOOLS_REPO to the checkout, or install it at ${PERSONAL_REPO}." >&2
   exit 1
 fi
 echo "  umbrella: ${REPO}"
@@ -57,12 +75,25 @@ echo "  session budget: ${BDTOOLS_SESSION_CORES} cores, ${BDTOOLS_SESSION_MEM_GB
 
 # ---- find a python with the dashboard's deps (starlette + httpx + uvicorn) ----
 # These live in every tool's conda env; pick the first that imports them.
+# Candidates are built from what this machine actually has: the site tools root
+# when one was resolved above, then the per-user checkouts the local installer
+# builds envs in (<checkout>/env — missed before, so a per-user install with no
+# miniforge base had no candidate at all), then a personal conda base.
 PYTHON=""
-for cand in \
-    /srv/kapurlab/tools/*/env/bin/python \
-    /srv/kapurlab/tools/vsnp3/bin/python \
-    "${HOME}"/miniforge3/envs/*/bin/python \
-    "${HOME}"/miniforge3/bin/python; do
+BD_CHECKOUTS="${BDTOOLS_HOME:-${XDG_DATA_HOME:-${HOME}/.local/share}/bdtools}/checkouts"
+CANDS=()
+if [ -n "${SITE_TOOLS_ROOT}" ]; then
+  CANDS+=( "${SITE_TOOLS_ROOT}"/*/env/bin/python "${SITE_TOOLS_ROOT}"/vsnp3/bin/python )
+fi
+# <checkout>/env is where install-local.sh builds a per-user env, and it was not
+# searched at all: a personal install with no miniforge base had no candidate
+# here and the session died with "no python with starlette+httpx+uvicorn found"
+# while every tool it lists had one.
+CANDS+=( "${BD_CHECKOUTS}"/*/env/bin/python )
+for base in "${HOME}/miniforge3" "${HOME}/miniconda3" "${HOME}/mambaforge" "${HOME}/anaconda3"; do
+  CANDS+=( "${base}"/envs/*/bin/python "${base}/bin/python" )
+done
+for cand in "${CANDS[@]}"; do
   [ -x "${cand}" ] || continue
   if "${cand}" -c 'import starlette, httpx, uvicorn' >/dev/null 2>&1; then
     PYTHON="${cand}"; break

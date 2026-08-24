@@ -482,7 +482,10 @@ cd bioinformatic_diagnostic_tools   # the folder you installed into
 git pull
 
 # 2. The individual tools — each tool repo, moved to its newest tag:
-bin/bdtools check-updates          # report newer upstream versions (read-only)
+bin/bdtools check-updates          # report newer upstream versions (read-only).
+                                   # Read the `installed=` column: it is the
+                                   # code that actually runs, and a checkout
+                                   # behind its own pin is reported STALE.
 bin/bdtools update <tool|all>      # move to the newest tag + rebuild
 
 # 3. The ANALYSIS packages inside each tool's conda env — vsnp3, AMRFinderPlus,
@@ -725,6 +728,43 @@ and it is safe to reach for:
 Expect it to take as long as the original install of that tool (minutes, mostly
 solving and downloading). `--rebuild`, by contrast, only *adds* newly declared
 dependencies to the environment that is already there.
+
+**A fix you know shipped is not showing up in a run.** Two causes, and they look
+identical from the outside — the tool runs, finishes, and behaves like the old
+version. Check both:
+
+```bash
+bin/bdtools check-updates          # is the code that RUNS the version you think?
+bin/bdtools check-paths            # is a path from another site still configured?
+```
+
+*The wrong code is running.* `check-updates` prints three versions per tool —
+`pinned` (what `tools.yml` says), `installed` (what `git describe` says about the
+checkout that actually runs) and `latest` (the newest release upstream). The one
+that matters is **installed**: a tool whose checkout never advanced reports
+`STALE — running v0.3.5, pinned v0.3.16`, and no amount of re-running the tool
+will produce behaviour from v0.3.16. `bin/bdtools install <tool>` moves it to the
+pin. Note that a **per-user install gives every user their own checkout** under
+`~/.local/share/bdtools/checkouts` — updating yours does not update anyone
+else's, so run this as the user whose runs are wrong, not as the admin.
+
+*A path from another deployment is still configured.* Each GUI keeps its settings
+in `~/.config/<tool>/config.json`, written the first time it starts. Some older
+releases seeded a database path with a literal from the lab server they were
+written on, and once that value is in your config it stays there — a later
+release that removed the literal only changes what a *new* config gets. The
+symptom is a run naming a directory that does not exist on your machine:
+
+```
+--genoflu-db /srv/kapurlab/databases/genoflu/dependencies
+WARNING: configured genoflu_db has no fastas/ + genotype_key.xlsx (...)
+```
+
+`check-paths` finds those, and `--apply` removes them so the tool falls back to
+its own default. Launching a tool from the dashboard now does this automatically
+and says so in the run log; the removed values are kept under
+`_bdtools_foreign_paths` in the same config file, so nothing is lost and a site
+that genuinely owns the path can put it back.
 
 **Doctor is green but the tool still fails — or the error looks alien?** Run
 `bin/bdtools diagnose <tool>` — read-only, it writes one pasteable report file

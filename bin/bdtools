@@ -24,6 +24,9 @@
 #                                       step after a push (envs/cards: install)
 #   bdtools site-init [opts]            one-time bare-metal site bootstrap
 #   bdtools setup-databases [opts]      download shared reference DBs + wire the GUIs
+#   bdtools check-paths [tool ...]      find paths in the GUIs' per-user config
+#                   [--apply]           that belong to ANOTHER deployment and
+#                                       cannot resolve here (report by default)
 #   bdtools doctor  [tool ...]          check installs are runnable; print fixes
 #   bdtools fix     [tool|all]          run the repairs doctor recommends
 #                   [--apply]           (preview by default; data fetches only —
@@ -68,7 +71,12 @@ done
 _bdt_dir="$(cd -P "$(dirname "${_bdt_src}")" && pwd)"
 source "${_bdt_dir}/lib/common.sh"
 
-usage() { sed -n '2,53p' "$0" | sed 's/^# \{0,1\}//'; }
+# The whole header comment block, minus its shebang. Bounded by the block
+# ITSELF, not by a line number: the previous form was `sed -n '2,53p'`, so
+# adding one subcommand to the list above silently truncated the tail — the
+# repair order lost steps 5 and 6, and bare `bdtools` stopped telling anyone to
+# run the fix it had just printed.
+usage() { awk 'NR>1 && /^#/ {sub(/^# ?/, ""); print; next} NR>1 {exit}' "$0"; }
 
 cmd_list() {
   printf '%-22s %-26s %s\n' "TOOL" "VERSION (pinned)" "OOD APP(S)"
@@ -855,6 +863,12 @@ cmd_site_init() { "${KT_BIN_DIR}/site-init.sh" "$@"; }
 
 cmd_setup_databases() { "${KT_BIN_DIR}/setup-databases.sh" "$@"; }
 
+# Report (--apply: remove) configured paths that belong to another deployment.
+# The launcher already does this for a tool it starts; this is the same sweep
+# across every tool at once, for a machine nobody has launched anything on yet
+# and for anyone who wants to see the answer before a run.
+cmd_check_paths() { _need_python; "${PYBIN}" "${KT_BIN_DIR}/lib/config_hygiene.py" "$@"; }
+
 cmd_fix() { "${KT_BIN_DIR}/fix.sh" "$@"; }
 
 cmd_doctor() { "${KT_BIN_DIR}/doctor.sh" "$@"; }
@@ -892,6 +906,7 @@ main() {
     restore-env)        cmd_restore_env "$@";;
     site-init)          cmd_site_init "$@";;
     setup-databases)    cmd_setup_databases "$@";;
+    check-paths)        cmd_check_paths "$@";;
     doctor)             cmd_doctor "$@";;
     diagnose)           cmd_diagnose "$@";;
     fix)                cmd_fix "$@";;

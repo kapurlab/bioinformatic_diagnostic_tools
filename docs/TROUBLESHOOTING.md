@@ -87,6 +87,8 @@ bin/bdtools test <tool>
 | `does not contain necessary file taxo.k2d` (or `opts.k2d` / `hash.k2d`) | kraken2 database incomplete |
 | `Cannot open temporary file ..._00253.bin`, `Could not determine genome size` | Cannot open temporary file (open-file limit) |
 | The same update is offered again and again and never lands | An update is offered repeatedly |
+| A shipped fix does not appear in a run, and every tool reports "up to date" | A shipped fix does not reach a run |
+| A run names `/srv/...` or another site's directory that does not exist here | A run names another site's directory |
 | Windows browser can't reach a tool running in WSL | Windows browser cannot reach a WSL tool |
 
 On Windows/WSL, also read [WSL: the four rules](#wsl-the-four-rules).
@@ -706,6 +708,84 @@ a release newer than the one that failed appears.
 ```bash
 bin/bdtools update-packages <tool> --to <pkg>=<version>
 ```
+
+### A shipped fix does not reach a run
+
+**What it means.** The code that ran is not the version you think it is. Three
+versions are in play per tool and only one of them decides behaviour:
+
+* `pinned` — what `tools.yml` says the suite should be on
+* `installed` — what `git describe` says about the checkout that actually runs
+* `latest` — the newest release in the tool's repo
+
+Only **installed** runs. A per-user install gives every user their own checkout
+under `~/.local/share/bdtools/checkouts`, so an admin who updates their own
+account changes nothing for anyone else — and this is the usual cause when a
+release "was applied" and its behaviour never showed up.
+
+`check-updates` used to compute its verdict from `pinned` vs `latest`, so a
+checkout eleven releases behind its own pin printed `up to date`. It now grades
+`installed` and reports that case as STALE.
+
+**Run this — as the user whose runs are wrong, not as the admin:**
+
+```bash
+bin/bdtools check-updates
+```
+
+**Reading the output.**
+
+```
+irma_gui   pinned=v0.3.16   installed=v0.3.5   latest=v0.3.16   STALE — running v0.3.5, pinned v0.3.16
+```
+
+**The fix.**
+
+```bash
+bin/bdtools install irma_gui        # move the checkout to the pin and rebuild
+```
+
+### A run names another site's directory
+
+Full text in a log: a path such as
+`--genoflu-db /srv/kapurlab/databases/genoflu/dependencies` on a machine that has
+no `/srv/kapurlab`, usually followed by a warning naming the same directory.
+
+**What it means.** Each GUI keeps its settings in
+`~/.config/<tool>/config.json`, created the first time it starts. Some older
+releases seeded a database path with a literal from the server they were
+developed on. Once that value is written to your config it stays: a later
+release that removes the literal only changes what a **new** config gets, because
+every tool's `load_config()` fills in defaults for keys that are *missing*, not
+for keys that are already there. So the stale path outlives the tool update, the
+pin bump and the environment rebuild that were supposed to cure it.
+
+Depending on the tool, the run then either falls back to a bundled default and
+logs a warning nobody can act on, or silently does nothing.
+
+**Run this:**
+
+```bash
+bin/bdtools check-paths
+```
+
+**Reading the output.** It prints this machine's roots, then any configured
+value that is an absolute path, does not exist here, has no part of its parent
+tree here either, and is under none of those roots. All four have to hold, so a
+projects directory you have not created yet is left alone, and a site that
+really does own `/srv/<site>` keeps its settings even while a mount is away.
+
+**The fix.**
+
+```bash
+bin/bdtools check-paths --apply
+```
+
+The key is emptied rather than deleted — every tool reads empty as "not
+configured" and falls back to its own default — and the old value is kept under
+`_bdtools_foreign_paths` in the same file. Launching a tool from the dashboard
+does this automatically and records it in the run log, and `bdtools doctor`
+reports what was removed.
 
 ### Windows browser cannot reach a WSL tool
 

@@ -22,11 +22,21 @@ source "${TESTS_DIR}/lib/fetch.sh"
 
 RECORD=0; KEEP=0
 WORKDIR="${BDTOOLS_TEST_WORKDIR:-${BDTOOLS_HOME}/testwork}"
-# Where reference databases live for tier-2 specs. `setup-databases` records the
-# chosen root in ${BDTOOLS_HOME}/db-root (home or shared); fall back to the OOD
-# server layout when no local root was configured. Specs reference it as {dbroot}
-# in db_check/run_cmd so the same spec resolves on a laptop and on a server.
-DBROOT="$( [[ -f "${BDTOOLS_HOME}/db-root" ]] && cat "${BDTOOLS_HOME}/db-root" || echo "/srv/kapurlab/databases" )"
+# Where reference databases live for tier-2 specs. Resolved the same way every
+# other part of the suite resolves it (lib/site_paths.py): $BDTOOLS_DB_ROOT, the
+# root `setup-databases` recorded in ${BDTOOLS_HOME}/db-root, this site's
+# site.conf, else a per-user default. Specs reference it as {dbroot} in
+# db_check/run_cmd so the same spec resolves on a laptop and on a server.
+#
+# It used to fall back to one particular lab's server layout
+# ("/srv/kapurlab/databases"). On every other deployment that made a tier-2 spec
+# look in a directory that has never existed there, and report the tool's
+# database as missing — naming a path from somebody else's machine as the thing
+# to go and fix. A resolver that answers correctly everywhere is the fix; there
+# is no defensible literal here.
+DBROOT="$("${PYBIN}" -c 'import sys; sys.path.insert(0, sys.argv[1]); import site_paths; print(site_paths.db_root(sys.argv[2]))' \
+          "${KT_BIN_DIR}/lib" "${REPO_DIR}" 2>/dev/null)"
+[[ -n "${DBROOT}" ]] || DBROOT="${BDTOOLS_HOME}/databases"
 TARGET=""
 while [[ $# -gt 0 ]]; do
   case "$1" in

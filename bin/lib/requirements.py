@@ -47,6 +47,17 @@ Database `kind`:
 `optional` marks a database the tool degrades without instead of failing: unset
 is then a note (with `degrades` saying what stops working), while a path that IS
 set and unreadable stays a finding — that run drops the feature silently.
+
+`default_under` is where a database lives when its config key was never written:
+a (root, relative-path) pair, resolved at check time by check.py against
+lib/site_paths.py. It is a PAIR rather than a path because a path here is only
+ever right on one machine. These entries used to read
+"/srv/kapurlab/databases/kraken2/k2_standard_08gb", so on every deployment but
+that one doctor reported a missing database and named, as the place to look, a
+directory belonging to somebody else's server. Naming the root instead means the
+answer is correct on a laptop, a lab server and an HPC without anyone editing
+this file. If a root cannot be resolved there is no default, and doctor says the
+key is unset — which is the truth, and is actionable.
 """
 
 # Shared by every GUI: the FastAPI/uvicorn web layer that serves the SPA.
@@ -88,11 +99,11 @@ REQUIREMENTS = {
              # hash.k2d-only check here and fail at run time with "does not
              # contain necessary file taxo.k2d".
              "markers": ["taxo.k2d", "opts.k2d", "hash.k2d"],
-             "default": "/srv/kapurlab/databases/kraken2/k2_standard_08gb",
+             "default_under": ("db_root", "kraken2/k2_standard_08gb"),
              "fix": "bin/bdtools setup-databases kraken"},
             {"label": "BLAST ref_prok_rep_genomes", "config_key": "blast_db",
              "kind": "file_prefix",
-             "default": "/srv/kapurlab/databases/blast/ref_prok_rep_genomes",
+             "default_under": ("db_root", "blast/ref_prok_rep_genomes"),
              "fix": "bin/bdtools setup-databases blast"},
         ],
     },
@@ -108,7 +119,12 @@ REQUIREMENTS = {
              # the authority — checked before the config key, which can hold a
              # stale path from an earlier install on the same machine.
              "paths_file": "dependencies/reference_options_paths.txt",
-             "default": "${VSNP_GUI_SITE_ROOT:-/srv/kapurlab}/refs/vsnp3/reference_options",
+             # vsnp_site_root is whatever the LAUNCHER hands vsnp_gui as
+             # VSNP_GUI_SITE_ROOT — the personal site tree on a local install,
+             # the deployment's declared SITE_ROOT on a server. Asked of
+             # tool_launch rather than re-derived, so doctor grades the tree the
+             # tool will actually read.
+             "default_under": ("vsnp_site_root", "refs/vsnp3/reference_options"),
              "fix": "bin/bdtools setup-databases vsnp-refs vsnp-deps"},
         ],
     },

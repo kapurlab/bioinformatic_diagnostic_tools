@@ -78,14 +78,40 @@ latest_tag() {  # repo-url -> highest version-sorted RELEASE tag, empty (no tags
 targets() { if [[ "${TARGET}" == "all" ]]; then manifest_names; else echo "${TARGET}"; fi; }
 
 report_one() {
-  local name="$1" dir repo pinned installed latest status
+  local name="$1" dir repo pinned installed inst_tag latest status
   dir="$(tool_dir "$name")"; repo="$(manifest_get "$name" repo)"; pinned="$(manifest_get "$name" version)"
   installed="$([[ -d "${dir}/.git" ]] && git -C "$dir" describe --tags --always 2>/dev/null || echo '—')"
+  # `git describe` appends -N-g<hash> past a tag; the tag is what compares.
+  inst_tag="${installed%%-*}"
   latest="$(latest_tag "$repo")"
+  #
+  # The verdict is about THIS MACHINE, so it is computed from `installed`.
+  # It used to be computed from `pinned` — "latest == pinned" printed "up to
+  # date" — which reports on the manifest, not on the install. Every consequence
+  # of that ran the wrong way: a checkout eleven releases behind its own pin
+  # printed
+  #
+  #     irma_gui  pinned=v0.3.16  installed=v0.3.5  latest=v0.3.16  up to date
+  #
+  # the operator read the last column, and the shipped fix (an HTML report added
+  # in v0.3.6) went on not appearing while every tool said it was current. The
+  # dashboard already grades installed-vs-latest and said so; this line and that
+  # banner disagreed, and this is the one people run.
+  #
+  # Behind the PIN and behind the RELEASE are different problems with different
+  # remedies, so they are named separately rather than folded into one arrow.
+  local stale="" newer=""
+  [[ "$installed" != "—" && "$inst_tag" != "$pinned" ]] \
+    && stale="STALE — running ${inst_tag}, pinned ${pinned} (bin/bdtools install ${name})"
+  [[ -n "$latest" && "$latest" != "?" && "$latest" != "$pinned" ]] \
+    && newer="↑ ${latest} available"
   if [[ "$latest" == "?" ]]; then status="CHECK FAILED — could not reach ${repo} (no network from this host?)"
+  elif [[ "$installed" == "—" ]]; then status="not installed here (bin/bdtools install ${name})"
+  elif [[ -n "$stale" && -n "$newer" ]]; then status="${newer}; ${stale}"
+  elif [[ -n "$stale" ]]; then status="${stale}"
+  elif [[ -n "$newer" ]]; then status="${newer}"
   elif [[ -z "$latest" ]]; then status="no tags (tracks ${pinned})"
-  elif [[ "$latest" == "$pinned" ]]; then status="up to date"
-  else status="↑ ${latest} available"; fi
+  else status="up to date"; fi
   printf '%-22s pinned=%-14s installed=%-16s latest=%-12s %s\n' \
     "$name" "$pinned" "$installed" "${latest:-—}" "$status"
 }

@@ -137,8 +137,6 @@ require_updatable() {   # require_updatable <tool> <allow_flag 0|1> <cmd> [expla
   return 1
 }
 
-# Resolve a tool's checkout dir: explicit $BDTOOLS_TOOLSDIR wins (e.g. the
-# lab's existing /srv/kapurlab/tools tree), else the per-user home.
 # Dirty tracked paths in a tool checkout that are NOT regenerable build output —
 # i.e. the ones that must actually stop us force-checking-out a pinned tag.
 # Empty output means "safe to move".
@@ -210,10 +208,37 @@ restore_site_edits() {  # DIR TMPDIR
   rm -rf "${tmp}"
 }
 
+# Resolve a tool's checkout, nearest-first:
+#   1. $BDTOOLS_TOOLSDIR/<tool>  — what a launcher or OOD job script exported
+#   2. <this checkout's parent>/<tool> — a SITE TREE. The umbrella installed at
+#      <root>/tools/bioinformatic_diagnostic_tools has its siblings right there,
+#      so the location of the script being run already says which deployment it
+#      is talking about.
+#   3. the managed per-user checkout
+#
+# Step 2 is new because step 1 is a variable someone has to remember to export,
+# and forgetting it is silent: on a site whose umbrella lives at
+# /project/shared/bdtools/tools/bioinformatic_diagnostic_tools, `bdtools
+# check-updates` run from inside that very tree reported the OPERATOR's personal
+# copies, and `bdtools install` built a second private one beside the shared
+# tool everyone actually runs. Two checkouts, and every report about the wrong
+# one — which is exactly how a shipped fix "does not apply" (2026-08-24).
+# bin/bdtools's python search already resolved roots this way; tool_dir did not,
+# and the two disagreeing is the whole bug.
+#
+# Each step requires the directory to EXIST, so this recognises a site tree
+# rather than assuming one: a laptop has no sibling checkout beside the umbrella
+# and lands on step 3 exactly as before. Recognising it does not mean bdtools
+# may rewrite it — `update` still refuses any checkout outside the managed
+# per-user root (see check-updates.sh:apply_one), which is now a refusal the
+# operator SEES instead of a silent divergence.
 tool_dir() {
   local name="$1"
+  local site_root; site_root="$(dirname "${REPO_DIR}")"
   if [[ -n "${BDTOOLS_TOOLSDIR:-}" && -d "${BDTOOLS_TOOLSDIR}/${name}" ]]; then
     echo "${BDTOOLS_TOOLSDIR}/${name}"
+  elif [[ -d "${site_root}/${name}/.git" ]]; then
+    echo "${site_root}/${name}"
   else
     echo "${BDTOOLS_HOME}/checkouts/${name}"
   fi

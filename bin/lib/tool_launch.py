@@ -86,10 +86,31 @@ def _bdtools_home():
 
 
 def tool_dir(name):
-    """Mirror common.sh:tool_dir — explicit BDTOOLS_TOOLSDIR wins, else per-user."""
+    """Mirror common.sh:tool_dir, nearest-first:
+
+      1. $BDTOOLS_TOOLSDIR/<tool>  — what a launcher or OOD job script exported
+      2. <this checkout's parent>/<tool> — a SITE TREE. An umbrella installed at
+         <root>/tools/bioinformatic_diagnostic_tools has its siblings there, so
+         where this file lives already says which deployment it is talking about.
+      3. the managed per-user checkout
+
+    Step 2 exists because step 1 is a variable someone has to remember to
+    export, and forgetting it is silent: on a site whose umbrella lives at
+    /project/shared/bdtools/tools/bioinformatic_diagnostic_tools, commands run
+    from inside that tree resolved the OPERATOR's personal copies instead of the
+    shared tools everyone runs — two checkouts, every report about the wrong
+    one, and a shipped fix that "does not apply".
+
+    Each step requires the directory to exist, so this RECOGNISES a site tree
+    rather than assuming one; a laptop has no sibling beside the umbrella and
+    lands on step 3 exactly as before. Kept in lock-step with common.sh:tool_dir
+    — the two disagreeing about which copy is live is the bug this fixes."""
     td = os.environ.get("BDTOOLS_TOOLSDIR", "").strip()
     if td and os.path.isdir(os.path.join(td, name)):
         return os.path.join(td, name)
+    site = os.path.join(os.path.dirname(_REPO_DIR), name)
+    if os.path.isdir(os.path.join(site, ".git")):
+        return site
     return os.path.join(_bdtools_home(), "checkouts", name)
 
 

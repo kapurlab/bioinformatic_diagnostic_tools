@@ -811,6 +811,19 @@ under `~/.local/share/bdtools/checkouts`, so an admin who updates their own
 account changes nothing for anyone else — and this is the usual cause when a
 release "was applied" and its behaviour never showed up.
 
+On a **site install** — the umbrella at `<root>/tools/bioinformatic_diagnostic_tools`
+with the tools as siblings — commands resolve those siblings automatically, so
+running them from inside that tree operates on the shared copies. Ask the
+resolver rather than assuming; this is the same answer the OOD dashboard uses:
+
+```bash
+python3 bin/lib/tool_launch.py show <tool> 0 | grep -E '"(dir|env_dir)"'
+```
+
+`bdtools update` deliberately refuses a site tree ("refusing to update external
+checkout") — a shared deployment is moved with `bdtools install --server`, or
+`bdtools sync` for code only.
+
 `check-updates` used to compute its verdict from `pinned` vs `latest`, so a
 checkout eleven releases behind its own pin printed `up to date`. It now grades
 `installed` and reports that case as STALE.

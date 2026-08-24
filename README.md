@@ -745,7 +745,9 @@ bin/bdtools check-updates          # is the code that RUNS the version you think
 bin/bdtools check-paths            # is a path from another site still configured?
 ```
 
-*The wrong code is running.* `check-updates` prints three versions per tool —
+*The wrong code is running.* First be sure which checkout that even is —
+`python3 bin/lib/tool_launch.py show <tool> 0 | grep '"dir"'` prints the exact
+directory the dashboard will launch. `check-updates` prints three versions per tool —
 `pinned` (what `tools.yml` says), `installed` (what `git describe` says about the
 checkout that actually runs) and `latest` (the newest release upstream). The one
 that matters is **installed**: a tool whose checkout never advanced reports

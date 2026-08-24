@@ -531,6 +531,57 @@ if d and d != "(base)":
   fi
 }
 
+# ---- the env a tool was actually BUILT into --------------------------------
+#
+# Recorded once, at the end of a successful build, and read by the launcher
+# before it searches. Same idea as the db-root and vendor-root records: an
+# answer this machine already established beats re-deriving it later under a
+# different environment.
+#
+# WHY. "Which env is <tool>'s env" was answered by SEARCHING — the build asked
+# `conda run -n <name>` under whichever conda detect_conda found, and the
+# launcher took the first conda base on its probe list that had an env by that
+# name. Those are the same answer only while the machine has exactly one conda
+# base with that env in it. On the 2026-08-24 Ames HPC it had two:
+#
+#   built    /project/shared/miniconda3/envs/irma_gui   (complete: plotly, weasyprint)
+#   launched /home/tstuber/miniforge3/envs/irma_gui     (older; plotly missing)
+#
+# The install succeeded, doctor graded the OTHER env, and IRMA would have
+# written its HTML report with every chart silently absent — plotly's import is
+# wrapped in a broad except precisely so a run never dies over a picture.
+# Nothing in the install was wrong; the two sides just searched independently
+# and a probe order decided which env a diagnostic result came out of.
+#
+# The record is advisory, never binding: a prefix that no longer holds a python
+# is ignored and the search runs as before (tool_launch warns, because an env
+# that was recorded and is now gone means something moved and the tool is about
+# to run from somewhere its operator did not choose).
+env_prefix_record() {   # TOOL -> path of the record file
+  printf '%s/env-prefix/%s' "${BDTOOLS_HOME}" "$1"
+}
+
+record_env_prefix() {   # TOOL PREFIX
+  local tool="$1" prefix="$2" f
+  [[ -n "${tool}" && -n "${prefix}" && -x "${prefix}/bin/python" ]] || return 0
+  f="$(env_prefix_record "${tool}")"
+  if [[ ${DRY_RUN:-0} -eq 1 ]]; then
+    echo "  [dry-run] record ${tool} env prefix -> ${prefix}"
+    return 0
+  fi
+  mkdir -p "$(dirname "${f}")" 2>/dev/null || return 0
+  printf '%s\n' "${prefix}" > "${f}" 2>/dev/null || return 0
+  ok "recorded ${tool} env: ${prefix}"
+}
+
+recorded_env_prefix() {  # TOOL -> the recorded prefix if it still has a python
+  local f p; f="$(env_prefix_record "$1")"
+  [[ -r "${f}" ]] || return 0
+  p="$(head -n1 "${f}" 2>/dev/null | tr -d '\r')"
+  [[ -n "${p}" && -x "${p}/bin/python" ]] && printf '%s' "${p}"
+  return 0
+}
+
 # tool_env_prefix TOOL — the env DIRECTORY the tool runs from ("" if none).
 # Callers that operate on an env (restore, targeted conda repair) need the prefix
 # rather than the interpreter, and must not re-derive it: a resolver that only

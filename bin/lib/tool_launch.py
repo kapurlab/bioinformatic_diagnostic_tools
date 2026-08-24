@@ -135,6 +135,41 @@ def _vendor_root():
     return os.path.join(home, "vendor")
 
 
+def _recorded_env_dir(tool):
+    """(prefix, warning) — the env this tool was BUILT into, as recorded at
+    install time by common.sh:record_env_prefix.
+
+    Read before searching, because searching is what got this wrong. The build
+    asks conda for the env named in the manifest, under whichever conda
+    detect_conda found; the launcher took the first base on its own probe list
+    holding an env by that name. Identical answers only while the machine has
+    one such base. On the 2026-08-24 Ames HPC it had two, and the tool ran from
+    the one the install had NOT touched — complete env built, doctor grading the
+    other one, and IRMA's HTML report would have come out with every chart
+    missing, because plotly's import is wrapped in a broad except so a run never
+    dies over a picture.
+
+    Advisory, never binding: a record whose prefix no longer holds a python is
+    ignored and the normal search runs. That case is worth a warning though —
+    the env a build produced has been moved or deleted, so the tool is about to
+    run from somewhere nobody chose."""
+    path = os.path.join(_bdtools_home(), "env-prefix", tool)
+    try:
+        with open(path, encoding="utf-8") as fh:
+            prefix = fh.readline().strip()
+    except OSError:
+        return "", ""
+    if not prefix:
+        return "", ""
+    if os.path.isfile(os.path.join(prefix, "bin", "python")):
+        return prefix, ""
+    return "", (
+        "%s: the env recorded at install time (%s) no longer has a python — it "
+        "was moved or deleted. Falling back to searching this machine's conda "
+        "bases, which may not be the env this tool was built with. Rebuild with "
+        "`bdtools install %s` to settle it." % (tool, prefix, tool))
+
+
 def _resolve_asset_dir(tool, rel, d, sb_dir=""):
     """Locate a tool's vendored asset dir, tolerating a source-tree override.
 
@@ -354,14 +389,22 @@ def resolve(tool, port, host="127.0.0.1"):
         if os.path.abspath(d) != os.path.abspath(installed_dir):
             source_override_env = os.path.join(installed_dir, "env")
 
-    # sandbox override -> shared/sibling env -> the tool's own <dir>/env ->
-    # installed env for an explicit source override -> personal conda env.
+    # sandbox override -> the env this tool was BUILT into -> shared/sibling env
+    # -> the tool's own <dir>/env -> installed env for an explicit source
+    # override -> personal conda env.
     # The own-env step matters for a *local* install of a sibling-env
     # tool (e.g. vsnp_gui): there is no sibling <tools_root>/vsnp3 checkout, and the
     # GUI's server deps (uvicorn/fastapi) live in <dir>/env — NOT in the bare vsnp3
     # analysis conda env, which would otherwise be picked and fail to start uvicorn.
+    #
+    # The recorded prefix sits second, under only the sandbox override: an
+    # explicit sandbox is someone saying "run this one", while the record is this
+    # machine reporting what it built. Everything below it is a search, and a
+    # search is what picked the wrong env of two same-named ones (see
+    # _recorded_env_dir).
+    recorded_env, recorded_warning = _recorded_env_dir(tool)
     env_dir = None
-    for cand in (sb_env, shared_env, own_env, source_override_env):
+    for cand in (sb_env, recorded_env, shared_env, own_env, source_override_env):
         if _has_python(cand):
             env_dir = cand
             break
@@ -384,6 +427,8 @@ def resolve(tool, port, host="127.0.0.1"):
     env = dict(os.environ)
     env_overrides = {}
     warnings = []
+    if recorded_warning:
+        warnings.append(recorded_warning)
     path_parts = []
     if env_dir:
         path_parts.append(os.path.join(env_dir, "bin"))

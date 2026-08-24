@@ -1863,6 +1863,12 @@ if [[ ${DO_BUILD} -eq 1 ]]; then
   build
   trap - EXIT
   build_state_ok "${TOOL}"
+  # Which env this build actually produced, recorded so the launcher does not
+  # have to re-derive it from a probe order later (common.sh:record_env_prefix).
+  # resolve_env_prefix is the same resolver every mutation in this build used,
+  # so the record describes the prefix the packages went into — not a second
+  # opinion about where they should have gone.
+  record_env_prefix "${TOOL}" "$(resolve_env_prefix)"
 fi
 
 # Self-check the env we just built: confirm the tool's required python modules

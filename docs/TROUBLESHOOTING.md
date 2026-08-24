@@ -88,6 +88,7 @@ bin/bdtools test <tool>
 | `Cannot open temporary file ..._00253.bin`, `Could not determine genome size` | Cannot open temporary file (open-file limit) |
 | The same update is offered again and again and never lands | An update is offered repeatedly |
 | `git pull` aborts: "Your local changes to the following files would be overwritten by merge" | git pull refuses over a card edit |
+| Install said it succeeded, but doctor reports a module the install just put in | The env you built is not the env that runs |
 | A shipped fix does not appear in a run, and every tool reports "up to date" | A shipped fix does not reach a run |
 | A run names `/srv/...` or another site's directory that does not exist here | A run names another site's directory |
 | Windows browser can't reach a tool running in WSL | Windows browser cannot reach a WSL tool |
@@ -796,6 +797,46 @@ Do **not** reach for `git checkout --ours` or `--theirs` here. Neither side is
 complete: `--ours` is the release (your floors gone), `--theirs` is your stash
 (the release's change gone). `git stash show -p` prints your pre-pull version if
 you want to see exactly what you had set.
+
+### The env you built is not the env that runs
+
+**What it means.** Two conda bases on the machine both have an env with the same
+name, and the build and the launcher picked different ones. The build asks conda
+for the env named in `tools.yml`, under whichever conda it found; the launcher
+takes the first base on its probe list that has one. Those are the same answer
+only while exactly one base has that env.
+
+Seen on an HPC where the install log ended
+`Env python: /project/shared/miniconda3/envs/irma_gui` while the launcher used
+`/home/tstuber/miniforge3/envs/irma_gui`. Nothing errored — the install was
+complete, and doctor was grading the env nobody would run.
+
+The consequence is quiet, which is the problem. A tool degrades rather than
+failing when an optional import is missing: irma_gui's `html_report.py` wraps
+plotly in a broad `except` so a run never dies over a picture, so the report is
+written with every Coverage & Variants chart silently absent.
+
+**Run this:**
+
+```bash
+python3 bin/lib/tool_launch.py show <tool> 0 | grep env_dir
+cat "${BDTOOLS_HOME:-$HOME/.local/share/bdtools}/env-prefix/<tool>"
+```
+
+**Reading the output.** The second is what the last successful build recorded;
+the first is what will actually run. They should match. If the record is absent,
+this machine has not rebuilt since the record was introduced — `bdtools install
+<tool>` writes it.
+
+**The fix.**
+
+```bash
+bin/bdtools install <tool>
+```
+
+The launcher prefers the recorded prefix over any search, so one rebuild settles
+it permanently. If the recorded env is later moved or deleted, the launcher
+falls back to searching and says so in the run log rather than failing.
 
 ### A shipped fix does not reach a run
 

@@ -1688,11 +1688,24 @@ class MountAndWslTests(unittest.TestCase):
                 len(CHECK.wsl_drvfs_findings("/mnt/c/bdtools/env")), 1)
 
     def test_an_env_on_a_windows_drive_is_flagged(self):
+        # The mount table is mocked for the same reason every sibling here
+        # mocks it, and this test was the one that forgot. Unmocked it reads
+        # the HOST's /proc/mounts, where _mount_fstype falls back to "/" for a
+        # path no mount covers: on macOS there is no table at all, so the
+        # path-shape fallback flagged /mnt/c and this passed, while on Linux
+        # "/" answers ext4, the fstype check declines, and it failed — green on
+        # one platform and red on the other for a reason that had nothing to do
+        # with the code under test. It is why every ubuntu CI run failed from
+        # the day CI landed (2026-08-24). A real WSL2 table names /mnt/c 9p.
         from unittest import mock
         version = self.tmp / "version"
         version.write_text("Linux version 5.15.167.4-microsoft-standard-WSL2 "
                            "(gcc ...) #1 SMP\n")
-        with mock.patch.object(CHECK, "_PROC_VERSION", str(version)):
+        mounts = self.tmp / "mounts"
+        mounts.write_text("/dev/root / ext4 rw 0 0\n"
+                          "C:\\134 /mnt/c 9p rw,aname=drvfs 0 0\n")
+        with mock.patch.object(CHECK, "_PROC_VERSION", str(version)), \
+             mock.patch.object(CHECK, "_PROC_MOUNTS", str(mounts)):
             found = CHECK.wsl_drvfs_findings(
                 "/mnt/c/Users/lab/bdtools/checkouts/x/env")
         self.assertEqual(len(found), 1, found)

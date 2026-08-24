@@ -52,7 +52,9 @@ jobs:
           PY
       - name: unit tests
         # No -t .: tests/ has no __init__.py, and since 3.11 discover with an
-        # explicit top_level_dir refuses an package-less start dir outright
+        # explicit top_level_dir refuses a package-less start dir outright
         # (ImportError before a single test collects). Verified both ways on
-        # 3.12: plain -s tests runs all 354.
+        # 3.12: plain -s tests collects the whole suite (397 at time of
+        # writing; 13 skips on macOS, 29 on Linux, where the Darwin-only
+        # architecture tests skip as well).
         run: python3 -m unittest discover -s tests -v

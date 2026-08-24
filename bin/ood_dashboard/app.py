@@ -221,6 +221,11 @@ class Suite:
         # (e.g. a missing vendored kSNP4 => a pipeline exiting 127 mid-analysis).
         # Surfaced by /api/launch so the user reads it before starting a run.
         self.launch_warnings = {}
+        # Notices are delivered ONCE (tool_launch.consume_notices) and are not
+        # re-shown on later launches: they report a completed repair, not a
+        # problem, and repeating one in the card's error slot every session made
+        # a working tool look broken.
+        self.launch_notices = {}
         self.tools = self._discover()
         self.readiness = {}  # name -> doctor record; filled lazily in local mode
 
@@ -279,6 +284,7 @@ class Suite:
         port = _free_port()
         plan = tool_launch.resolve(name, port)
         self.launch_warnings[name] = list(plan.get("warnings") or [])
+        self.launch_notices[name] = tool_launch.consume_notices(name)
         logdir = os.path.join(os.environ.get(
             "BDTOOLS_HOME", os.path.expanduser("~/.local/share/bdtools")
         ), "dashboard-logs")
@@ -600,6 +606,10 @@ addEventListener('storage',e=>{{if(e.key===THEME_KEY)applyTheme(preferredTheme()
  button:disabled{{background:#cfc7ba;cursor:not-allowed}}button.open{{background:var(--accent2)}}
  .pill{{font-size:12px;padding:2px 9px;border-radius:999px;background:var(--soft);color:var(--muted)}}
  .pill.on{{background:#e2efe4;color:#3f6b48}}.err{{color:#b23b2e;font-size:12px;min-height:14px}}
+ /* A notice is not an error. Same slot, deliberately quieter: it reports
+    something already done, and borrowing the failure styling for it is how a
+    report earns the shrug that later hides a real one. */
+ .note{{color:#6f6a60;font-size:11.5px;min-height:14px;line-height:1.45}}
  .dev{{background:#fbecec;border:1px solid #ecc9c4;border-radius:8px;padding:8px 10px;font-size:12px;color:#8a3324}}
  .theme-switch{{display:inline-flex;gap:2px;padding:3px;background:var(--soft);border:1px solid var(--line);border-radius:10px}}
  .theme-switch button{{min-width:34px;padding:5px 8px;background:transparent;color:var(--muted);border-radius:7px}}
@@ -608,6 +618,7 @@ addEventListener('storage',e=>{{if(e.key===THEME_KEY)applyTheme(preferredTheme()
  html[data-theme="dark"] .pill.on{{background:#183326;color:#9bd8a7}}
  html[data-theme="dark"] .dev{{background:#3a2223;border-color:#633638;color:#f0a09b}}
  html[data-theme="dark"] .err{{color:#f0a09b}}
+ html[data-theme="dark"] .note{{color:#9a948a}}
 </style></head><body>
 <header><div class="hbar"><div><h1>Bioinformatic Diagnostic Tools (bdtools)</h1>
 <p class="sub">One session, one allocation. Pick a tool to launch it on this node.</p></div>
@@ -638,7 +649,11 @@ async function act(name,btn){{
  btn.disabled=true;const was=btn.textContent;btn.textContent='Starting…';
  try{{const r=await fetch('./api/launch?tool='+encodeURIComponent(name),{{method:'POST'}});
   const j=await r.json();
-  if(j.url){{if(j.warnings&&j.warnings.length){{err.textContent='⚠ '+j.warnings.join(' ');}}window.open(j.url,'_blank');}}else{{err.textContent=j.error||'failed to launch';}}
+  if(j.url){{
+    if(j.warnings&&j.warnings.length){{err.className='err';err.textContent='\u26a0 '+j.warnings.join(' ');}}
+    else if(j.notices&&j.notices.length){{err.className='note';err.textContent=j.notices.join(' ');}}
+    window.open(j.url,'_blank');
+  }}else{{err.className='err';err.textContent=j.error||'failed to launch';}}
  }}catch(e){{err.textContent=String(e);}}
  btn.disabled=false;btn.textContent=was;load();
 }}
@@ -686,7 +701,9 @@ async def api_launch(request):
         # needs once an analysis runs. Report that alongside the URL rather than
         # letting the user discover it as a "command not found" in a run log.
         warnings = SUITE.launch_warnings.get(tool) or []
-        return JSONResponse({"url": url, "warnings": warnings})
+        # pop: shown once, then gone — including for a relaunch in this session.
+        notices = SUITE.launch_notices.pop(tool, [])
+        return JSONResponse({"url": url, "warnings": warnings, "notices": notices})
     return JSONResponse({"error": err or "launch failed"}, status_code=500)
 
 

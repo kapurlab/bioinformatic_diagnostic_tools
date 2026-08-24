@@ -155,20 +155,74 @@ class LaunchPathRepair(unittest.TestCase):
         self.addCleanup(patch.stop)
         self.TL = load_module("bdtools_tool_launch_hyg", ROOT / "bin/lib/tool_launch.py")
 
-    def test_every_resolve_reports_it_not_just_the_first(self):
+    def test_it_survives_the_discovery_pass_that_precedes_the_launch(self):
         """The dashboard resolves each tool once to DISCOVER it and again to
-        LAUNCH it, and only the launch shows warnings to anyone. Caching just
+        LAUNCH it, and only the launch shows a human anything. Caching just
         "already swept" let the discovery pass consume the single report of a
-        config it had rewritten: the repair happened and nobody was told."""
+        config it had rewritten: the repair happened and nobody was told.
+
+        So resolve() keeps replaying, and delivery is what ends it — see
+        consume_notices() and RepairIsANoticeNotAnError below."""
         try:
             first = self.TL.resolve("irma_gui", 0)
             second = self.TL.resolve("irma_gui", 8765)
         except RuntimeError as exc:
             self.skipTest(f"irma_gui not installed here: {exc}")
         for label, plan in (("discovery", first), ("launch", second)):
-            hits = [w for w in plan["warnings"] if "another deployment" in w]
-            self.assertEqual(len(hits), 1, f"{label} pass reported {plan['warnings']}")
+            hits = [n for n in plan["notices"] if "another deployment" in n]
+            self.assertEqual(len(hits), 1, f"{label} pass reported {plan['notices']}")
         self.assertEqual(json.loads(self.cfg.read_text())["genoflu_db"], "")
+
+
+class RepairIsANoticeNotAnError(unittest.TestCase):
+    """A finished repair must not be dressed as a live failure, or repeated.
+
+    The first version put this line in the card's error slot — the same red text
+    as "kSNP4 not found, nothing will run" — and replayed it on every launch for
+    the life of the dashboard session. The first person to see it asked whether
+    their working tool was broken. That is the reaction that teaches people to
+    ignore the slot, and the slot has to work when something really is wrong."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        cfg_home = Path(self.tmp.name) / "config"
+        (cfg_home / "irma_gui").mkdir(parents=True)
+        (cfg_home / "irma_gui" / "config.json").write_text(
+            json.dumps({"genoflu_db": FOREIGN_DB}), encoding="utf-8")
+        patch = mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": str(cfg_home)})
+        patch.start()
+        self.addCleanup(patch.stop)
+        self.TL = load_module("bdtools_tl_notice", ROOT / "bin/lib/tool_launch.py")
+
+    def plan(self, port=0):
+        try:
+            return self.TL.resolve("irma_gui", port)
+        except RuntimeError as exc:
+            self.skipTest(f"irma_gui not installed here: {exc}")
+
+    def test_a_completed_repair_is_a_notice_never_a_warning(self):
+        plan = self.plan()
+        self.assertTrue([n for n in plan["notices"] if "another deployment" in n])
+        self.assertEqual([w for w in plan["warnings"] if "another deployment" in w], [],
+                         "the repair must not occupy the failure channel")
+
+    def test_it_is_delivered_once(self):
+        self.plan()                                   # discovery
+        self.plan()                                   # discovery again
+        first = self.TL.consume_notices("irma_gui")   # the launch that shows a human
+        self.assertEqual(len(first), 1, "the one telling was swallowed")
+        self.assertEqual(self.TL.consume_notices("irma_gui"), [], "shown twice")
+        self.assertEqual(self.plan()["notices"], [], "still replaying after delivery")
+
+    def test_the_run_log_keeps_it_even_though_the_card_shows_it_once(self):
+        """A run's log is the permanent record of what was true when it ran, and
+        "your configuration was changed before this run" belongs in it. One run,
+        one log, so "once" costs nothing there."""
+        plan = self.plan(8765)
+        header = self.TL.log_header(plan)
+        self.assertIn("# NOTE:", header)
+        self.assertNotIn("# WARNING: irma_gui: removed", header)
 
 
 class NoSitePathsInTheUmbrella(unittest.TestCase):

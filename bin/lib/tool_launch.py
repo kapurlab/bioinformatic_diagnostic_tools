@@ -281,19 +281,35 @@ def _sandbox_env(tool):
 # resolve() is on the dashboard's hot path (every discovery pass, every launch).
 _SCANNING_SIBLINGS = False
 
-# tool -> the warning lines its sweep produced. Caches the RESULT, not merely
-# the fact that it ran: the dashboard resolves each tool once during discovery
-# and again at launch, and only the launch shows warnings to anyone. A boolean
+# tool -> the notice lines its sweep produced. Caches the RESULT, not merely the
+# fact that it ran: the dashboard resolves each tool once during discovery and
+# again at launch, and only the launch shows anything to anyone. A boolean
 # "already done" made the discovery pass consume the one report of a config it
-# had just rewritten, so the repair happened and nobody was told. The disk work
-# still happens once; what it found is repeated for as long as the process
-# lives.
+# had just rewritten, so the repair happened and nobody was told.
+#
+# Replayed until something DELIVERS it — see consume_notices(). Before that, the
+# line rendered on every launch for the life of the dashboard, in the same red
+# slot as "kSNP4 not found, nothing will run". A finished repair styled as a
+# live failure is how a report stops being read: the first person to see it
+# asked whether their working tool was broken.
 _CONFIG_SWEPT = {}
+
+
+def consume_notices(tool):
+    """Return this tool's pending notices and clear them — deliver once.
+
+    A notice describes something that ALREADY HAPPENED and needs no action; a
+    warning describes something still wrong. Both are worth saying, but only one
+    is worth saying twice. The caller that actually shows a human (the
+    dashboards' launch handler) calls this; resolve() keeps replaying until then,
+    so a discovery pass cannot swallow the only telling."""
+    return _CONFIG_SWEPT.pop(tool, [])
 
 
 def _sweep_foreign_config(tool):
     """Strip another deployment's paths out of this tool's user config, and say
-    so. Returns warning lines for the launch plan.
+    so. Returns NOTICE lines for the launch plan — the repair is already done
+    and there is nothing for the reader to fix.
 
     Done HERE, at the single point every launch goes through, because the bug it
     fixes is invisible at every other one. A GUI seeds
@@ -426,7 +442,8 @@ def resolve(tool, port, host="127.0.0.1"):
     # the prepended prefix alone (":$PATH" is re-appended at render time).
     env = dict(os.environ)
     env_overrides = {}
-    warnings = []
+    warnings = []          # something is WRONG and the reader may need to act
+    notices = []           # something HAPPENED; recorded, no action needed
     if recorded_warning:
         warnings.append(recorded_warning)
     path_parts = []
@@ -478,7 +495,7 @@ def resolve(tool, port, host="127.0.0.1"):
     # tool reads its own config.json first. Skipped while scanning siblings:
     # that pass is a cheap env lookup, not a launch.
     if not _SCANNING_SIBLINGS:
-        warnings.extend(_sweep_foreign_config(tool))
+        notices.extend(_sweep_foreign_config(tool))
     # Which conda env provides each OTHER tool's software.
     #
     # BDTOOLS_TOOLS_ROOT above says where the sibling checkouts are, which is enough
@@ -599,6 +616,7 @@ def resolve(tool, port, host="127.0.0.1"):
         "env_dir": env_dir or "(base)",
         "dir": d,
         "warnings": warnings,
+        "notices": notices,
     }
 
 
@@ -751,6 +769,10 @@ def log_header(plan, when=None):
     # Missing vendored assets are recorded in the run log too: the symptom shows up
     # much later (a pipeline exiting 127), and the log is where anyone will look.
     warn_block = "".join("# WARNING: %s\n" % w for w in plan.get("warnings") or [])
+    # Notices go in the log too — a run's log is the permanent record of what
+    # was true when it ran, and "your configuration was changed before this run"
+    # belongs in it. One run, one log, so "once" is satisfied by construction.
+    warn_block += "".join("# NOTE: %s\n" % n for n in plan.get("notices") or [])
     return (
         "\n%s\n"
         "# bdtools tool launch — %s\n"
@@ -778,6 +800,8 @@ def _cli():
     # stderr, so `cmd`/`repro` output stays machine-consumable by the bash shim.
     for w in plan.get("warnings") or []:
         sys.stderr.write("WARNING: %s\n" % w)
+    for n in plan.get("notices") or []:
+        sys.stderr.write("NOTE: %s\n" % n)
     if action == "cmd":
         print("\n".join(plan["argv"]))
     elif action == "repro":

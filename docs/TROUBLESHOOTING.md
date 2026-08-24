@@ -929,6 +929,12 @@ configured" and falls back to its own default — and the old value is kept unde
 does this automatically and records it in the run log, and `bdtools doctor`
 reports what was removed.
 
+**The grey line on the tool's card after that is a notice, not an error.** It
+says the repair happened; there is nothing to fix. It appears once, on the
+launch that performed it, and is gone from then on — including after a dashboard
+restart. The permanent copy is the `# NOTE:` line at the top of that run's log,
+and doctor's listing of what was removed.
+
 ### Windows browser cannot reach a WSL tool
 
 Full text in the browser: `This site can't be reached` / `ERR_CONNECTION_REFUSED`

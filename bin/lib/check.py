@@ -1707,7 +1707,7 @@ def _manifest_packages():
             pkgs = [pkgs]
         names = []
         for spec in pkgs:
-            name = re.split(r"[=<>]", spec.split("::", 1)[-1], 1)[0].strip()
+            name = re.split(r"[=<>]", spec.split("::", 1)[-1], maxsplit=1)[0].strip()
             if name:
                 names.append(name)
         out[rec.get("name", "")] = names

@@ -49,6 +49,33 @@ cd "${REPO_DIR}"
        This command updates the umbrella repository. A tarball/copy install has
        nothing to pull — re-download it, or clone it with git."
 
+# An interrupted merge comes FIRST, before anything else is judged. This is the
+# state a person is most likely to be in when they reach for this command — they
+# tried the manual stash/pull/pop, it conflicted, and now they are looking for
+# something that will sort it out. Without this check the unmerged file looks
+# like an ordinary card edit (it is under ood/apps/, so it is exempt below),
+# `git stash push` refuses it with "needs merge", and the script reported
+# "could not stash the card edits" — true, and useless.
+unmerged="$(git diff --name-only --diff-filter=U 2>/dev/null || true)"
+if [[ -n "${unmerged}" ]] || [[ -f "$(git rev-parse --git-path MERGE_HEAD 2>/dev/null)" ]]; then
+  msg="this checkout is in the middle of a merge that is not finished."$'\n'
+  if [[ -n "${unmerged}" ]]; then
+    msg+="       Files still holding conflict markers:"$'\n'
+    while IFS= read -r p; do [[ -n "${p}" ]] && msg+="         ${p}"$'\n'; done <<< "${unmerged}"
+  fi
+  msg+="       Finish it before pulling again. In an OOD card, that usually means"$'\n'
+  msg+="       keeping THIS SITE's numbers and the RELEASE's wording — neither half of"$'\n'
+  msg+="       the conflict is complete on its own, so \`git checkout --ours/--theirs\`"$'\n'
+  msg+="       will silently drop one of them. Edit the file, delete the <<<< ==== >>>>"$'\n'
+  msg+="       lines, then:"$'\n'
+  msg+="         git add <file>"$'\n'
+  if git stash list 2>/dev/null | grep -q .; then
+    msg+="         git stash drop        # your pre-pull version, no longer needed"$'\n'
+    msg+="       See that version first with:  git stash show -p"$'\n'
+  fi
+  die "${msg%$'\n'}"
+fi
+
 # Refuse on anything that is NOT site-localized card config, before touching
 # the tree. Named individually: "you have local changes" is not actionable.
 blocking=""
@@ -103,8 +130,11 @@ restore() {
   warn "did not re-apply cleanly. NOTHING IS LOST. Conflicted:"
   while IFS= read -r f; do [[ -n "${f}" ]] && warn "    ${f}"; done \
     < <(git diff --name-only --diff-filter=U 2>/dev/null)
-  warn "  Your version:            git stash show -p"
-  warn "  Edit the file(s) above, keeping the values this site needs, then:"
+  warn "  Keep BOTH halves: this site's numbers (min/max/value/cluster/account)"
+  warn "  and the release's wording. Neither side is complete on its own, so"
+  warn "  git checkout --ours / --theirs will quietly drop one of them."
+  warn "  Your pre-pull version:   git stash show -p"
+  warn "  Then, once the <<<< ==== >>>> lines are gone:"
   warn "      git add <file> && git stash drop"
 }
 trap restore EXIT INT TERM

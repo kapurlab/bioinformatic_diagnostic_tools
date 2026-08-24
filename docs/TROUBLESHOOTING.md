@@ -765,6 +765,38 @@ how a hand-patch disappears.
 git stash push -- ood/apps/bdtools_dashboard/form.yml && git pull && git stash pop
 ```
 
+**If the pop conflicts,** the release changed a line right next to one of yours.
+Three lines of context is all git gets, so a site editing `max:` and a release
+editing the `help:` immediately below it is an overlap even though the two
+changes have nothing to do with each other:
+
+```
+<<<<<<< Updated upstream
+    min: 4
+    max: 1024
+    help: "Shared across all tools in the session. Enforced on Slurm clusters only — advisory on a lab server."
+=======
+    min: 16
+    max: 768
+    help: "Shared across all tools in the session."
+>>>>>>> Stashed changes
+```
+
+Keep **both** halves — this site's numbers and the release's wording:
+
+```
+    min: 16
+    max: 768
+    help: "Shared across all tools in the session. Enforced on Slurm clusters only — advisory on a lab server."
+```
+
+Then `git add ood/apps/bdtools_dashboard/form.yml && git stash drop`.
+
+Do **not** reach for `git checkout --ours` or `--theirs` here. Neither side is
+complete: `--ours` is the release (your floors gone), `--theirs` is your stash
+(the release's change gone). `git stash show -p` prints your pre-pull version if
+you want to see exactly what you had set.
+
 ### A shipped fix does not reach a run
 
 **What it means.** The code that ran is not the version you think it is. Three

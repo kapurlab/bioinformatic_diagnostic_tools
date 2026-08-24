@@ -158,6 +158,24 @@ class UmbrellaPull(unittest.TestCase):
         self.assertTrue(git(self.site, "stash", "list").stdout.strip(),
                         "the site's version must still be recoverable from the stash")
 
+    def test_an_unfinished_merge_is_recognised_for_what_it_is(self):
+        """The state someone is most likely to be in when they reach for this
+        command: they tried the manual stash/pull/pop, it conflicted, and now
+        they want something that sorts it out. The unmerged file is under
+        ood/apps/, so it looks like an ordinary card edit and `git stash push`
+        refuses it with "needs merge" — which this reported as "could not stash
+        the card edits". True, and useless."""
+        (self.site / CARD).write_text(CARD_V1_SITE, encoding="utf-8")
+        self.release(CARD_V2_CLASH)
+        self.assertNotEqual(self.run_pull().returncode, 0)   # leaves the conflict
+        self.assertTrue(git(self.site, "diff", "--name-only", "--diff-filter=U").stdout.strip(),
+                        "precondition: the tree should be mid-conflict")
+        r = self.run_pull()                                   # run it again, as a person would
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("middle of a merge", r.stderr)
+        self.assertIn(CARD, r.stderr)
+        self.assertNotIn("could not stash", r.stderr)
+
     def test_dry_run_changes_nothing(self):
         (self.site / CARD).write_text(CARD_V1_SITE, encoding="utf-8")
         before = git(self.site, "rev-parse", "HEAD").stdout

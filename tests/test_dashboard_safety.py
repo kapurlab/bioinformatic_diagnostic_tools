@@ -7,6 +7,7 @@ import os
 import re
 import stat
 import subprocess
+import sys
 import tempfile
 import unittest
 from types import SimpleNamespace
@@ -29,8 +30,18 @@ REQ = load_module("bdtools_requirements", ROOT / "bin/lib/requirements.py")
 CHECK = load_module("bdtools_check", ROOT / "bin/lib/check.py")
 MANIFEST = load_module("bdtools_manifest", ROOT / "bin/lib/manifest.py")
 SITE = load_module("bdtools_site_paths", ROOT / "bin/lib/site_paths.py")
+# app.py fails CLOSED at import: in OOD mode with an empty session token it
+# raises SystemExit rather than serving an unauthenticated dashboard. That is
+# right for a server and fatal for an importer — SystemExit is not a
+# ModuleNotFoundError, so it sailed past this guard and took the whole module
+# down at COLLECTION on any machine that has the proxy deps installed, i.e.
+# every deployed host. CI never saw it because CI has no starlette and stopped
+# at the ModuleNotFoundError instead. Import through the operator escape hatch
+# app.py documents, and leave BDTOOLS_LOCAL alone so the OOD-mode tests below
+# still test OOD mode. FailClosedImportTests keeps the bypassed gate honest.
 try:
-    APP = load_module("bdtools_dashboard_app", ROOT / "bin/ood_dashboard/app.py")
+    with mock.patch.dict(os.environ, {"BDTOOLS_INSECURE_NO_TOKEN": "1"}):
+        APP = load_module("bdtools_dashboard_app", ROOT / "bin/ood_dashboard/app.py")
     HAS_PROXY_DEPS = True
 except ModuleNotFoundError:
     APP = None
@@ -1016,6 +1027,55 @@ class OpenFileLimitTests(unittest.TestCase):
                       (ROOT / "bin/ood_dashboard/app.py").read_text(encoding="utf-8"))
         # ...and a golden run must use the same limits production launches with.
         self.assertIn("raise_file_limit", (ROOT / "bin/test.sh").read_text(encoding="utf-8"))
+
+
+@unittest.skipUnless(HAS_PROXY_DEPS, "starlette/httpx not installed")
+class FailClosedImportTests(unittest.TestCase):
+    """An empty session token must stop the dashboard, not be waved through.
+
+    Under OOD this dashboard binds a shared node and proxies every tool AS the
+    session owner; the token is the only thing keeping other accounts off it.
+    It arrived empty once already, and "no token" meant "don't check" — every
+    session served unauthenticated, silently. The refusal is the fix, and this
+    module has to bypass it to import app.py at all, so nothing else here can
+    prove it still fires. Run in a subprocess with a clean environment, which
+    is also the only way to observe a SystemExit raised at module scope.
+    """
+
+    def _import(self, env):
+        code = (
+            "import importlib.util, sys\n"
+            f"sys.path.insert(0, {str(ROOT / 'bin/lib')!r})\n"
+            "spec = importlib.util.spec_from_file_location("
+            f"'app', {str(ROOT / 'bin/ood_dashboard/app.py')!r})\n"
+            "m = importlib.util.module_from_spec(spec)\n"
+            "spec.loader.exec_module(m)\n"
+            "print('IMPORTED')\n"
+        )
+        e = dict(os.environ)
+        for k in ("BDTOOLS_LOCAL", "BDTOOLS_INSECURE_NO_TOKEN",
+                  "BDTOOLS_SESSION_TOKEN", "BDTOOLS_SESSION_TOKEN_FILE"):
+            e.pop(k, None)
+        e.update(env)
+        return subprocess.run([sys.executable, "-c", code],
+                              capture_output=True, text=True, env=e, timeout=120)
+
+    def test_ood_mode_without_a_token_refuses_to_start(self):
+        r = self._import({})
+        self.assertNotEqual(r.returncode, 0, r.stdout)
+        self.assertNotIn("IMPORTED", r.stdout)
+        self.assertIn("refusing to start", r.stderr)
+
+    def test_a_token_or_local_mode_or_the_escape_hatch_starts(self):
+        # Three legitimate ways to be authenticated-or-deliberately-open. Each
+        # must import cleanly, or the refusal above is just a broken dashboard.
+        for env in ({"BDTOOLS_SESSION_TOKEN": "s3cret"},
+                    {"BDTOOLS_LOCAL": "1"},
+                    {"BDTOOLS_INSECURE_NO_TOKEN": "1"}):
+            with self.subTest(env=env):
+                r = self._import(env)
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertIn("IMPORTED", r.stdout)
 
 
 if __name__ == "__main__":

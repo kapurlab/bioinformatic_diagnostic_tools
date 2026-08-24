@@ -17,6 +17,9 @@
 #   bdtools check-updates [tool|all]    report newer upstream versions
 #   bdtools update-packages <tool|all>  move a tool's analysis packages (vsnp3,
 #                                       AMRFinderPlus, …) to the newest release
+#   bdtools pull                        update THIS checkout (the CLI, tools.yml,
+#                                       install scripts) — carrying this site's
+#                                       ood/apps/** card edits across the merge
 #   bdtools update  <tool|all> [opts]   move a tool to its latest version
 #   bdtools sync    [tool|all]          move a SITE's shared checkouts (e.g.
 #                    [--toolsdir DIR]   /srv/.../tools) to the manifest pin /
@@ -798,6 +801,8 @@ cmd_dashboard() {
 
 cmd_check_updates() { "${KT_BIN_DIR}/check-updates.sh" "${1:-all}"; }
 
+cmd_pull() { "${KT_BIN_DIR}/pull.sh" "$@"; }
+
 cmd_sync() { "${KT_BIN_DIR}/sync.sh" "$@"; }
 
 # Which analysis package versions are actually in use, per tool, and whether the
@@ -903,6 +908,7 @@ main() {
     update-packages)    cmd_update_packages "$@";;
     update)             cmd_update "$@";;
     sync)               cmd_sync "$@";;
+    pull)               cmd_pull "$@";;
     restore-env)        cmd_restore_env "$@";;
     site-init)          cmd_site_init "$@";;
     setup-databases)    cmd_setup_databases "$@";;

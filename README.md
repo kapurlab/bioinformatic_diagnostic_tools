@@ -478,8 +478,15 @@ Three things update independently — run these from your
 cd bioinformatic_diagnostic_tools   # the folder you installed into
 
 # 1. The checkout itself (the bdtools CLI, tools.yml manifest, install scripts).
-#    `bin/bdtools update` does NOT touch this — pull it yourself:
-git pull
+#    `bin/bdtools update` moves the TOOLS, not this. Use:
+bin/bdtools pull
+#    It is `git pull` plus one thing: it carries this deployment's own
+#    ood/apps/** card edits — your cluster name, account, CPU/memory/walltime
+#    floors — across the merge. Those files are tracked (a fresh clone needs a
+#    working card) and a site is expected to edit them, so a plain `git pull`
+#    aborts with "Your local changes ... would be overwritten by merge" on every
+#    release. A dirty file anywhere ELSE is still refused, by name.
+#    Plain `git pull` keeps working if you would rather handle it yourself.
 
 # 2. The individual tools — each tool repo, moved to its newest tag:
 bin/bdtools check-updates          # report newer upstream versions (read-only).

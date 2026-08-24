@@ -87,6 +87,7 @@ bin/bdtools test <tool>
 | `does not contain necessary file taxo.k2d` (or `opts.k2d` / `hash.k2d`) | kraken2 database incomplete |
 | `Cannot open temporary file ..._00253.bin`, `Could not determine genome size` | Cannot open temporary file (open-file limit) |
 | The same update is offered again and again and never lands | An update is offered repeatedly |
+| `git pull` aborts: "Your local changes to the following files would be overwritten by merge" | git pull refuses over a card edit |
 | A shipped fix does not appear in a run, and every tool reports "up to date" | A shipped fix does not reach a run |
 | A run names `/srv/...` or another site's directory that does not exist here | A run names another site's directory |
 | Windows browser can't reach a tool running in WSL | Windows browser cannot reach a WSL tool |
@@ -707,6 +708,61 @@ a release newer than the one that failed appears.
 
 ```bash
 bin/bdtools update-packages <tool> --to <pkg>=<version>
+```
+
+### git pull refuses over a card edit
+
+Full text:
+
+```
+error: Your local changes to the following files would be overwritten by merge:
+        ood/apps/bdtools_dashboard/form.yml
+Please commit your changes or stash them before you merge.
+Aborting
+```
+
+**What it means.** Not a corrupt checkout, and not a file that should have been
+untracked. `ood/apps/**` holds the OOD cards, which must be in the repo — a
+fresh clone with no card cannot be launched at all — and which a site is
+expected to edit: the cluster name, the account, the CPU/memory/walltime floors
+local policy requires. So the file is both shipped and locally owned, and the
+moment a release touches it, `git pull` stops.
+
+The tool checkouts never hit this, because `bdtools update` knows the rule
+(`common.sh:tool_blocking_edits` exempts `ood/apps/*`, and the updater carries
+those files across the tag checkout). The umbrella is pulled by hand, so nothing
+was applying it here.
+
+**Run this instead of `git pull`:**
+
+```bash
+bin/bdtools pull
+```
+
+**Reading the output.** It names the card files it is carrying, fast-forwards,
+and puts them back:
+
+```
+==> carrying this site's card edits across the pull
+  ood/apps/bdtools_dashboard/form.yml
+==> git fetch
+  ok fast-forwarded to origin/main
+  ok card edits restored
+```
+
+Your values and the release's changes both survive — git merges them, so a site
+changing `min:` and a release changing `help:` two lines away is not a conflict.
+If the release changed the *same* lines, it says so, leaves the conflict in the
+tree with your version still in the stash, and exits non-zero.
+
+A dirty tracked file anywhere outside `ood/apps/**` is refused by name and
+nothing is touched — that is suite code, and a pull silently overwriting it is
+how a hand-patch disappears.
+
+**Doing it by hand** is fine too; this is all the command does:
+
+```bash
+git stash push -- ood/apps/bdtools_dashboard/form.yml && git pull && git stash pop
 ```
 
 ### A shipped fix does not reach a run

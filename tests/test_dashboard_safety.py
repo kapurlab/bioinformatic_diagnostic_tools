@@ -582,15 +582,29 @@ class StateFileTests(unittest.TestCase):
     # There is existing debt, so these are ceilings that may only go DOWN. The
     # legitimate remaining uses are last-resort fallbacks *after* an env var, the
     # tool's own location, and user config have been tried.
+    # Seven tools were swept to zero in the 2026-08-24 release train; the two
+    # non-zero budgets below are not debt, they are the documented exception.
+    # Each names paths this tool RECOGNIZES IN ORDER TO REMOVE, matched as exact
+    # strings, so rewriting them to something portable would stop them matching
+    # and put the stale values back:
+    #   kraken_id_parse_gui  _STALE_DB_DEFAULTS — the literals its own defaults
+    #                        used to be, healed out of configs that inherited
+    #                        them by first-run persistence (see load_config)
+    #   vsnp_gui             refs.py UPSTREAM_SHIPPED_PATHS — the upstream
+    #                        author's own machines' paths, stripped from a fresh
+    #                        install's reference registry, and ONLY when they do
+    #                        not exist here (on his systems they are real)
+    #
+    # A budget with a reason is the intended escape hatch. A permanently-red
+    # guard just teaches people to ignore the suite's own signal.
     _SITE_PATH_BUDGET = {
-        # amr_plus_gui is the reference implementation and is at ZERO: it reads
+        # amr_plus_gui was the reference implementation and is at ZERO: it reads
         # BDTOOLS_SHARED_PROJECTS_ROOT / BDTOOLS_DB_ROOT / BDTOOLS_TOOLS_ROOT,
         # which the launcher resolves from the machine's recorded site config
-        # (bin/lib/site_paths.py). Every other tool should land here too.
-        "amr_plus_gui": 0,
-        "vsnp_gui": 24, "mlst_gui": 2, "kraken_id_parse_gui": 4,
-        "ksnp_gui": 2, "genoflu_gui": 3, "irma_gui": 3, "ncbi_submit_gui": 2,
-        "mhc_gui": 11,
+        # (bin/lib/site_paths.py). Every other tool now lands there too.
+        "amr_plus_gui": 0, "genoflu_gui": 0, "irma_gui": 0, "ksnp_gui": 0,
+        "mhc_gui": 0, "mlst_gui": 0, "ncbi_submit_gui": 0,
+        "kraken_id_parse_gui": 2, "vsnp_gui": 1,
     }
     # Paths under a *named person's* home are never a defensible fallback — that
     # account may not exist, and its home is usually unreadable to everyone else.
@@ -600,10 +614,34 @@ class StateFileTests(unittest.TestCase):
     # paths that vsnp_gui RECOGNIZES IN ORDER TO REMOVE them from a fresh
     # install's reference registry. Matching is by exact string, so rewriting it
     # to something portable would stop it matching and put the author's paths
-    # back in every new Reference Editor. A budget with a reason is the intended
-    # escape hatch here (see mhc_gui); a permanently-red guard just teaches
-    # people to ignore the suite's own signal.
-    _OTHER_HOME_BUDGET = {"mhc_gui": 6, "vsnp_gui": 1}
+    # back in every new Reference Editor.
+    #
+    # mhc_gui used to hold six more. They were not a purge list — they were live
+    # defaults naming one developer's home, which every other account inherited
+    # into its config.json and then could not read. Removed in v0.2.7, budget
+    # with them.
+    _OTHER_HOME_BUDGET = {"vsnp_gui": 1}
+
+    @staticmethod
+    def _is_behind_pin(name, tool_dir):
+        """True when this checkout sits before the tag tools.yml pins."""
+        try:
+            _suite, tools = MANIFEST.parse(str(ROOT / "tools.yml"))
+            pinned = next((t.get("version", "") for t in tools
+                           if t.get("name") == name), "")
+        except Exception:
+            return False
+        if not pinned:
+            return False
+        try:
+            out = subprocess.run(["git", "-C", str(tool_dir), "describe", "--tags", "--always"],
+                                 capture_output=True, text=True, timeout=10)
+        except (OSError, subprocess.SubprocessError):
+            return False
+        if out.returncode != 0:
+            return False
+        installed = out.stdout.strip().split("-")[0]
+        return bool(installed) and installed != pinned
 
     @staticmethod
     def _count_site_paths(tool_dir):
@@ -633,10 +671,20 @@ class StateFileTests(unittest.TestCase):
         ) / "checkouts"
         if not checkouts.is_dir():
             self.skipTest("no installed checkouts on this machine")
-        over, checked = [], []
+        over, checked, stale = [], [], []
         for name, budget in sorted(self._SITE_PATH_BUDGET.items()):
             tool_dir = checkouts / name
             if not (tool_dir / "backend/app").is_dir():
+                continue
+            # A budget describes the code the suite RELEASED. Grading a checkout
+            # that has not been updated yet against the pin's budget reports a
+            # machine that is merely behind as a tool that grew new debt, which
+            # is a false alarm and an unfixable one — the literals it is failing
+            # on are already gone upstream. Being behind has its own signal
+            # (`bdtools check-updates` reports it STALE); this one stays about
+            # the source.
+            if self._is_behind_pin(name, tool_dir):
+                stale.append(name)
                 continue
             checked.append(name)
             n_site, n_home = self._count_site_paths(tool_dir)
@@ -650,7 +698,8 @@ class StateFileTests(unittest.TestCase):
                             f"budget {home_budget} — that account may not exist and "
                             f"its home is usually unreadable to everyone else")
         if not checked:
-            self.skipTest("no tool checkouts to scan")
+            self.skipTest("no tool checkouts to scan"
+                          + (f" (behind the pin, not graded: {', '.join(stale)})" if stale else ""))
         self.assertEqual(over, [], "hard-coded path budgets exceeded:\n  " + "\n  ".join(over))
 
     def test_site_paths_module_contains_no_site_paths(self):

@@ -230,32 +230,102 @@ arch_prefix() {
   return 0
 }
 
-# update_blastdb.pl ships with the `blast` conda package (now in the
-# kraken_id_parse_gui env). Find it there first, then on PATH.
+# update_blastdb.pl ships with the `blast` conda package, which lives in the
+# kraken_id_parse_gui env — the tool that reads this database.
+#
+# The search used to be "<checkout>/env/bin, then PATH". A tool installed as a
+# NAMED conda env (tools.yml declares `env: kraken_id_parse`) has no
+# <checkout>/env at all, so on those machines the whole answer came down to
+# `command -v` — i.e. to whatever the INVOKING shell happened to have activated.
+# From (base) that is a miss, and `setup-databases blast` then told an operator
+# whose kraken_id_parse_gui was installed and healthy to go install it. Their
+# workaround was `conda activate kraken_id_parse` and update_blastdb.pl by hand,
+# which is precisely the work this command exists to do for them (a lab Mac,
+# 2026-08-25).
+#
+# So ask this machine where that env is, in ONE place, so the search below and
+# the advice that follows it can never name different envs:
+#   1. what the LAUNCHER resolves — the env the tool actually runs from;
+#   2. the prefix the build recorded — still true when tool_launch refuses to
+#      speak for a checkout that is gone or half-there;
+#   3. the in-checkout env, the shape this code used to assume was the only one.
+# Empty means this machine has no such env, which is the only state in which
+# "install kraken_id_parse_gui first" is honest advice.
+kraken_env_prefix() {
+  local p
+  p="$(tool_env_prefix kraken_id_parse_gui 2>/dev/null || true)"
+  [[ -n "${p}" ]] && { printf '%s' "${p}"; return 0; }
+  p="$(recorded_env_prefix kraken_id_parse_gui 2>/dev/null || true)"
+  [[ -n "${p}" ]] && { printf '%s' "${p}"; return 0; }
+  p="$(tool_dir kraken_id_parse_gui)/env"
+  [[ -d "${p}" ]] && { printf '%s' "${p}"; return 0; }
+  return 0
+}
+
+# The tool's own env first; PATH is a last resort (a system BLAST+, a module
+# load), never the deciding vote it had become.
 find_update_blastdb() {
-  local kdir; kdir="$(tool_dir kraken_id_parse_gui)"
-  [[ -x "${kdir}/env/bin/update_blastdb.pl" ]] && { echo "${kdir}/env/bin/update_blastdb.pl"; return 0; }
+  local envdir; envdir="$(kraken_env_prefix)"
+  [[ -n "${envdir}" && -x "${envdir}/bin/update_blastdb.pl" ]] && {
+    echo "${envdir}/bin/update_blastdb.pl"; return 0; }
   command -v update_blastdb.pl 2>/dev/null && return 0
   return 1
 }
+
+# What to say when there is no update_blastdb.pl to run. "Install
+# kraken_id_parse_gui first" is true only when the tool has no env on this
+# machine; said to someone whose env is right there, it sends them to reinstall
+# a working tool — which is what the old single message did on every named-env
+# install, because the search, not the install, was what had failed.
+blast_updater_advice() {
+  local envdir; envdir="$(kraken_env_prefix)"
+  if [[ -n "${envdir}" ]]; then
+    warn "kraken_id_parse_gui's env has no update_blastdb.pl: ${envdir}/bin"
+    info "  The tool is installed — its BLAST+ package is not. Add it, then re-run:"
+    info "    bin/bdtools install kraken_id_parse_gui --rebuild"
+  else
+    warn "update_blastdb.pl not found — install kraken_id_parse_gui first (its env ships BLAST), then re-run."
+    info "    bin/bdtools install kraken_id_parse_gui"
+    # Only here: a machine with no such env may still have BLAST+ from a system
+    # package or a module load. Printing this path in the case ABOVE would name
+    # a program that is precisely the thing reported missing.
+    info "  Or, with any BLAST+ of your own on PATH:"
+    info "    mkdir -p ${BLAST_DIR} && cd ${BLAST_DIR} && update_blastdb.pl --decompress ${BLAST_DBNAME}"
+  fi
+}
+
 fetch_blast() {
   if compgen -G "${BLAST_DB}.*" >/dev/null 2>&1; then ok "BLAST DB present: ${BLAST_DB}"; return; fi
-  local ublast; if ! ublast="$(find_update_blastdb)"; then
-    warn "update_blastdb.pl not found — install kraken_id_parse_gui first (its env ships BLAST), then re-run."
-    info "  Or manually:  mkdir -p ${BLAST_DIR} && cd ${BLAST_DIR} && update_blastdb.pl --decompress ${BLAST_DBNAME}"
+  local ublast; if ! ublast="$(find_update_blastdb)"; then blast_updater_advice; return; fi
+  # The env the script resolved from (its bin's parent) — covers both the kraken
+  # env and a PATH hit that happens to live inside some other env; a system
+  # install has no conda-meta and counts as no env at all, staying unpinned and
+  # keeping the caller's PATH.
+  local _envdir _run_path="${PATH}"
+  _envdir="$(dirname "$(dirname "${ublast}")")"
+  [[ -d "${_envdir}/conda-meta" ]] || _envdir=""
+  log "downloading BLAST ${BLAST_DBNAME} (large; tens of GB) -> ${BLAST_DIR}"
+  # Say which copy is about to run: the whole failure this replaced was two
+  # sides disagreeing about where update_blastdb.pl lives, in silence.
+  info "  update_blastdb.pl: ${ublast}${_envdir:+   (env: ${_envdir})}"
+  run mkdir -p "${BLAST_DIR}"
+  # Pin from that env. Prepended as argv, not spliced into a command string.
+  local _archp _arch_cmd=()
+  _archp="$(arch_prefix "${_envdir}")"
+  [[ -n "${_archp}" ]] && read -ra _arch_cmd <<< "${_archp}"
+  # Run it the way an activated env would. update_blastdb.pl is a `#!/usr/bin/env
+  # perl` script, so WHICH perl interprets it — and whether that perl has the
+  # modules it loads — is decided by PATH at exec time, never by the absolute
+  # path we invoke it under. Handing an env script to the base environment's
+  # interpreter is a Can't-locate-in-@INC away from failing for a reason that
+  # has nothing to do with BLAST. Putting the env's bin in front is exactly what
+  # `conda activate` did for the operator who ran this by hand.
+  [[ -n "${_envdir}" ]] && _run_path="${_envdir}/bin:${PATH}"
+  if [[ ${DRY_RUN} -eq 1 ]]; then
+    echo "  [dry-run] (cd ${BLAST_DIR} && ${_envdir:+PATH=${_envdir}/bin:\$PATH }${_archp:+${_archp} }${ublast} --decompress ${BLAST_DBNAME})"
     return
   fi
-  log "downloading BLAST ${BLAST_DBNAME} (large; tens of GB) -> ${BLAST_DIR}"
-  run mkdir -p "${BLAST_DIR}"
-  # Pin from the env the script actually resolved from (its bin's parent) —
-  # covers both the kraken env path and a PATH hit that happens to live inside
-  # some other env; a system install has no conda-meta and stays unpinned.
-  # Prepended as argv, not spliced into a command string.
-  local _archp _arch_cmd=()
-  _archp="$(arch_prefix "$(dirname "$(dirname "${ublast}")")")"
-  [[ -n "${_archp}" ]] && read -ra _arch_cmd <<< "${_archp}"
-  if [[ ${DRY_RUN} -eq 1 ]]; then echo "  [dry-run] (cd ${BLAST_DIR} && ${_archp:+${_archp} }${ublast} --decompress ${BLAST_DBNAME})"; return; fi
-  ( cd "${BLAST_DIR}" && ${_arch_cmd[@]+"${_arch_cmd[@]}"} "${ublast}" --decompress "${BLAST_DBNAME}" ) \
+  ( cd "${BLAST_DIR}" && PATH="${_run_path}" ${_arch_cmd[@]+"${_arch_cmd[@]}"} "${ublast}" --decompress "${BLAST_DBNAME}" ) \
     || die "update_blastdb.pl failed for ${BLAST_DBNAME}"
   ok "BLAST DB ready: ${BLAST_DB}"
 }

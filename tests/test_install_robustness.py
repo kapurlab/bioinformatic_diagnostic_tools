@@ -1719,3 +1719,126 @@ class EnvPrefixPreflightTests(unittest.TestCase):
             self.assertIn("free space", out)          # the other mkdir failure
             self.assertIn("chmod u+w", out)           # a mode this user can fix
             self.assertIn("chown", out)               # or an owner that needs sudo
+
+
+class BlastUpdaterResolutionTests(unittest.TestCase):
+    """`setup-databases blast` looked for update_blastdb.pl at <checkout>/env/bin
+    and then on the INVOKING SHELL'S PATH.
+
+    A tool installed as a named conda env (tools.yml declares
+    `env: kraken_id_parse`) has no <checkout>/env, so on those machines the whole
+    search came down to what the operator happened to have activated. From
+    (base) it missed, and the command told someone whose kraken_id_parse_gui was
+    installed and healthy — doctor green, `bdtools doctor` reporting its programs
+    on PATH — to go install it. The workaround was `conda activate
+    kraken_id_parse` + update_blastdb.pl by hand: exactly the work this command
+    exists to do (a lab Mac, 2026-08-25).
+
+    No conda and no network: the env is a directory with conda-meta records and
+    stub programs, reached through the env-prefix record a build leaves behind,
+    and the download is only ever inspected in --dry-run.
+    """
+
+    SETUP = ROOT / "bin/setup-databases.sh"
+    # A PATH with no update_blastdb.pl on it — the (base) shell of the report.
+    BARE_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
+
+    def fake_env(self, td, name="kraken_id_parse", subdir="osx-arm64",
+                 with_blast=True, record=True):
+        """A conda env this machine "built": conda-meta records, a python (which
+        is what makes the recorded prefix credible), and BLAST's perl script."""
+        env = Path(td) / "envs" / name
+        (env / "conda-meta").mkdir(parents=True)
+        (env / "conda-meta" / "blast-2.16.0-h0_0.json").write_text(
+            '{\n  "build": "h0_0",\n  "name": "blast",\n  "subdir": "%s"\n}\n' % subdir)
+        write(env / "bin" / "python", "#!/bin/sh\nexit 0\n", 0o755)
+        if with_blast:
+            write(env / "bin" / "update_blastdb.pl",
+                  "#!/usr/bin/env perl\nprint \"ran\\n\";\n", 0o755)
+        if record:
+            write(Path(td) / "home" / "env-prefix" / "kraken_id_parse_gui",
+                  str(env) + "\n")
+        return env
+
+    def run_setup(self, td, path=None):
+        e = dict(os.environ)
+        e.pop("DRY_RUN", None)
+        e["BDTOOLS_HOME"] = str(Path(td) / "home")     # never the real one
+        e["PATH"] = self.BARE_PATH if path is None else path
+        (Path(td) / "db").mkdir(exist_ok=True)
+        r = subprocess.run(["bash", str(self.SETUP), "--root", str(Path(td) / "db"),
+                            "--dry-run", "blast"],
+                           capture_output=True, text=True, env=e, timeout=180)
+        return r, r.stdout + r.stderr
+
+    def test_a_named_conda_env_is_found_without_activating_anything(self):
+        with tempfile.TemporaryDirectory() as td:
+            env = self.fake_env(td)
+            r, out = self.run_setup(td)
+            self.assertEqual(r.returncode, 0, out)
+            self.assertIn(str(env / "bin" / "update_blastdb.pl"), out,
+                          "the env's copy must be found from a shell that has "
+                          "nothing activated; got:\n" + out)
+            self.assertNotIn("not found", out)
+
+    def test_the_env_it_will_run_is_stated(self):
+        """Two sides disagreeing about where update_blastdb.pl lives, in silence,
+        is the whole failure. Say which copy runs."""
+        with tempfile.TemporaryDirectory() as td:
+            env = self.fake_env(td)
+            _, out = self.run_setup(td)
+            self.assertIn("update_blastdb.pl: " + str(env / "bin" / "update_blastdb.pl"), out)
+            self.assertIn("(env: %s)" % env, out)
+
+    def test_it_runs_with_the_envs_bin_in_front_of_path(self):
+        """update_blastdb.pl is `#!/usr/bin/env perl`: which perl interprets it is
+        decided by PATH at exec time, not by the absolute path we invoke. Calling
+        it by full path from (base) hands an env script to a stranger's
+        interpreter — the module errors that follow say nothing about BLAST."""
+        with tempfile.TemporaryDirectory() as td:
+            env = self.fake_env(td)
+            _, out = self.run_setup(td)
+            self.assertIn("PATH=%s/bin:$PATH" % env, out,
+                          "the run must prepend the env's bin — that is what "
+                          "`conda activate` was doing by hand; got:\n" + out)
+
+    @unittest.skipUnless(sys.platform == "darwin", "arch pinning is macOS-only")
+    def test_the_pin_comes_from_the_resolved_envs_conda_meta(self):
+        with tempfile.TemporaryDirectory() as td:
+            self.fake_env(td, subdir="osx-64")
+            _, out = self.run_setup(td)
+            self.assertIn("/usr/bin/arch -x86_64", out)
+
+    def test_a_path_copy_never_outranks_the_tools_own_env(self):
+        """The old order made PATH decisive whenever <checkout>/env was absent —
+        i.e. on every named-env install. It is the last resort, not the first."""
+        with tempfile.TemporaryDirectory() as td:
+            env = self.fake_env(td)
+            other = Path(td) / "elsewhere"
+            write(other / "update_blastdb.pl", "#!/bin/sh\nexit 0\n", 0o755)
+            _, out = self.run_setup(td, path="%s:%s" % (other, self.BARE_PATH))
+            self.assertIn(str(env / "bin" / "update_blastdb.pl"), out)
+            self.assertNotIn(str(other / "update_blastdb.pl"), out)
+
+    def test_an_env_without_blast_is_told_apart_from_a_missing_tool(self):
+        """"Install kraken_id_parse_gui first" is honest only when the tool has no
+        env here. Said to someone whose env is right there, it sends them to
+        reinstall a working tool — the search, not the install, is what failed."""
+        with tempfile.TemporaryDirectory() as td:
+            env = self.fake_env(td, with_blast=False)
+            _, out = self.run_setup(td)
+            self.assertIn(str(env / "bin"), out)
+            self.assertIn("--rebuild", out)
+            self.assertNotIn("install kraken_id_parse_gui first", out)
+
+    def test_no_env_at_all_still_says_install_the_tool(self):
+        with tempfile.TemporaryDirectory() as td:
+            (Path(td) / "home").mkdir()
+            _, out = self.run_setup(td)
+            self.assertIn("install kraken_id_parse_gui first", out)
+            # and the fallback recipe stays bare: there is no env path to name.
+            self.assertIn("update_blastdb.pl --decompress ref_prok_rep_genomes", out)
+
+
+if __name__ == "__main__":
+    unittest.main()

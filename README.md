@@ -321,12 +321,21 @@ python3 bin/lib/db_config.py kraken --kraken-db ~/databases/kraken2/k2_standard_
 
 **BLAST databases + taxonomy** (kraken_id_parse_gui → config key `blast_db`).
 BLAST DBs come from NCBI via `update_blastdb.pl`, which ships in the
-kraken_id_parse_gui conda env (the `blast` package). **First list what's
-available to download:**
+kraken_id_parse_gui conda env (the `blast` package). For the default DB
+(`ref_prok_rep_genomes`) there is nothing to do by hand — `bin/bdtools
+setup-databases blast` finds that env itself and runs the download from any
+shell, with nothing activated. The recipe below is for the other cases: picking
+a different DB, or staging one on storage of your own.
+
+**First list what's available to download.** That env is `<checkout>/env` on
+some installs and a named conda env (`kraken_id_parse`) on others, so take
+whichever exists here:
 
 ```bash
-# the env's copy (or `conda activate kraken_id_parse` first, then just update_blastdb.pl):
 UB=~/.local/share/bdtools/checkouts/kraken_id_parse_gui/env/bin/update_blastdb.pl
+[ -x "$UB" ] || UB="$(conda info --base 2>/dev/null)/envs/kraken_id_parse/bin/update_blastdb.pl"
+PATH="$(dirname "$UB"):$PATH"   # a `#!/usr/bin/env perl` script needs its OWN env's
+                                # perl — that is all `conda activate` was doing here
 "$UB" --showall pretty          # every downloadable NCBI BLAST DB, with sizes + descriptions
 ```
 

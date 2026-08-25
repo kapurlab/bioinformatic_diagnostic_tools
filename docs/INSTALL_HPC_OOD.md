@@ -536,10 +536,13 @@ ls $SITE_ROOT/databases/kraken2/k2_standard_08gb/hash.k2d
 ```
 
 ```bash
-# BLAST ref_prok_rep_genomes (update_blastdb.pl ships in any tool env with BLAST+)
+# BLAST ref_prok_rep_genomes (update_blastdb.pl ships in any tool env with BLAST+).
+# `sudo env PATH=...`, not a bare sudo: the script is `#!/usr/bin/env perl`, and
+# sudo's secure_path would hand it the system perl instead of its own env's.
 sudo mkdir -p $SITE_ROOT/databases/blast
 cd $SITE_ROOT/databases/blast
-sudo $TOOLS_ROOT/kraken_id_parse_gui/env/bin/update_blastdb.pl \
+sudo env PATH="$TOOLS_ROOT/kraken_id_parse_gui/env/bin:$PATH" \
+  $TOOLS_ROOT/kraken_id_parse_gui/env/bin/update_blastdb.pl \
   --decompress ref_prok_rep_genomes
 ```
 

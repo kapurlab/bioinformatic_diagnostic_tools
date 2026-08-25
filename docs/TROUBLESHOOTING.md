@@ -85,6 +85,7 @@ bin/bdtools test <tool>
 | `post-link script failed for package`, `CONDA_BACKUP_AR: unbound variable` | post-link script failed |
 | `No valid AMRFinder database is found`, `The BLAST database for AMRProt was not found` | No valid AMRFinder database |
 | `does not contain necessary file taxo.k2d` (or `opts.k2d` / `hash.k2d`) | kraken2 database incomplete |
+| `update_blastdb.pl not found — install kraken_id_parse_gui first`, when it already is | update_blastdb.pl not found |
 | `Cannot open temporary file ..._00253.bin`, `Could not determine genome size` | Cannot open temporary file (open-file limit) |
 | The same update is offered again and again and never lands | An update is offered repeatedly |
 | `git pull` aborts: "Your local changes to the following files would be overwritten by merge" | git pull refuses over a card edit |
@@ -644,6 +645,37 @@ bin/bdtools setup-databases kraken
 
 If the path belongs to another machine, clear it in the tool's Settings page
 first — a stored value always beats the one this machine would have derived.
+
+### update_blastdb.pl not found
+
+**What it means.** `bin/bdtools setup-databases blast` could not find the
+program that downloads BLAST databases, and said so by telling you to install
+kraken_id_parse_gui — the tool whose conda env ships it. If that tool IS
+installed (`bin/bdtools doctor kraken_id_parse_gui` green, its programs on
+PATH), the install is not what failed: the search was.
+
+Up to 2026-08-25 that search looked in `<checkout>/env/bin` and then on the
+**invoking shell's PATH**. A tool installed as a *named* conda env — `tools.yml`
+declares `env: kraken_id_parse`, and that is the normal shape on a machine whose
+tools were built into a conda base — has no `<checkout>/env` at all, so the
+answer came down to whatever the operator had activated. From `(base)`: nothing.
+The workaround was `conda activate kraken_id_parse` and running
+`update_blastdb.pl` by hand, which is the entire job the command exists to do.
+
+**The fix.** Update this checkout — `setup-databases` now resolves that env the
+same way the launcher does, states which copy it is about to run, and puts that
+env's `bin` in front of PATH so the script gets its own perl:
+
+```bash
+bin/bdtools pull
+bin/bdtools setup-databases blast
+```
+
+**If it still says it cannot find it**, read which of the two messages you get.
+Naming an env (`kraken_id_parse_gui's env has no update_blastdb.pl: …/bin`) means
+the tool is installed and its BLAST+ package is not — add it with `bin/bdtools
+install kraken_id_parse_gui --rebuild`. Only the message that names no env means
+the tool really is missing here.
 
 ### Cannot open temporary file (open-file limit)
 

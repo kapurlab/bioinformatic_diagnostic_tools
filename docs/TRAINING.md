@@ -14,15 +14,17 @@ on its own, so you can jump to the tool you need.
 |---|---|---|---|
 | 1 | **IRMA** | Assemble influenza genomes from raw reads and read the QC report | Influenza A reads |
 | 2 | **GenoFLU** | Genotype an assembled H5 influenza genome (clade 2.3.4.4b) | IRMA output from Module 1 |
-| 3 | **vSNP3 (intro)** | Learn the two-step SNP workflow on *M. tuberculosis*/*M. bovis* | TB reads |
-| 4 | **vSNP3 (phylogeny)** | Build a SNP tree across the whole *M. tuberculosis* complex | MTBC lineage panel |
-| 5 | **AMRFinderPlus** | Find antimicrobial-resistance genes in a bacterial isolate | *Pasteurella*, *E. coli* reads |
-| 6 | **MLST** | Assign a sequence type (ST) to an isolate | *Pasteurella* reads |
-| 7 | **kSNP** | Build a reference-free SNP tree from finished genomes | MTBC genome accessions |
+| 3 | **Kraken ID-Parse** | See what is really in a sample, then extract one taxon's reads | TB reads, clean and contaminated |
+| 4 | **vSNP3 (intro)** | Learn the two-step SNP workflow on *M. tuberculosis*/*M. bovis* | TB reads |
+| 5 | **vSNP3 (phylogeny)** | Build a SNP tree across the whole *M. tuberculosis* complex | MTBC lineage panel |
+| 6 | **AMRFinderPlus** | Find antimicrobial-resistance genes in a bacterial isolate | *Pasteurella*, *E. coli* reads |
+| 7 | **MLST** | Assign a sequence type (ST) to an isolate | *Pasteurella* reads |
+| 8 | **kSNP** | Build a reference-free SNP tree from finished genomes | MTBC genome accessions |
 
-> ⏱ **Time:** Modules 1, 5, 6, 7 take ~10–30 min each. vSNP3 (Modules 3–4)
-> takes longer because it aligns every read — budget an hour, most of it
-> unattended while the job runs.
+> ⏱ **Time:** Modules 1, 3, 6, 7, 8 take ~10–30 min each — plus another hour if
+> you run Module 3's optional BLAST part. vSNP3 (Modules 4–5) takes longer
+> because it aligns every read — budget an hour, most of it unattended while the
+> job runs.
 
 ---
 
@@ -52,22 +54,26 @@ open while you work.**
 > cards in your institution's OOD portal instead. The in-tool steps below are
 > identical.
 
-### A.2 Two tools need reference databases first
+### A.2 Three tools need reference databases first
 
-Most tools are ready to go. Two need a one-time database download:
+Most tools are ready to go. Three need a one-time database download:
 
 | Tool | Needs | Set up with |
 |---|---|---|
-| **vSNP3** (Modules 3–4) | vSNP3 reference set | `bin/bdtools setup-databases vsnp-refs vsnp-deps` |
-| **AMRFinderPlus** (Module 5) | **AMRFinderPlus database** *(required — the conda package ships the program only)* | `bin/bdtools setup-databases amrfinder` |
-| **AMRFinderPlus** (Module 5) | Kraken2 DB *(only for automatic organism detection — optional)* | `bin/bdtools setup-databases kraken` |
+| **Kraken ID-Parse** (Module 3) | **Kraken2 DB** *(required)* | `bin/bdtools setup-databases kraken` |
+| **Kraken ID-Parse** (Module 3) | BLAST DB *(only for the full BLAST mode — optional)* | `bin/bdtools setup-databases blast` |
+| **vSNP3** (Modules 4–5) | vSNP3 reference set | `bin/bdtools setup-databases vsnp-refs vsnp-deps` |
+| **AMRFinderPlus** (Module 6) | **AMRFinderPlus database** *(required — the conda package ships the program only)* | `bin/bdtools setup-databases amrfinder` |
+| **AMRFinderPlus** (Module 6) | Kraken2 DB *(only for automatic organism detection — optional)* | `bin/bdtools setup-databases kraken` |
 
-Run those before the relevant module. If you skip the Kraken2 DB, AMRFinderPlus
-still works — you just pick the organism by hand. The **AMRFinderPlus database
-is not optional**: without it the run finishes, writes a report, and contains no
-AMR calls (`amrfinder` exits 1 with `No valid AMRFinder database is found`). If a
-tool card shows a **"needs setup"** badge, that's what it's telling you, and
-`bin/bdtools doctor amr_plus_gui` names which database is missing.
+Run those before the relevant module. The Kraken2 DB is shared: set it up once
+and both Kraken ID-Parse and AMRFinderPlus use it. If you skip it, AMRFinderPlus
+still works — you just pick the organism by hand — but Kraken ID-Parse cannot run
+at all without it. The **AMRFinderPlus database is not optional** either: without
+it the run finishes, writes a report, and contains no AMR calls (`amrfinder`
+exits 1 with `No valid AMRFinder database is found`). If a tool card shows a
+**"needs setup"** badge, that's what it's telling you, and `bin/bdtools doctor
+amr_plus_gui` names which database is missing.
 
 > Check anything at any time with `bin/bdtools doctor` — it lists each tool, what
 > it needs, and the exact command to fix a gap.
@@ -278,7 +284,250 @@ that IRMA produced. This is the pattern you'd use for genomes assembled elsewher
 
 ---
 
-## Module 3 — vSNP3: the two-step SNP workflow (introduction)
+## Module 3 — Kraken ID-Parse: what is actually in this sample?
+
+**What it does.** Kraken2 labels **every read** with a taxon by matching its
+k-mers against a database of known genomes. This tool wraps that in the three
+jobs a diagnostic lab actually has:
+
+1. **Identify** — classify the reads and draw an interactive **Krona** chart of
+   everything found. It answers *"what is in this tube?"* without you having to
+   assume the answer first.
+2. **Parse** — extract only the reads belonging to a **target taxon** (and
+   everything below it in the taxonomy) and leave them as clean `FASTQ.gz`. That
+   is a **decontaminated sample** you can re-run through vSNP3, IRMA, or anything
+   else in the suite.
+3. **Identify by BLAST** — assemble those parsed reads, BLAST the contigs for a
+   species-level call, and build coverage charts against the best-matching
+   reference genomes.
+
+**Input.** Paired FASTQ reads — upload, **Link**, or **SRA Download**, exactly as
+in Part A.3. (This tool's SRA box also accepts **SRX / SRS / PRJNA** accessions
+and expands them to their runs.)
+
+**Why it comes before vSNP3.** Every reference-based tool assumes it already knows
+what the organism is. When mapping is poor, or a submitter's label looks wrong,
+this is the tool that tells you what you actually sequenced — and hands back
+cleaned reads so the run can go ahead. Module 4 uses it exactly that way.
+
+### Before you begin — databases
+
+| Mode you want to run | Needs | Set up with |
+|---|---|---|
+| Kraken + Krona only, and Kraken + parse | **Kraken2 database** *(required)* | `bin/bdtools setup-databases kraken` |
+| Kraken + parse + BLAST | also a **BLAST database** | `bin/bdtools setup-databases blast` |
+
+`setup-databases kraken` downloads **`k2_standard_08gb`** (~8 GB) and points the
+tool at it for you. `setup-databases blast` stages NCBI's
+**`ref_prok_rep_genomes`** (representative *prokaryote* genomes, tens of GB) —
+only needed for the full BLAST mode, so skip it for now if you're just screening.
+Check either at any time with `bin/bdtools doctor kraken_id_parse_gui`.
+
+### Choosing and adding a Kraken2 database
+
+**Kraken can only report what is in its database.** Anything not represented comes
+back as *unclassified* — or, worse, as the nearest relative that *is* in there. So
+the database is a scientific choice, not an install detail. Prebuilt indexes are
+published at **<https://benlangmead.github.io/aws-indexes/k2>** (that page lists
+each index's current size and build date):
+
+| Index family | Contains | Pick it when… |
+|---|---|---|
+| **Viral** | viruses only (< 1 GB) | you only care about viral content and want it fast |
+| **Standard-8 / Standard-16** *(the suite's default is Standard-8)* | the Standard content, capped to fit 8 or 16 GB | you're on a laptop or a modest VM |
+| **Standard** | archaea, bacteria, viral, plasmid, **human**, UniVec_Core (tens of GB) | you have the RAM and want the uncapped index |
+| **PlusPF / PlusPFP** | Standard **+ protozoa + fungi** (PFP adds plants) | your targets include protozoa or fungi — e.g. the **Apicomplexa** taxon in the dropdown |
+| **core_nt** | very broad nucleotide collection (hundreds of GB) | a server-class machine, and you need maximum breadth |
+
+> 🧠 **RAM is the real constraint.** Kraken2 loads its index into memory, so plan
+> on needing **about as much RAM as the index is big**. That is why the capped
+> Standard-8 build is the suite's default — it runs on a laptop.
+
+> ⚠️ **Two consequences worth knowing before you read your first chart.**
+> **(1)** The Standard family has **no protozoa and no fungi** — a *Theileria* or
+> *Aspergillus* sample screened against Standard-8 looks mostly unclassified.
+> Use **PlusPF** for those. **(2)** It contains **human but no livestock
+> genomes**, so **bovine host reads mostly land in "unclassified"** rather than
+> being named. A large unclassified fraction in a veterinary sample is usually
+> host DNA, not a failed run.
+
+**To add another index**, download and unpack it (its folder must contain
+`hash.k2d`, `opts.k2d` and `taxo.k2d` — Kraken2 reads all three), then either:
+
+- **in the GUI** — **Settings → Kraken2 databases**, paste the folder path (or
+  **Browse…**), click **+ Add**, then **Use this database** and **Save &
+  Refresh**; or
+- **from the umbrella repo** —
+  ```bash
+  python3 bin/lib/db_config.py kraken --kraken-db /path/to/kraken2/k2_pluspf
+  ```
+
+Saved databases then appear in the **Kraken2 DB path** dropdown in the run panel,
+so switching index for a single run is one click — and the vSNP GUI reads the same
+list when it launches a Kraken run.
+
+### The three run modes — the concept to learn here
+
+You pick one **Run mode** card before every run. They are cumulative: each does
+everything the one above it does, and more.
+
+| Run mode | Needs | Leaves you with | Roughly |
+|---|---|---|---|
+| **Kraken + Krona only** | Kraken2 DB | Krona chart + the top-taxon verdict. No target taxon needed. | a few min/sample |
+| **Kraken + parse reads** | + a **target taxon** | the target's reads as `FASTQ.gz`, a statistics workbook and a run report | a few min more |
+| **Kraken + parse + BLAST** | + a **BLAST DB** | assembly, a BLAST species call, coverage charts, the full report | budget most of an hour |
+
+### The data
+
+```
+Accession	Why this one
+SRR28623786	M. tuberculosis complex isolate — the sample the suite validates this tool against
+SRR1173725	One of the poor-mapping TB samples from Module 4 — here you see what else is in it
+```
+
+*Two samples of the same declared organism: one clean, one that vSNP3 struggles
+with. Reading them side by side is the whole point of this module.*
+
+### Part 1 — Identify: what is in the tube?
+
+1. *(First-time only)* `bin/bdtools setup-databases kraken`.
+2. **Launch** **Kraken ID-Parse** from the dashboard — its card reads **Kraken ID
+   / Parse**. Create a project — e.g. `kraken_training`. (Projects are shared with
+   vSNP3, so this one will be visible there too.)
+3. **Inputs → SRA Download** → paste both accessions → **Download**.
+4. Expand the project and **check** both samples.
+5. In **Configure & Run**, choose the **Kraken + Krona only** mode card. Leave
+   **Target Taxon** alone — this mode doesn't use it.
+6. Confirm **Kraken2 DB path** is filled in (it is, if `setup-databases` ran).
+7. Click **▶ Run selected (2)**.
+
+### How to read the identification
+
+The **Results** table gives you the verdict per sample:
+
+| Column | What it tells you |
+|---|---|
+| **Top taxon** / **%** | The highest-scoring **species-rank** row of the Kraken report, and its share of reads. |
+| **Runner-up** | The second species, with its share — *this is your contamination column.* |
+| **Status** | pass / review / fail, with the reason behind the chip. |
+| **Open** | **📊 Krona** — the interactive chart. (**📄 Report** appears for the parse and BLAST modes; a Kraken-only run stops at the chart.) |
+| **Files** | Expands to the run's output files — everything lands in `<project>/kraken/<sample>/`. |
+
+**Open the 📊 Krona chart.** It is a zoomable ring: the centre holds all the
+reads, and each ring outwards is one rank deeper (domain → phylum → … →
+species). **Click a wedge to zoom into it**; click the centre, or the lineage
+breadcrumb at the top, to come back out. Wedge size *is* the read proportion — a
+contaminant is a wedge that has no business being there.
+
+**What you should see:**
+
+- **`SRR28623786`** — one dominant *Mycobacterium* wedge (~96% of reads). A clean
+  isolate looks like this: one big wedge, a thin rim of noise.
+- **`SRR1173725`** — a busier chart: the target is there, but it shares the
+  space. What else shows up is the likely reason vSNP3 maps this one poorly, and
+  the **Runner-up** column names the biggest of them.
+
+> 🔎 **Teaching point — read the complex, not the species.** For MTBC the
+> *species* row is misleading: *M. tuberculosis*, *M. bovis*, *M. orygis* and the
+> rest are near-identical, so Kraken splits reads across all of them and no single
+> species looks dominant. The suite's own validation asserts the **genus**
+> (~96% *Mycobacterium*) for exactly this reason. Zoom out one ring in Krona and
+> judge at the **complex/genus** level; use vSNP3 or MLST when you need the member.
+
+> 💡 **Unclassified is information too.** A high unclassified fraction is normal
+> for veterinary samples (no livestock genomes in the Standard index) and for
+> targets your index doesn't cover — see the database table above. It is not, by
+> itself, a failed run.
+
+### Part 2 — Parse: extract the target's reads
+
+Now clean up `SRR1173725` so vSNP3 can use it.
+
+1. Same project. Uncheck `SRR28623786` and leave **`SRR1173725`** checked, then
+   choose the **Kraken + parse reads** mode card.
+2. In **Target Taxon**, select **`Mycobacterium tuberculosis complex`**. The
+   dropdown is a shared list — if the taxon you need isn't there, type it into
+   **Add a new taxon to the list…** and click **+ Add**. It must match the name
+   Kraken reports **exactly**; new entries are saved to this install's
+   `config/taxa.yaml` and show up in the vSNP GUI too.
+3. Click **▶ Run selected (1)**.
+
+**What you get**, in `<project>/kraken/<sample>/`:
+
+- **`<sample>_<taxon>_R1.fastq.gz` / `_R2.fastq.gz`** — the parsed reads: the
+  target taxon **and its children**, everything else dropped. These are the
+  deliverable of this mode.
+- **Run statistics workbook** (`*_stats.xlsx`) and **Report HTML/PDF** — input read
+  QC (read counts, % passing Q30, mean quality, average length), the taxon and
+  **Taxon ID**, total input reads, **extracted reads** and the **extraction rate
+  (%)**, plus the classification summary.
+- **Bracken results workbook** — abundance re-estimation. *Linux and OOD only:*
+  Bracken has no macOS build, so on a Mac the run prints a warning, skips it, and
+  carries on.
+
+The number to look at is the **extraction rate** — what fraction of the input
+reads belonged to your target. A sample that is only partly target comes back as a
+smaller but much cleaner FASTQ pair, which is exactly why its mapping improves on
+the re-run.
+
+> ⚠️ **If the taxon isn't found**, the run stops cleanly and says so: the workbook
+> records `Extracted Reads: No Reads Found` and the sample is flagged in Results.
+> Nine times out of ten the name doesn't match what Kraken reports — check the
+> spelling against the Krona chart.
+
+**Hand the parsed reads to vSNP3.** Both tools see the same project folder, so in
+the vSNP GUI you can **Import → Step 1** the parsed reads and re-run alignment on
+them. Module 4 does this from the other direction — launching this same parse from
+a vSNP3 Step 1 Results row, without leaving vSNP.
+
+### Part 3 — Identify by BLAST (optional; needs the BLAST database)
+
+Use this when the read-level call is not enough — an unknown isolate, or a
+species-level answer you want to see evidence for.
+
+1. *(First-time only)* `bin/bdtools setup-databases blast`.
+2. Check **`SRR28623786`**, choose the **Kraken + parse + BLAST** mode card, keep
+   the target taxon, and confirm **BLAST DB path** points at
+   `…/blast/ref_prok_rep_genomes`.
+3. Click **▶ Run selected (1)** and expect it to take a while — it assembles,
+   BLASTs, downloads the top reference sequences, and aligns your reads back to
+   them.
+
+Extra outputs in the **Files** cell:
+
+| File | What it is |
+|---|---|
+| **BLAST summary** | Top hits for each contig — accession, % identity, bit score, organism. The species call and its evidence. |
+| **De novo assembly FASTA** | The contigs assembled from the parsed reads. |
+| **Reference-guided FASTA** | The consensus built by mapping the original reads back to the best-matching reference. |
+| **Coverage & Variants (interactive)** | Coverage across each reference with variants marked — open this one first. |
+| **Coverage graph PDF** | The same coverage, print-ready for a report. |
+| **Report HTML / PDF** | Everything above in one document: read QC, extraction, assembly stats (contigs, longest contig, N50, mean coverage), the BLAST table and the coverage figures. |
+
+**How to judge it:** a confident identification is a **high-identity BLAST hit
+covered evenly across the reference**. Patchy coverage with a high identity
+usually means only part of the organism is present (or too few reads); even
+coverage at mediocre identity means the true organism isn't in the database and
+you're seeing its nearest relative.
+
+> ⚠️ **Match the BLAST database to the target.** `ref_prok_rep_genomes` holds
+> *prokaryotes* — it can identify the MTBC sample above, but it cannot identify a
+> virus. For viral targets stage a database that contains them (e.g. `core_nt`)
+> and select it in **BLAST DB path**. The pipeline also carries taxon-specific
+> logic for some targets — an **Orbivirus** run, for example, goes on to separate
+> **bluetongue virus** from **epizootic hemorrhagic disease virus** and orders the
+> coverage by segment.
+
+> 🔎 **Teaching point — three tools, three kinds of answer.** Kraken answers
+> *"what is in here?"* from reads, in minutes, across everything in its database.
+> BLAST answers *"which species, and how good is the match?"* from an assembly.
+> vSNP3 and kSNP answer *"how are these isolates related?"* — but only once you
+> already know what they are. Screening first is what keeps the later answer
+> honest.
+
+---
+
+## Module 4 — vSNP3: the two-step SNP workflow (introduction)
 
 **What it does.** vSNP3 (USDA) is the suite's high-resolution SNP tool for
 bacteria and viruses. It answers *"how closely related are these isolates?"* —
@@ -355,7 +604,9 @@ Exclusions** — Step 2 will automatically leave those samples out.
 In this dataset **`SRR1173725`** and **`SRR998630`** map poorly to the reference.
 Low mapping usually means **contaminated reads** — host DNA or other bacteria
 mixed in with the target. Rather than discard the samples, clean them and try
-again:
+again. This is [Module 3](#module-3--kraken-id-parse-what-is-actually-in-this-sample)'s
+parse step, launched from inside vSNP so you never leave Step 1 — run it there
+first if you want to *see* what the contamination is before removing it:
 
 1. From the Step 1 Results row for a low-mapping sample, run **Kraken** on it.
    Choose **Parse reads only (skip BLAST)** and select the target taxon
@@ -408,12 +659,12 @@ again:
 
 ---
 
-## Module 4 — vSNP3: a whole-complex phylogeny
+## Module 5 — vSNP3: a whole-complex phylogeny
 
 Now scale up. This module builds a tree spanning the **entire *M. tuberculosis*
 complex** — every human lineage plus the animal-adapted members (*M. bovis*,
 *M. caprae*, *M. orygis*, *M. microti*, and more). It's the same Step 1 → Step 2
-workflow as Module 3, just with a broader, labeled panel so you can *see* the
+workflow as Module 4, just with a broader, labeled panel so you can *see* the
 lineage structure in the tree.
 
 ### The data — MTBC representation panel
@@ -490,7 +741,7 @@ ERR266120	M. canettii
 
 ### Steps
 
-Identical to Module 3:
+Identical to Module 4:
 
 1. New project — e.g. `MTBC_phylogeny`.
 2. **SRA Download** → paste your chosen accessions → **Download**.
@@ -533,7 +784,7 @@ lineage — the columns of SNPs that all Lineage-2 samples share, for instance.
 
 ---
 
-## Module 5 — AMRFinderPlus: antimicrobial-resistance genes
+## Module 6 — AMRFinderPlus: antimicrobial-resistance genes
 
 **What it does.** AMRFinderPlus (NCBI) scans a bacterial genome for **acquired
 resistance genes** and **resistance-conferring point mutations**. The GUI adds two
@@ -546,7 +797,7 @@ reads.
 
 ### The data
 
-Two isolates — put both in one project, or one each. The *Pasteurella* isolate is reused for MLST in Module 6.
+Two isolates — put both in one project, or one each. The *Pasteurella* isolate is reused for MLST in Module 7.
 
 ```
 Accession	Organism
@@ -614,7 +865,7 @@ one professional document, styled to match the suite's other tool reports.
 
 ---
 
-## Module 6 — MLST: assign a sequence type
+## Module 7 — MLST: assign a sequence type
 
 **What it does.** MLST (Multi-Locus Sequence Typing) reads the alleles at a fixed
 set of ~7 housekeeping genes and looks up the combination in the PubMLST database
@@ -624,7 +875,7 @@ Identical STs across isolates suggest they're the same clone.
 **Input.** Raw reads (assembled for you) or an assembled genome. It **auto-detects
 the scheme** — you don't tell it the species.
 
-### The data — same isolate as Module 5
+### The data — same isolate as Module 6
 
 ```
 Accession	Organism
@@ -632,7 +883,7 @@ SRR28320745	Pasteurella multocida
 ```
 
 Reusing the *Pasteurella* isolate lets you see two tools describe one organism:
-its **resistance genes** (Module 5) and its **strain type** (here).
+its **resistance genes** (Module 6) and its **strain type** (here).
 
 ### Steps
 
@@ -668,7 +919,7 @@ its **resistance genes** (Module 5) and its **strain type** (here).
 
 ---
 
-## Module 7 — kSNP: a reference-free SNP tree
+## Module 8 — kSNP: a reference-free SNP tree
 
 **What it does.** kSNP4 builds a SNP matrix and phylogenetic tree **without a
 reference genome and without alignment** — it compares genomes by their k-mers
@@ -749,7 +1000,7 @@ Then the trees:
 > different routes. kSNP is fast and needs no reference — great for a quick look or
 > when no good reference exists. vSNP3 is the validated, reference-anchored
 > workflow for diagnostic reporting. Running the same organisms through both
-> (Modules 3–4 vs. here) is a great way to understand the trade-offs.
+> (Modules 4–5 vs. here) is a great way to understand the trade-offs.
 
 ---
 
@@ -759,6 +1010,7 @@ Then the trees:
 |---|---|---|
 | Influenza reads (SRA) | IRMA | Assembled genome, subtype, QC report |
 | An influenza assembly | GenoFLU | A genotype call (clade/constellation) |
+| TB reads (SRA) | Kraken ID-Parse | A taxonomic profile + clean, single-taxon reads |
 | TB reads (SRA) | vSNP3 | Per-sample VCFs → SNP table + tree |
 | An MTBC panel | vSNP3 | A whole-complex phylogeny |
 | Bacterial reads | AMRFinderPlus | A resistance-gene profile |

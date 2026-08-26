@@ -892,11 +892,12 @@ for the light contract a tool repo must satisfy to be drivable from here.
 New to the suite, or onboarding students? **[docs/TRAINING.md](docs/TRAINING.md)**
 is a hands-on, step-by-step walkthrough of every tool using real public data you
 can copy-paste straight into each GUI — assemble an influenza genome (IRMA) and
-genotype it (GenoFLU), run the two-step vSNP3 SNP workflow on TB isolates and
-build a whole-*M. tuberculosis*-complex phylogeny, profile resistance genes
-(AMRFinderPlus), assign a sequence type (MLST), and build a reference-free SNP
-tree (kSNP). No command-line experience required; each module explains how to run
-the tool **and how to interpret its output**.
+genotype it (GenoFLU), screen a sample for what is actually in it and extract one
+taxon's reads (Kraken ID-Parse), run the two-step vSNP3 SNP workflow on TB
+isolates and build a whole-*M. tuberculosis*-complex phylogeny, profile resistance
+genes (AMRFinderPlus), assign a sequence type (MLST), and build a reference-free
+SNP tree (kSNP). No command-line experience required; each module explains how to
+run the tool **and how to interpret its output**.
 
 ## 🪟 On Windows? Set up WSL2 first
 

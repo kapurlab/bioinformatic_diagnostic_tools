@@ -111,7 +111,7 @@ suite_version: "2026.08.13"
 tools:
   - name: vsnp_gui
     repo: https://github.com/kapurlab/vsnp_gui.git
-    version: v0.4.73
+    version: v0.4.74
     updates: install
     ood_apps: [vsnp_gui]
     dev_apps: [vsnp_gui_dev]

@@ -125,6 +125,9 @@ class BannerRenderTests(unittest.TestCase):
             # what happened when they were added below the slice unstubbed.
             "let canUpdate=true;\n"
             "let canControlG=false;\n"
+            # Written by renderUpdates, declared below this slice (like canUpdate):
+            # it carries the verb into applyUpdates' confirm text.
+            "let updateModeG='update';\n"
             "let suiteDir='/srv/kapurlab/tools/bioinformatic_diagnostic_tools';\n"
             + body +
             f"\nrenderUpdates({payload});\n"
@@ -173,6 +176,33 @@ class BannerRenderTests(unittest.TestCase):
             "installed:'2.1.3',latest:'2.17.1',update_available:false,held:true,"
             "held_reason:'2.17.1 was tried on this machine and could not be installed',"
             "held_fix:'bdtools install amr_plus_gui --rebuild',kind:'package'}")
+
+    def test_a_site_deployment_offers_sync_not_a_rebuild(self):
+        """update_mode:'sync' — the deployment `bdtools update` refuses.
+
+        The banner must offer the verb that can actually run there and must not
+        promise an environment rebuild that `bdtools sync` does not do. This is the
+        2026-08-27 incident rendered: nine tools offered, nine refusals.
+        """
+        html = self.render_state(
+            f"{{checked:true,update_mode:'sync',items:[{self.TOOL}]}}")
+        self.assertIn("Deploy tool updates", html)
+        self.assertNotIn("Install tool updates", html)
+        self.assertIn("bdtools sync", html)
+        self.assertNotIn("Installing rebuilds environments", html)
+        # Envs and OOD cards are NOT moved by sync, so the page has to say what
+        # does move them — otherwise "code only" reads as "nothing else needed".
+        self.assertIn("install --server", html)
+
+    def test_a_managed_deployment_keeps_the_rebuild_wording(self):
+        """No update_mode (or 'update'): unchanged from before the sync split."""
+        for payload in (f"{{checked:true,items:[{self.TOOL}]}}",
+                        f"{{checked:true,update_mode:'update',items:[{self.TOOL}]}}"):
+            with self.subTest(payload=payload):
+                html = self.render_state(payload)
+                self.assertIn("Install tool updates", html)
+                self.assertNotIn("Deploy tool updates", html)
+                self.assertIn("Installing rebuilds environments", html)
 
     def test_up_to_date_renders_without_buttons(self):
         html = self.render(f"[{self.TOOL.replace('update_available:true',

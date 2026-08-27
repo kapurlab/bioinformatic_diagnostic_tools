@@ -256,6 +256,114 @@ def tool_checkout_version(name):
         return ""
 
 
+def _managed_checkout_dir(name):
+    """<BDTOOLS_HOME>/checkouts/<tool> — the ONE tree `bdtools update` may move.
+
+    Mirrors common.sh's bdtools-home resolution (and tool_launch._bdtools_home)
+    so this cannot disagree with the shell about which path that is.
+    """
+    home = os.environ.get("BDTOOLS_HOME", "").strip()
+    if not home:
+        base = (os.environ.get("XDG_DATA_HOME", "").strip()
+                or os.path.expanduser("~/.local/share"))
+        home = os.path.join(base, "bdtools")
+    return os.path.join(home, "checkouts", name)
+
+
+def tool_source_kind(name):
+    """'managed' or 'site' — which command is allowed to move this tool's code.
+
+    `bdtools update` ends in a force checkout, so it owns exactly one kind of tree:
+    the per-user managed clone at <BDTOOLS_HOME>/checkouts/<tool>. Anything else —
+    an umbrella with its tools as siblings, or BDTOOLS_TOOLSDIR pointing at one —
+    is a SITE deployment, which check-updates.sh refuses on purpose (such a tree can
+    carry reviewed site/licensing commits). Its deploy step is `bdtools sync`.
+
+    This exists because the two halves of the update banner disagreed. The CHECK
+    side resolves tool_dir(), so on a site install it correctly reported the site
+    tree's version ("vsnp_gui v0.4.79 → v0.4.80 available"); the APPLY side
+    hardcoded `bdtools update`, which then refused that very directory. The button
+    could not succeed for ANY tool there — nine tools, nine refusals, and a log that
+    named the guardrail rather than the mismatch that reached it.
+
+    A tool that is not checked out anywhere resolves to the managed path and so
+    stays with `update` — which is what prints the "not installed, run bdtools
+    install <tool>" note.
+    """
+    try:
+        import tool_launch
+        directory = tool_launch.tool_dir(name)
+    except Exception:
+        return "managed"   # unknown -> the conservative, env-rebuilding path
+    return ("managed"
+            if os.path.normpath(directory) == os.path.normpath(_managed_checkout_dir(name))
+            else "site")
+
+
+def tool_update_mode(names=None):
+    """'sync' if any tool here lives in a site tree, else 'update'.
+
+    Drives the banner's wording, so it errs toward 'sync' the moment one tool is a
+    site checkout: the text must not promise an environment rebuild that the
+    command it runs will not perform.
+    """
+    names = list(names) if names else list_tools()
+    if not names:
+        return "update"
+    return "sync" if any(tool_source_kind(n) == "site" for n in names) else "update"
+
+
+def tool_update_commands(target, log=None):
+    """The command(s) that move tool CODE for `target` — one per source kind.
+
+    Managed personal checkouts get `bdtools update` (new tag + environment rebuild).
+    A site deployment gets `bdtools sync` (code only — envs and OOD cards stay a
+    deliberate `bdtools install --server`, which is why sync is the documented
+    deploy step after a push).
+
+    A set that is entirely one kind keeps its single 'all' form on purpose: that
+    preserves `update all`'s per-tool leniency, where a report-only tool is skipped
+    with a note instead of failing the run. Only a genuinely mixed tree — a tool
+    absent from the site tools dir but present as a personal clone — explodes into
+    per-tool commands, and there the frozen tools are dropped here rather than
+    turned into spurious failures.
+    """
+    log = log or (lambda _msg: None)
+    names = list_tools() if target == "all" else [target]
+    site = [n for n in names if tool_source_kind(n) == "site"]
+    managed = [n for n in names if n not in site]
+    if target == "all" and not managed and site:
+        log("$ bdtools sync all")
+        log("Site deployment: moving the shared checkouts' code to the manifest "
+            "pin / branch tip. No environment rebuild — a release that changes "
+            "envs or OOD cards needs `bdtools install --server`.")
+        return [[BDTOOLS, "sync", "all"]]
+    if target == "all" and not site and managed:
+        log("$ bdtools update all")
+        log("Rebuilding environments — this can take several minutes per tool…")
+        return [[BDTOOLS, "update", "all"]]
+    cmds = []
+    if site:
+        log("Site deployment: moving code only (no environment rebuild).")
+        for name in site:
+            log(f"$ bdtools sync {name}")
+            cmds.append([BDTOOLS, "sync", name])
+    if managed:
+        # tool_is_updatable is the same tools.yml `updates:` reader the buttons use,
+        # so this cannot disagree with common.sh:require_updatable about what may move.
+        movable = [n for n in managed
+                   if target != "all" or tool_is_updatable(n)]
+        for name in managed:
+            if name not in movable:
+                log(f"{name}: left unchanged — it is report-only in tools.yml.")
+        if movable:
+            log("Rebuilding environments — this can take several minutes per tool…")
+        for name in movable:
+            log(f"$ bdtools update {name}")
+            cmds.append([BDTOOLS, "update", name])
+    return cmds
+
+
 def package_report(use_network=True, tools=None):
     """Analysis-package versions per tool ([] if anything goes wrong).
 
@@ -614,6 +722,10 @@ class UpdateManager:
             items.extend(package_update_records())
             cache = {"checked": True, "items": items,
                      "any": any(i["update_available"] for i in items),
+                     # Which verb the tool button will actually run here, so the
+                     # banner's wording matches the command instead of always
+                     # promising an environment rebuild (see tool_update_mode).
+                     "update_mode": tool_update_mode(),
                      # Names whose remote couldn't be reached: the check ran
                      # blind for these, and the banner must say so instead of
                      # implying "up to date".
@@ -664,25 +776,34 @@ class UpdateManager:
                 self.job["log"] = self.job["log"][-2000:]
 
     def _run(self, target):
-        cmd = None
+        # A LIST of commands, not one: moving tool code takes a different verb per
+        # source kind (`update` for a managed checkout, `sync` for a site tree), and
+        # a mixed deployment needs both. See tool_update_commands — hardcoding
+        # `bdtools update` here is what made the button unusable on a site install.
+        cmds = []
         if target == "bdtools":
-            cmd = suite_update_command(self._log)
+            cmd = suite_update_command(self._log)   # logs its own $ line, or refuses
+            cmds = [cmd] if cmd is not None else []
         elif target.startswith("packages:"):
             # "packages:<tool>" or "packages:all" — update the analysis packages in
             # a tool's env to the newest on their channel. A separate command, not
             # `update <tool>`: that one moves the GUI checkout to a new tag and
             # rebuilds, which is a different act with different risks.
             scope = target.split(":", 1)[1]
-            cmd = [BDTOOLS, "update-packages", scope]
+            cmds = [[BDTOOLS, "update-packages", scope]]
             self._log(f"$ bdtools update-packages {scope}")
             self._log("Installing into the tool's conda env — the solve can take "
                       "several minutes…")
         else:
-            cmd = [BDTOOLS, "update", target]
-            self._log(f"$ bdtools update {target}")
-            self._log("Rebuilding environments — this can take several minutes per tool…")
-        ok = False
-        if cmd is not None:
+            cmds = tool_update_commands(target, self._log)
+            if not cmds:
+                self._log("Nothing to run: no tool here may be moved by the "
+                          "dashboard (see the notes above).")
+        # Every command must succeed. One failure does NOT abort the rest: each
+        # remaining tool is independent, and stopping early would leave the run
+        # half-applied for reasons unrelated to those tools.
+        ok = bool(cmds)
+        for cmd in cmds:
             try:
                 proc = subprocess.Popen(cmd, cwd=REPO_DIR, stdout=subprocess.PIPE,
                                         stderr=subprocess.STDOUT, text=True, bufsize=1)
@@ -690,7 +811,8 @@ class UpdateManager:
                     line = clean_log_line(line)
                     if line is not None:
                         self._log(line)
-                ok = proc.wait() == 0
+                if proc.wait() != 0:
+                    ok = False
             except (OSError, subprocess.SubprocessError) as exc:
                 self._log(f"ERROR: {exc}")
                 ok = False

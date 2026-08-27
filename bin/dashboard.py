@@ -78,6 +78,7 @@ from suite_common import (  # noqa: E402
     write_dashboard_state, remove_dashboard_state, suite_update_command,
     clean_log_line,
     tool_checkout_version, package_map, package_update_records,
+    tool_update_commands, tool_update_mode,
 )
 
 
@@ -343,6 +344,10 @@ class Suite:
                 "checked": True,
                 "items": items,
                 "any": any(i["update_available"] for i in items),
+                # Which verb the tool button runs here — `update` (managed
+                # checkouts) or `sync` (a site deployment). Same key the proxy
+                # dashboard's UpdateManager publishes; the shared page JS reads it.
+                "update_mode": tool_update_mode(),
                 # Names whose remote couldn't be reached — the check ran blind
                 # for these; renderUpdates turns this into a visible warning.
                 "check_failed": [i["name"] for i in items if i.get("check_failed")],
@@ -394,25 +399,30 @@ class Suite:
                 self.update_job["log"] = self.update_job["log"][-2000:]
 
     def _run_update(self, target):
+        # Command LIST, and the tool verb comes from suite_common — the same
+        # resolution the proxy dashboard uses, so the two update paths cannot
+        # disagree about refusing a dirty checkout OR about which of
+        # `update`/`sync` may move a given tool's code.
+        cmds = []
         if target == "bdtools":
-            # Shared with the proxy dashboard's UpdateManager so the two update
-            # paths can never disagree about refusing a dirty checkout.
             cmd = suite_update_command(self._log)
+            cmds = [cmd] if cmd is not None else []
         elif target.startswith("packages:"):
             # The analysis packages inside an env, not the GUI checkout. See
             # bin/update-packages.sh: it re-applies local patches afterwards, which
             # a plain conda install would silently drop.
             scope = target.split(":", 1)[1]
-            cmd = [BDTOOLS, "update-packages", scope]
+            cmds = [[BDTOOLS, "update-packages", scope]]
             self._log(f"$ bdtools update-packages {scope}")
             self._log("Installing into the tool's conda env — the solve can take "
                       "several minutes…")
         else:
-            cmd = [BDTOOLS, "update", target]
-            self._log(f"$ bdtools update {target}")
-            self._log("Rebuilding environments — this can take several minutes per tool…")
-        ok = False
-        if cmd is not None:
+            cmds = tool_update_commands(target, self._log)
+            if not cmds:
+                self._log("Nothing to run: no tool here may be moved by the "
+                          "dashboard (see the notes above).")
+        ok = bool(cmds)
+        for cmd in cmds:
             try:
                 proc = subprocess.Popen(cmd, cwd=str(REPO_DIR), stdout=subprocess.PIPE,
                                         stderr=subprocess.STDOUT, text=True, bufsize=1)
@@ -420,7 +430,8 @@ class Suite:
                     line = clean_log_line(line)
                     if line is not None:
                         self._log(line)
-                ok = proc.wait() == 0
+                if proc.wait() != 0:
+                    ok = False
             except (OSError, subprocess.SubprocessError) as exc:
                 self._log(f"ERROR: {exc}")
                 ok = False
@@ -1119,13 +1130,23 @@ function renderUpdates(d){
   //   3 packages — the conda analysis software INSIDE a tool's environment (vsnp3,
   //                AMRFinderPlus, kraken2 …). Last, because a bdtools pull can
   //                change the pins these work from.
+  // Which verb the tool button will actually run here (api/updates update_mode).
+  // A SITE deployment (an umbrella with its tool checkouts as siblings) is moved by
+  // `bdtools sync` — code only. `bdtools update` force-refreshes and rebuilds, and
+  // it refuses a site tree outright, so labelling that button "install + rebuild"
+  // there described a command the dashboard could not run: the banner offered nine
+  // tools and the run failed nine times on the guardrail.
+  const syncMode = d.update_mode === 'sync';
+  updateModeG = syncMode ? 'sync' : 'update';
   const groups = [
     { key: 'suite',   items: avail.filter(i=>i.kind==='suite' || i.name==='bdtools'),
       label: 'Update bdtools', target: 'bdtools', count: false,
       what: 'the suite, manifest, install scripts and this dashboard (git pull)' },
     { key: 'tool',    items: avail.filter(i=>i.kind!=='suite' && i.kind!=='package' && i.name!=='bdtools'),
-      label: 'Install tool updates', target: 'all', count: true,
-      what: "each GUI's own release — new tag + environment rebuild" },
+      label: syncMode ? 'Deploy tool updates' : 'Install tool updates', target: 'all', count: true,
+      what: syncMode
+        ? "each GUI's own release, into this site's shared checkouts — code only (bdtools sync)"
+        : "each GUI's own release — new tag + environment rebuild" },
     { key: 'package', items: avail.filter(i=>i.kind==='package'),
       label: 'Update conda packages', target: 'packages:all', count: true,
       what: "the conda analysis software inside a tool's environment (vsnp3, AMRFinderPlus, kraken2 …)" },
@@ -1163,8 +1184,14 @@ function renderUpdates(d){
         ? `<b>Run these left to right</b> — the numbered order matters. ` : '')
     + groups.map(g=>`<b>${esc(g.label)}</b>: ${esc(g.what)}`).join('<br>')
     + (canUpdate
-        ? `<br>Installing rebuilds environments and can take a few minutes; idle tool `
-          + `servers are stopped first. `
+        ? (syncMode
+            ? `<br>This is a <b>site deployment</b>, so tool updates move the shared `
+              + `checkouts' code only (<code>bdtools sync</code>) — no environment `
+              + `rebuild. A release that also changes environments or OOD cards `
+              + `needs <code>bdtools install --server &lt;tool&gt;</code> in a terminal. `
+              + `Idle tool servers are stopped first. `
+            : `<br>Installing rebuilds environments and can take a few minutes; idle tool `
+              + `servers are stopped first. `)
           + (canControlG
               ? `Use <b>Restart dashboard</b> after each one to load the new code.`
               : `Restart this dashboard session after each one to load the new code.`)
@@ -1217,7 +1244,9 @@ async function checkUpdates(force){
 async function applyUpdates(target,btn){
   if(!confirm(target==='bdtools'
       ? 'Update bdtools (the suite + this dashboard) now?'
-      : 'Install tool updates now? This rebuilds environments and may take several minutes.')) return;
+      : updateModeG==='sync'
+        ? "Deploy tool updates now? This moves this site's shared checkouts to their latest code (no environment rebuild)."
+        : 'Install tool updates now? This rebuilds environments and may take several minutes.')) return;
   document.querySelectorAll('.updates button').forEach(b=>b.disabled=true);
   runPanel();
   const log=document.getElementById('ulog'); if(log){ log.textContent='Starting…\\n'; }
@@ -1268,6 +1297,7 @@ async function pollUpdate(){
 }
 // ---- Which machine is this? + Shut down / Restart controls (local mode only).
 let canUpdate=true;   // api_info.can_update — false on an install this user can't write
+let updateModeG='update';  // api/updates update_mode — 'sync' on a site deployment
 let canControlG=false; // api_info.can_control — Restart/Shut down wired up?
 let suiteDir='';       // api_info.suite_dir — the cd path in the update instructions
 async function loadInfo(){

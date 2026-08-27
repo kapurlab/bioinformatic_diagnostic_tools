@@ -255,6 +255,46 @@ tool_dir() {
 #
 # Idempotent: the block is delimited and rewritten in place, never appended
 # twice, and a checkout the user has edited by hand keeps their lines.
+# Make a managed checkout's remote-tracking refs tell the truth.
+#
+# Every managed clone below is `git clone --branch <tag> --depth 1`, and cloning
+# AT A TAG makes git write a single-tag fetch refspec:
+#     remote.origin.fetch = +refs/tags/v0.2.1:refs/tags/v0.2.1
+# With that in place `git fetch` never updates refs/remotes/origin/*, so
+# origin/main stays frozen at install time forever. The visible damage is that
+# ordinary git commands lie: `git log origin/main..HEAD` invents unpushed
+# commits (nine, on a vsnp_gui checkout whose work was fully pushed), and
+# `git push origin main` can be rejected as "behind its remote counterpart"
+# while the remote is in fact identical — which reads like divergence and
+# tempts a force-push that would destroy real history.
+#
+# Setting the standard refspec costs nothing and does not change what bdtools
+# itself does: every managed fetch names its ref explicitly
+# (`fetch --tags --depth 1 origin "${VERSION}"`), so none of them consult the
+# default refspec. Shallow checkouts stay shallow — only branch tips arrive.
+#
+# Called on the existing-checkout path as well as after a fresh clone, so a
+# machine installed before this existed is repaired by its next install.
+normalize_checkout_remote() {
+  local dir="${1:?checkout dir}"
+  [[ -d "${dir}/.git" ]] || return 0
+  git -C "${dir}" remote get-url origin >/dev/null 2>&1 || return 0
+  local want='+refs/heads/*:refs/remotes/origin/*'
+  local have; have="$(git -C "${dir}" config --get-all remote.origin.fetch 2>/dev/null | tr '\n' ' ')"
+  case "${have}" in
+    *"refs/heads/*"*) return 0 ;;   # already correct; leave it alone
+  esac
+  if [[ ${DRY_RUN:-0} -eq 1 ]]; then
+    log "DRY-RUN: would set remote.origin.fetch in ${dir} to ${want}"
+    return 0
+  fi
+  git -C "${dir}" config --replace-all remote.origin.fetch "${want}" 2>/dev/null || return 0
+  # Populate origin/* once so the refs are usable immediately rather than after
+  # some later fetch. Non-fatal: an offline install must still succeed.
+  git -C "${dir}" -c core.autocrlf=false -c core.eol=lf fetch origin --quiet 2>/dev/null || true
+}
+
+
 install_checkout_excludes() {
   local dir="${1:?checkout dir}" exclude
   [[ -d "${dir}/.git" ]] || return 0
@@ -319,6 +359,7 @@ ensure_checkout() {
   if [[ -d "${dir}/.git" ]]; then
     ok "checkout present: ${dir} ($(git -C "${dir}" describe --tags --always 2>/dev/null || echo '?'))"
     install_checkout_excludes "${dir}"
+    normalize_checkout_remote "${dir}"
     return 0
   fi
   log "cloning ${name} @ ${version}"
@@ -334,6 +375,7 @@ ensure_checkout() {
   run git clone --config core.autocrlf=false --config core.eol=lf --branch "${version}" --depth 1 "${repo}" "${dir}" \
     || die "git clone failed (${repo} @ ${version})"
   install_checkout_excludes "${dir}"
+  normalize_checkout_remote "${dir}"
 }
 
 # ---- misc -----------------------------------------------------------------

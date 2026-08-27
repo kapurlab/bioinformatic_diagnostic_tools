@@ -224,6 +224,9 @@ phase_toolchain() {
     run mkdir -p "${TOOLS_ROOT}"
     run git clone --branch "${VERSION}" --depth 1 "${REPO}" "${DIR}" || die "git clone failed"
   fi
+  # Both paths: a tag-clone writes a single-tag fetch refspec, which freezes
+  # origin/* forever (see common.sh:normalize_checkout_remote).
+  normalize_checkout_remote "${DIR}"
   assert_pinned_source
   # Build env + frontend via the tool's own no-sudo installer (shared env at <dir>/env).
   if [[ -x "${DIR}/deploy/install.sh" ]]; then

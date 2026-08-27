@@ -443,6 +443,9 @@ ensure_checkout() {
       fi
     fi
     ok "checkout present: ${DIR} (${at})"
+    # Repair the single-tag fetch refspec a `clone --branch <tag>` leaves behind,
+    # so origin/* tracks reality in checkouts installed before this existed.
+    normalize_checkout_remote "${DIR}"
     return
   fi
   [[ ${RUN_ONLY} -eq 1 ]] && die "${TOOL} is not installed at ${DIR} (run: bdtools install ${TOOL})"
@@ -452,6 +455,7 @@ ensure_checkout() {
   # otherwise CRLF-corrupt every script this clone materializes.
   run git clone --config core.autocrlf=false --config core.eol=lf --branch "${VERSION}" --depth 1 "${REPO}" "${DIR}" \
     || die "git clone failed (${REPO} @ ${VERSION}). If this said 'Disk quota exceeded', your home filesystem is full — on an HPC set BDTOOLS_HOME to a larger scratch/work/group filesystem and re-run (see docs/INSTALL_LOCAL.md)."
+  normalize_checkout_remote "${DIR}"
 }
 
 # --------------------------------------------------------------------------

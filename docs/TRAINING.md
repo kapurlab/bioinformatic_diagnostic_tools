@@ -1,5 +1,13 @@
 # 🎓 Training — a hands-on walkthrough of the Kapur Lab diagnostic tools
 
+<!-- html-copy-note:start -->
+> 📄 **Want a copy you can hand to someone?** [`TRAINING.html`](TRAINING.html) is this same guide as a
+> **standalone HTML file** — one self-contained document, no network and nothing to install. Save it and
+> open it in any browser, email it, or drop it on a shared drive. (GitHub displays `.html` as source
+> rather than rendering it, so download the file rather than clicking through to it.) Regenerate it after
+> editing this guide with `docs/build_training_html.py`.
+<!-- html-copy-note:end -->
+
 This guide teaches you to run every tool in the suite from start to finish, using
 **real, public sequencing data** that you can copy and paste straight into each
 tool. No prior command-line experience is assumed — everything happens in the
@@ -7,6 +15,8 @@ web dashboard.
 
 Work through it top to bottom the first time. After that, each **module** stands
 on its own, so you can jump to the tool you need.
+
+📊 **Slides:** [vSNP3 — the whole process](vsnp3_orientation_slides.html) covers Modules 4–5 at a glance.
 
 **What you will learn**
 
@@ -528,6 +538,12 @@ you're seeing its nearest relative.
 ---
 
 ## Module 4 — vSNP3: the two-step SNP workflow (introduction)
+
+> 🖥 **Slides first?** [**vSNP3 — the whole process**](vsnp3_orientation_slides.html) is a twelve-slide
+> walkthrough of everything in Modules 4 and 5: what the two steps do, how the reference-type database is
+> organised, how defining SNPs split large sets into groups, and how a SNP call is validated in the reads.
+> It is one self-contained file — save it from `docs/` and open it in any browser; hover the underlined
+> phrases to see the matching bdtools screen, and use **Print / PDF** if you want a paper copy.
 
 **What it does.** vSNP3 (USDA) is the suite's high-resolution SNP tool for
 bacteria and viruses. It answers *"how closely related are these isolates?"* —

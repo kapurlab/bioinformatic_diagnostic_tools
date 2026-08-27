@@ -1,0 +1,1461 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>🎓 Training — a hands-on walkthrough of the Kapur Lab diagnostic tools</title>
+<meta name="description" content="Hands-on training for the Kapur Lab bioinformatic diagnostic tools (bdtools): a standalone copy you can share as a single file.">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --ground:#EDF1F0; --surface:#FBFDFC; --surface-2:#E6EBEA; --surface-3:#F2F6F5;
+  --ink:#1E2E2D; --ink-2:#566867; --hair:#CBD5D2;
+  --accent:#146D6A; --signal:#A06A20; --warn:#9C4B31; --ok:#357F55;
+  --r:5px;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --ground:#0F1A1C; --surface:#17262A; --surface-2:#1F3034; --surface-3:#1B2C30;
+    --ink:#DFE8E6; --ink-2:#9BADAC; --hair:#2E4145;
+    --accent:#6FC5BE; --signal:#E0A75C; --warn:#DE9683; --ok:#6FC28E;
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#0F1A1C; --surface:#17262A; --surface-2:#1F3034; --surface-3:#1B2C30;
+  --ink:#DFE8E6; --ink-2:#9BADAC; --hair:#2E4145;
+  --accent:#6FC5BE; --signal:#E0A75C; --warn:#DE9683; --ok:#6FC28E;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0; background:var(--ground); color:var(--ink);
+  font-family:"IBM Plex Sans","Helvetica Neue",Helvetica,Arial,sans-serif;
+  font-size:17px; line-height:1.62; -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1000px; margin:0 auto; padding:0 24px 96px}
+header.page{
+  border-bottom:1px solid var(--hair); margin-bottom:38px;
+  padding:44px 0 30px; background:var(--surface);
+  border-radius:0 0 var(--r) var(--r);
+}
+header.page .inner{max-width:1000px; margin:0 auto; padding:0 24px}
+.kicker{
+  font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:12px;
+  letter-spacing:.19em; text-transform:uppercase; color:var(--accent); margin:0 0 18px;
+}
+h1{
+  font-family:"IBM Plex Sans Condensed","IBM Plex Sans",sans-serif; font-weight:600;
+  font-size:clamp(30px,4.4vw,46px); line-height:1.08; letter-spacing:-.004em; margin:0 0 14px;
+}
+.standalone{
+  margin:22px 0 0; padding:14px 18px; border:1px solid var(--hair);
+  border-left:4px solid var(--accent); border-radius:var(--r);
+  background:var(--surface-3); font-size:15px; color:var(--ink-2);
+}
+.standalone b{color:var(--ink)}
+nav.toc{
+  background:var(--surface); border:1px solid var(--hair); border-radius:var(--r);
+  padding:20px 24px; margin:0 0 42px;
+}
+nav.toc p{
+  font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:12px; letter-spacing:.15em;
+  text-transform:uppercase; color:var(--ink-2); margin:0 0 12px;
+}
+nav.toc ul{list-style:none; margin:0; padding:0; columns:2; column-gap:32px}
+nav.toc li{margin:0 0 7px; break-inside:avoid}
+nav.toc a{color:var(--ink); text-decoration:none; border-bottom:1px solid transparent; font-size:15.5px}
+nav.toc a:hover{border-bottom-color:var(--accent); color:var(--accent)}
+h2{
+  font-family:"IBM Plex Sans Condensed","IBM Plex Sans",sans-serif; font-weight:600;
+  font-size:29px; line-height:1.16; margin:54px 0 16px; padding-top:20px;
+  border-top:1px solid var(--hair);
+}
+h3{font-weight:600; font-size:20px; line-height:1.25; margin:34px 0 10px}
+h4{font-weight:600; font-size:17px; margin:26px 0 8px; color:var(--ink-2)}
+p{margin:0 0 16px; max-width:74ch}
+ul,ol{margin:0 0 18px; padding-left:26px; max-width:74ch}
+li{margin:0 0 8px}
+li>ul,li>ol{margin-top:8px}
+li::marker{color:var(--accent)}
+a{color:var(--accent); text-decoration:none; border-bottom:1px solid var(--hair); word-break:break-word}
+a:hover{border-bottom-color:var(--accent)}
+a:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
+strong{font-weight:600; color:var(--ink)}
+code{
+  font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:.88em;
+  background:var(--surface-2); padding:.14em .38em; border-radius:3px;
+}
+pre{
+  margin:0 0 20px; background:var(--surface-3); border:1px solid var(--hair);
+  border-left:4px solid var(--accent); border-radius:var(--r);
+  padding:14px 18px; overflow-x:auto;
+}
+pre code{background:none; padding:0; font-size:14px; line-height:1.55; white-space:pre}
+pre.highlight{margin:0 0 20px}
+blockquote{
+  margin:0 0 20px; padding:2px 0 2px 18px; border-left:4px solid var(--signal);
+  color:var(--ink-2); max-width:78ch;
+}
+blockquote p{margin:0 0 10px}
+blockquote :last-child{margin-bottom:0}
+blockquote strong{color:var(--ink)}
+.tablewrap{overflow-x:auto; margin:0 0 22px; border:1px solid var(--hair); border-radius:var(--r)}
+table{border-collapse:collapse; width:100%; font-size:15px}
+th,td{text-align:left; padding:9px 14px; border-bottom:1px solid var(--hair); vertical-align:top}
+th{
+  font-family:"IBM Plex Mono",ui-monospace,monospace; font-weight:500; font-size:12px;
+  letter-spacing:.09em; text-transform:uppercase; color:var(--ink-2);
+  background:var(--surface-3); white-space:nowrap;
+}
+tr:last-child td{border-bottom:none}
+td code{white-space:nowrap}
+hr{border:none; border-top:1px solid var(--hair); margin:44px 0}
+img{max-width:100%; height:auto}
+footer.page{
+  border-top:1px solid var(--hair); margin-top:56px; padding-top:22px;
+  font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:12px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--ink-2);
+}
+#top{
+  position:fixed; right:18px; bottom:18px; background:var(--surface);
+  border:1px solid var(--hair); border-radius:var(--r); padding:8px 12px;
+  font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:11px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--ink-2); text-decoration:none;
+}
+#top:hover{color:var(--accent); border-color:var(--accent)}
+@media (max-width:700px){
+  body{font-size:16px}
+  nav.toc ul{columns:1}
+  h2{font-size:24px}
+}
+@media print{
+  :root, :root[data-theme="dark"]{
+    --ground:#fff; --surface:#fff; --surface-2:#EEF2F1; --surface-3:#F6F9F8;
+    --ink:#1A2A29; --ink-2:#556666; --hair:#C2CCC9;
+    --accent:#12615E; --signal:#8A5A18; --warn:#8C4630; --ok:#2C6A47;
+  }
+  body{font-size:11pt}
+  #top, nav.toc{display:none}
+  header.page{border-radius:0}
+  h2{break-before:page; page-break-before:always}
+  h2:first-of-type{break-before:auto; page-break-before:auto}
+  h2,h3,h4{break-after:avoid}
+  pre,blockquote,.tablewrap,table{break-inside:avoid}
+  a{border-bottom:none; color:inherit}
+}
+</style>
+</head>
+<body id="pagetop">
+<header class="page">
+  <div class="inner">
+    <p class="kicker">Kapur Lab - Penn State &middot; USDA &middot; Bioinformatic Diagnostic Tools (bdtools)</p>
+    <h1>🎓 Training — a hands-on walkthrough of the Kapur Lab diagnostic tools</h1>
+    <p class="standalone"><b>This is a standalone copy.</b> Everything is in this one file &mdash; save it,
+    email it, or put it on a shared drive and it will open in any browser with no network and nothing to
+    install. The living version is
+    <a href="https://github.com/kapurlab/bioinformatic_diagnostic_tools/blob/main/docs/TRAINING.md">docs/TRAINING.md</a> in the bdtools repository; check there
+    for updates.</p>
+  </div>
+</header>
+
+<div class="wrap">
+  <nav class="toc" aria-label="On this page">
+    <p>On this page</p>
+    <ul>
+      <li><a href="#part-a--before-you-begin-read-once">Part A — Before you begin (read once)</a></li>
+      <li><a href="#module-1--irma-assemble-an-influenza-genome">Module 1 — IRMA: assemble an influenza genome</a></li>
+      <li><a href="#module-2--genoflu-genotype-an-h5-influenza-genome">Module 2 — GenoFLU: genotype an H5 influenza genome</a></li>
+      <li><a href="#module-3--kraken-id-parse-what-is-actually-in-this-sample">Module 3 — Kraken ID-Parse: what is actually in this sample?</a></li>
+      <li><a href="#module-4--vsnp3-the-two-step-snp-workflow-introduction">Module 4 — vSNP3: the two-step SNP workflow (introduction)</a></li>
+      <li><a href="#module-5--vsnp3-a-whole-complex-phylogeny">Module 5 — vSNP3: a whole-complex phylogeny</a></li>
+      <li><a href="#module-6--amrfinderplus-antimicrobial-resistance-genes">Module 6 — AMRFinderPlus: antimicrobial-resistance genes</a></li>
+      <li><a href="#module-7--mlst-assign-a-sequence-type">Module 7 — MLST: assign a sequence type</a></li>
+      <li><a href="#module-8--ksnp-a-reference-free-snp-tree">Module 8 — kSNP: a reference-free SNP tree</a></li>
+      <li><a href="#wrap-up--what-youve-learned">Wrap-up — what you&#x27;ve learned</a></li>
+    </ul>
+  </nav>
+
+  <main>
+<p>This guide teaches you to run every tool in the suite from start to finish, using
+<strong>real, public sequencing data</strong> that you can copy and paste straight into each
+tool. No prior command-line experience is assumed — everything happens in the
+web dashboard.</p>
+<p>Work through it top to bottom the first time. After that, each <strong>module</strong> stands
+on its own, so you can jump to the tool you need.</p>
+<p>📊 <strong>Slides:</strong> <a href="https://github.com/kapurlab/bioinformatic_diagnostic_tools/blob/main/docs/vsnp3_orientation_slides.html">vSNP3 — the whole process</a> covers Modules 4–5 at a glance.</p>
+<p><strong>What you will learn</strong></p>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th>Module</th>
+<th>Tool</th>
+<th>You will…</th>
+<th>Data used</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td><strong>IRMA</strong></td>
+<td>Assemble influenza genomes from raw reads and read the QC report</td>
+<td>Influenza A reads</td>
+</tr>
+<tr>
+<td>2</td>
+<td><strong>GenoFLU</strong></td>
+<td>Genotype an assembled H5 influenza genome (clade 2.3.4.4b)</td>
+<td>IRMA output from Module 1</td>
+</tr>
+<tr>
+<td>3</td>
+<td><strong>Kraken ID-Parse</strong></td>
+<td>See what is really in a sample, then extract one taxon's reads</td>
+<td>TB reads, clean and contaminated</td>
+</tr>
+<tr>
+<td>4</td>
+<td><strong>vSNP3 (intro)</strong></td>
+<td>Learn the two-step SNP workflow on <em>M. tuberculosis</em>/<em>M. bovis</em></td>
+<td>TB reads</td>
+</tr>
+<tr>
+<td>5</td>
+<td><strong>vSNP3 (phylogeny)</strong></td>
+<td>Build a SNP tree across the whole <em>M. tuberculosis</em> complex</td>
+<td>MTBC lineage panel</td>
+</tr>
+<tr>
+<td>6</td>
+<td><strong>AMRFinderPlus</strong></td>
+<td>Find antimicrobial-resistance genes in a bacterial isolate</td>
+<td><em>Pasteurella</em>, <em>E. coli</em> reads</td>
+</tr>
+<tr>
+<td>7</td>
+<td><strong>MLST</strong></td>
+<td>Assign a sequence type (ST) to an isolate</td>
+<td><em>Pasteurella</em> reads</td>
+</tr>
+<tr>
+<td>8</td>
+<td><strong>kSNP</strong></td>
+<td>Build a reference-free SNP tree from finished genomes</td>
+<td>MTBC genome accessions</td>
+</tr>
+</tbody>
+</table></div>
+<blockquote>
+<p>⏱ <strong>Time:</strong> Modules 1, 3, 6, 7, 8 take ~10–30 min each — plus another hour if
+you run Module 3's optional BLAST part. vSNP3 (Modules 4–5) takes longer
+because it aligns every read — budget an hour, most of it unattended while the
+job runs.</p>
+</blockquote>
+<hr />
+<h2 id="part-a--before-you-begin-read-once">Part A — Before you begin (read once)</h2>
+<h3 id="a1-open-the-dashboard">A.1 Open the dashboard</h3>
+<p>Everything starts from the dashboard — a home page listing your installed tools.</p>
+<ul>
+<li><strong>Desktop launcher (if one was made for you):</strong> double-click
+<strong>Kapur Lab Dashboard</strong> — on your Desktop (macOS) or in your applications menu
+(Linux/WSL). No terminal window appears; your browser just opens. If you don't
+have it yet, run <code>bin/bdtools make-launcher</code> once, <strong>or</strong></li>
+<li><strong>macOS:</strong> double-click <strong><code>Open Dashboard.command</code></strong> in the
+<code>bioinformatic_diagnostic_tools</code> folder, <strong>or</strong></li>
+<li><strong>Any system (Terminal):</strong><pre><code class="language-bash">cd &lt;path to repo&gt;/bioinformatic_diagnostic_tools
+bin/bdtools dashboard
+</code></pre>
+</li>
+</ul>
+<p>Your browser opens to <strong><a href="http://127.0.0.1:8080/">http://127.0.0.1:8080/</a></strong>. Each tool is a card — click
+<strong>Launch</strong> and the tool opens in a new tab. <strong>Leave the small dashboard window
+open while you work.</strong></p>
+<blockquote>
+<p>On an Open OnDemand cluster there is no local dashboard — your tools appear as
+cards in your institution's OOD portal instead. The in-tool steps below are
+identical.</p>
+</blockquote>
+<h3 id="a2-three-tools-need-reference-databases-first">A.2 Three tools need reference databases first</h3>
+<p>Most tools are ready to go. Three need a one-time database download:</p>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>Needs</th>
+<th>Set up with</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Kraken ID-Parse</strong> (Module 3)</td>
+<td><strong>Kraken2 DB</strong> <em>(required)</em></td>
+<td><code>bin/bdtools setup-databases kraken</code></td>
+</tr>
+<tr>
+<td><strong>Kraken ID-Parse</strong> (Module 3)</td>
+<td>BLAST DB <em>(only for the full BLAST mode — optional)</em></td>
+<td><code>bin/bdtools setup-databases blast</code></td>
+</tr>
+<tr>
+<td><strong>vSNP3</strong> (Modules 4–5)</td>
+<td>vSNP3 reference set</td>
+<td><code>bin/bdtools setup-databases vsnp-refs vsnp-deps</code></td>
+</tr>
+<tr>
+<td><strong>AMRFinderPlus</strong> (Module 6)</td>
+<td><strong>AMRFinderPlus database</strong> <em>(required — the conda package ships the program only)</em></td>
+<td><code>bin/bdtools setup-databases amrfinder</code></td>
+</tr>
+<tr>
+<td><strong>AMRFinderPlus</strong> (Module 6)</td>
+<td>Kraken2 DB <em>(only for automatic organism detection — optional)</em></td>
+<td><code>bin/bdtools setup-databases kraken</code></td>
+</tr>
+</tbody>
+</table></div>
+<p>Run those before the relevant module. The Kraken2 DB is shared: set it up once
+and both Kraken ID-Parse and AMRFinderPlus use it. If you skip it, AMRFinderPlus
+still works — you just pick the organism by hand — but Kraken ID-Parse cannot run
+at all without it. The <strong>AMRFinderPlus database is not optional</strong> either: without
+it the run finishes, writes a report, and contains no AMR calls (<code>amrfinder</code>
+exits 1 with <code>No valid AMRFinder database is found</code>). If a tool card shows a
+<strong>&quot;needs setup&quot;</strong> badge, that's what it's telling you, and <code>bin/bdtools doctor amr_plus_gui</code> names which database is missing.</p>
+<blockquote>
+<p>Check anything at any time with <code>bin/bdtools doctor</code> — it lists each tool, what
+it needs, and the exact command to fix a gap.</p>
+</blockquote>
+<h3 id="a3-how-every-tool-works--the-shared-layout">A.3 How every tool works — the shared layout</h3>
+<p><strong>All the tools share the same screen layout.</strong> Learn it once here and every
+module will feel familiar. From top to bottom you'll see:</p>
+<ol>
+<li><strong>Settings</strong> <em>(collapsible)</em> — database paths and where your projects are
+saved. Defaults are fine; you rarely touch this.</li>
+<li><strong>Projects &amp; Samples</strong> — on the <strong>left</strong>, create and open a <em>project</em> (a named
+folder that holds your data and results). Expand a project to see its samples,
+each with a <strong>checkbox</strong>.</li>
+<li><strong>Inputs</strong> — on the <strong>right</strong>, this is how you get data <em>into</em> a project.
+Every tool offers the same four ways:
+<ul>
+<li><strong>Choose Files</strong> / drag-and-drop — upload files from your computer.</li>
+<li><strong>Link</strong> — point at a folder already on the server (no copying).</li>
+<li><strong>SRA Download</strong> — <strong>paste accession numbers (SRR/ERR/DRR) and the tool
+downloads the reads for you.</strong> ← the reads-based tools use this. When it
+finishes, a per-sample status list shows which accessions downloaded and
+which failed, so a partial batch is obvious.</li>
+<li><strong>Download genome FASTA by accession</strong> <em>(kSNP, MLST, GenoFLU)</em> — paste
+GenBank/RefSeq genome accessions (e.g. <code>NC_000962</code>) or assembly accessions
+(<code>GCA_</code>/<code>GCF_</code>); the tool fetches assembled FASTA. GenoFLU also accepts a
+<strong>BioSample</strong> (e.g. <code>SAMN60641678</code>) and pulls that isolate's 8 influenza
+segments as one genome. (GenoFLU uses this instead of an SRA read download,
+since it genotypes assembled genomes.)</li>
+</ul>
+</li>
+<li><strong>Run …</strong> — pick your options and click <strong>▶ Run selected (N)</strong>, where N is the
+number of samples you checked.</li>
+<li><strong>Pipeline Log</strong> <em>(collapsible)</em> — live output while the job runs. It ends with
+<code>[DONE]</code>.</li>
+<li><strong>Results</strong> — tables, trees, reports, and download links appear here when the
+run finishes. Click a sample to load its results.</li>
+</ol>
+<p><strong>The universal recipe</strong> — every module below is a variation of these five steps:</p>
+<blockquote>
+<p><strong>① Create a project → ② paste accessions into SRA Download → ③ check the
+samples → ④ Run selected → ⑤ read the Results.</strong></p>
+</blockquote>
+<h3 id="a4-a-note-on-the-data-in-this-guide">A.4 A note on the data in this guide</h3>
+<p>Every accession below is a <strong>public</strong> record from NCBI's Sequence Read Archive
+(SRA) or GenBank. The tools download them for you — you never handle files by
+hand. The very first download of a sample can take a few minutes depending on its
+size and your connection; downloads are cached, so re-running is instant.</p>
+<p><strong>How the data tables work.</strong> Each dataset is shown as a <strong>two-column,
+tab-delimited table</strong> — an <code>Accession</code> column and a label. Two ways to use it:</p>
+<ul>
+<li><strong>Into Excel:</strong> select the whole block (including the header row) and paste it
+into a worksheet — the tab between the columns drops each value into its own
+cell, so you get a tidy accession + label spreadsheet.</li>
+<li><strong>Into a tool:</strong> paste just the <strong><code>Accession</code></strong> column into the tool's <strong>SRA
+Download</strong> box (or, for kSNP, its accession box). The label column is only there
+for your reference — leave it out when loading a tool.</li>
+</ul>
+<hr />
+<h2 id="module-1--irma-assemble-an-influenza-genome">Module 1 — IRMA: assemble an influenza genome</h2>
+<p><strong>What it does.</strong> IRMA (the CDC's Iterative Refinement Meta-Assembler) takes raw
+influenza sequencing reads and reconstructs the eight genome segments, reports
+per-segment coverage and quality, predicts the subtype (e.g. H5N1), and can build
+submission-ready FASTA headers.</p>
+<p><strong>Input.</strong> Raw reads (FASTQ) — exactly what SRA gives you.</p>
+<h3 id="the-data">The data</h3>
+<pre><code>Accession	Organism
+SRR36749644	Influenza A virus
+SRR36749648	Influenza A virus
+SRR36749650	Influenza A virus
+SRR36749472	Influenza A virus
+SRR37580742	Influenza A virus
+</code></pre>
+<p><em>Influenza A virus (IAV) whole-genome sequencing runs. We'll use the same set for
+GenoFLU in Module 2.</em></p>
+<h3 id="steps">Steps</h3>
+<ol>
+<li>
+<p>On the dashboard, <strong>Launch</strong> <strong>IRMA</strong>.</p>
+</li>
+<li>
+<p>In <strong>Projects &amp; Samples</strong> (left), type a project name — e.g. <code>IAV_training</code> —
+and click <strong>Create</strong>.</p>
+</li>
+<li>
+<p>In <strong>Inputs</strong> (right), make sure <code>IAV_training</code> is selected in the dropdown.</p>
+</li>
+<li>
+<p>Find the <strong>SRA Download</strong> box, <strong>paste the five accessions above</strong> (one per
+line), and click <strong>Download</strong>. Watch the <strong>Pipeline Log</strong> — each run appears in
+the project when it finishes downloading.</p>
+</li>
+<li>
+<p><em>(Optional)</em> Open <strong>Sample Metadata</strong> to build submission-ready FASTA headers.
+Every field is optional and each shows an example: <strong>host</strong> (e.g. <code>chicken</code>),
+<strong>state</strong> (<code>California</code>), <strong>collection_year</strong> (<code>2023</code>), <strong>subtype</strong> (<code>H5N1</code>).
+The tool builds each defline as <code>A/host/state/sample/year(subtype)</code>; anything
+you leave blank becomes <code>unknown_host</code>, <code>unknown_subtype</code>, etc. (Note the
+field is <strong>subtype</strong> — e.g. <code>H5N1</code> — not &quot;strain&quot;; <code>H5N1</code> is a subtype.) The
+result is an NCBI-submission-style header per segment, for example:</p>
+<pre><code>&gt;Seq1 [organism=Influenza A virus](A/chicken/California/24-000127-003-original/2023(H5N1)) segment 1, polymerase PB2 (PB2) gene, complete cds.
+&gt;Seq4 [organism=Influenza A virus](A/chicken/California/24-000127-003-original/2023(H5N1)) segment 4, hemagglutinin (HA) gene, complete cds.
+</code></pre>
+<p>This is only needed if you plan to submit sequences to NCBI; skip it for
+training.</p>
+</li>
+<li>
+<p>In <strong>Projects &amp; Samples</strong>, expand the project and <strong>check the box</strong> next to each
+sample you want to run — or use the project's <strong>Select all</strong> checkbox to check
+every sample at once.</p>
+</li>
+<li>
+<p>In the <strong>Run IRMA</strong> section:</p>
+<ul>
+<li><strong>IRMA module:</strong> leave on <strong><code>FLU</code></strong> (it's <code>CoV</code> for SARS-CoV-2).</li>
+<li><strong>Run GenoFLU genotyping:</strong> ✅ <strong>tick this on.</strong> IRMA will assemble <em>and</em>
+genotype in one pass — a preview of Module 2.</li>
+</ul>
+</li>
+<li>
+<p>Click <strong>▶ Run selected (5)</strong>. Assembly takes several minutes per sample; they
+run one after another.</p>
+</li>
+<li>
+<p>When the log shows <code>[DONE]</code>, click a sample name to open its <strong>Results</strong>.</p>
+</li>
+</ol>
+<h3 id="how-to-read-the-output">How to read the output</h3>
+<ul>
+<li><strong>Subtype banner</strong> — e.g. <strong><code>H5N1</code></strong>. This is IRMA's call from the HA and NA
+segments.</li>
+<li><strong>Per-segment table</strong> — one row per influenza segment (PB2, PB1, PA, HA, NP, NA,
+M, NS). The columns that matter:
+<ul>
+<li><strong>Coverage %</strong> — how much of the segment was reconstructed. You want this
+high (near 100%).</li>
+<li><strong>Read depth</strong> — average reads stacked at each position. Higher = more
+confident. Thin coverage (low depth) means a shaky consensus.</li>
+<li><strong>Verdict</strong> — <strong>PASS</strong> (assembled well), <strong>REVIEW</strong> (present but unusual), or
+<strong>FAIL</strong> (missing/too low). A complete influenza genome is <strong>8/8 segments
+PASS</strong>.</li>
+</ul>
+</li>
+<li><strong>Report (PDF)</strong> — a shareable lab report: QC of the input reads, the
+per-segment table, and — appended at the end — a <strong>per-segment coverage plot
+for every segment</strong> (all 8 IRMA coverage reports rolled into the one PDF).</li>
+<li><strong>Result files</strong> — the Results list labels each file so you know what you're
+opening: <strong>IRMA assembly &amp; QC statistics (Excel workbook)</strong> vs. the two GenoFLU
+genotype files, which are now distinguished as <strong>Excel workbook</strong> and
+<strong>tab-delimited text</strong>.</li>
+<li><strong>Submission FASTA</strong> — the consensus sequences, one per segment.</li>
+<li><strong>GenoFLU genotype</strong> (because you ticked it on) — the clade/genotype call; we
+interpret this in the next module.</li>
+</ul>
+<blockquote>
+<p>💡 <strong>Seeing what ran.</strong> After a run, the <strong>Current run</strong> pane (right) lists the
+samples that ran with a <strong>search box</strong> and a <strong>date filter</strong> (Today / Last 7d /
+Last 30d). Click a sample there to open its results — you don't have to go back
+to Projects to find them.</p>
+</blockquote>
+<blockquote>
+<p>🔎 <strong>Teaching point.</strong> If a sample has, say, 7/8 segments PASS and NA at 60%
+coverage, that's a <em>partial</em> genome — usable for subtyping but not for a
+confident whole-genome genotype. The verdict column tells you at a glance.</p>
+</blockquote>
+<hr />
+<h2 id="module-2--genoflu-genotype-an-h5-influenza-genome">Module 2 — GenoFLU: genotype an H5 influenza genome</h2>
+<p><strong>What it does.</strong> GenoFLU (USDA) assigns a <strong>genotype</strong> to a North-American H5
+influenza genome — it BLASTs each of the eight segments against curated
+references and reports the clade/subclade (e.g. <strong><code>2.3.4.4b</code></strong>) plus a per-segment
+lineage breakdown. It's how you tell whether a genome is the &quot;cattle&quot; H5N1
+genotype <strong>B3.13</strong> vs. another constellation.</p>
+<p><strong>Input.</strong> An <strong>assembled</strong> genome (FASTA) — <em>not</em> raw reads. GenoFLU genotypes;
+it does not assemble. So you must assemble first (Module 1).</p>
+<h3 id="two-ways-to-run-it">Two ways to run it</h3>
+<p><strong>The easy way (already done):</strong> you ticked <strong>Run GenoFLU genotyping</strong> in Module 1,
+so IRMA already produced a genotype for each sample. Open a sample's IRMA Results
+and read the <strong>GenoFLU genotype</strong> section. For most work, this is all you need.</p>
+<p><strong>The standalone way (this module):</strong> run the dedicated GenoFLU tool on the FASTA
+that IRMA produced. This is the pattern you'd use for genomes assembled elsewhere.</p>
+<h3 id="steps-1">Steps</h3>
+<ol>
+<li><strong>Launch</strong> <strong>GenoFLU</strong> from the dashboard.</li>
+<li>Open the <strong>same project you assembled in Module 1</strong> (e.g. <code>IAV_training</code>), or
+create a new one. GenoFLU now <strong>lists the genomes IRMA assembled in that
+project automatically</strong> — each sample's submission/assembly FASTA appears as a
+ready-to-run sample (no copying or uploading needed).</li>
+<li>Need a genome that wasn't assembled here? Use <strong>Download genome FASTA by
+accession</strong> (GenoFLU's Inputs pane — this replaces the old SRA read download,
+since GenoFLU genotypes <em>assembled</em> genomes):
+<ul>
+<li>paste GenBank/RefSeq nucleotide accessions or a <code>GCA_</code>/<code>GCF_</code> assembly, <strong>or</strong></li>
+<li>paste a <strong>BioSample</strong> (e.g. <code>SAMN60641678</code>) or sample name — GenoFLU pulls
+that isolate's <strong>8 influenza segments</strong> and saves them as one multi-FASTA
+genome ready to genotype. You can also still <strong>Choose Files</strong> / <strong>Link</strong> an
+assembly from elsewhere.</li>
+</ul>
+</li>
+<li>Leave <strong>Percent-identity threshold</strong> at its default (<strong>98%</strong>, the USDA
+surveillance standard).</li>
+<li>Check the sample and click <strong>▶ Run selected (1)</strong>.</li>
+<li>Open <strong>Results</strong>.</li>
+</ol>
+<h3 id="how-to-read-the-output-1">How to read the output</h3>
+<ul>
+<li><strong>Genotype banner</strong> — the headline call, e.g. <strong><code>B3.13</code></strong> or a clade like
+<strong><code>2.3.4.4b</code></strong>. A <strong>green</strong> badge means all 8 segments were confidently
+assigned; <strong>amber</strong> means the genome was incomplete, so the call is provisional.</li>
+<li><strong>Per-segment table</strong> — for each segment: the assigned <strong>lineage</strong>, the
+<strong>% identity</strong> to the best reference, and mismatches. Reading down this column
+tells you if the genome is a &quot;clean&quot; constellation or a <strong>reassortant</strong> (segments
+from different lineages).</li>
+<li><strong>Report (PDF)</strong> — the same information in a lab-report format.</li>
+</ul>
+<blockquote>
+<p>🔎 <strong>Teaching point.</strong> The genotype is the <em>combination</em> of all eight segment
+lineages. That's why an incomplete assembly (amber badge) can't be given a firm
+genotype — a missing segment could change the constellation. Always check the
+IRMA verdict (8/8 PASS) before trusting a genotype.</p>
+</blockquote>
+<hr />
+<h2 id="module-3--kraken-id-parse-what-is-actually-in-this-sample">Module 3 — Kraken ID-Parse: what is actually in this sample?</h2>
+<p><strong>What it does.</strong> Kraken2 labels <strong>every read</strong> with a taxon by matching its
+k-mers against a database of known genomes. This tool wraps that in the three
+jobs a diagnostic lab actually has:</p>
+<ol>
+<li><strong>Identify</strong> — classify the reads and draw an interactive <strong>Krona</strong> chart of
+everything found. It answers <em>&quot;what is in this tube?&quot;</em> without you having to
+assume the answer first.</li>
+<li><strong>Parse</strong> — extract only the reads belonging to a <strong>target taxon</strong> (and
+everything below it in the taxonomy) and leave them as clean <code>FASTQ.gz</code>. That
+is a <strong>decontaminated sample</strong> you can re-run through vSNP3, IRMA, or anything
+else in the suite.</li>
+<li><strong>Identify by BLAST</strong> — assemble those parsed reads, BLAST the contigs for a
+species-level call, and build coverage charts against the best-matching
+reference genomes.</li>
+</ol>
+<p><strong>Input.</strong> Paired FASTQ reads — upload, <strong>Link</strong>, or <strong>SRA Download</strong>, exactly as
+in Part A.3. (This tool's SRA box also accepts <strong>SRX / SRS / PRJNA</strong> accessions
+and expands them to their runs.)</p>
+<p><strong>Why it comes before vSNP3.</strong> Every reference-based tool assumes it already knows
+what the organism is. When mapping is poor, or a submitter's label looks wrong,
+this is the tool that tells you what you actually sequenced — and hands back
+cleaned reads so the run can go ahead. Module 4 uses it exactly that way.</p>
+<h3 id="before-you-begin--databases">Before you begin — databases</h3>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th>Mode you want to run</th>
+<th>Needs</th>
+<th>Set up with</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Kraken + Krona only, and Kraken + parse</td>
+<td><strong>Kraken2 database</strong> <em>(required)</em></td>
+<td><code>bin/bdtools setup-databases kraken</code></td>
+</tr>
+<tr>
+<td>Kraken + parse + BLAST</td>
+<td>also a <strong>BLAST database</strong></td>
+<td><code>bin/bdtools setup-databases blast</code></td>
+</tr>
+</tbody>
+</table></div>
+<p><code>setup-databases kraken</code> downloads <strong><code>k2_standard_08gb</code></strong> (~8 GB) and points the
+tool at it for you. <code>setup-databases blast</code> stages NCBI's
+<strong><code>ref_prok_rep_genomes</code></strong> (representative <em>prokaryote</em> genomes, tens of GB) —
+only needed for the full BLAST mode, so skip it for now if you're just screening.
+Check either at any time with <code>bin/bdtools doctor kraken_id_parse_gui</code>.</p>
+<h3 id="choosing-and-adding-a-kraken2-database">Choosing and adding a Kraken2 database</h3>
+<p><strong>Kraken can only report what is in its database.</strong> Anything not represented comes
+back as <em>unclassified</em> — or, worse, as the nearest relative that <em>is</em> in there. So
+the database is a scientific choice, not an install detail. Prebuilt indexes are
+published at <strong><a href="https://benlangmead.github.io/aws-indexes/k2">https://benlangmead.github.io/aws-indexes/k2</a></strong> (that page lists
+each index's current size and build date):</p>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th>Index family</th>
+<th>Contains</th>
+<th>Pick it when…</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Viral</strong></td>
+<td>viruses only (&lt; 1 GB)</td>
+<td>you only care about viral content and want it fast</td>
+</tr>
+<tr>
+<td><strong>Standard-8 / Standard-16</strong> <em>(the suite's default is Standard-8)</em></td>
+<td>the Standard content, capped to fit 8 or 16 GB</td>
+<td>you're on a laptop or a modest VM</td>
+</tr>
+<tr>
+<td><strong>Standard</strong></td>
+<td>archaea, bacteria, viral, plasmid, <strong>human</strong>, UniVec_Core (tens of GB)</td>
+<td>you have the RAM and want the uncapped index</td>
+</tr>
+<tr>
+<td><strong>PlusPF / PlusPFP</strong></td>
+<td>Standard <strong>+ protozoa + fungi</strong> (PFP adds plants)</td>
+<td>your targets include protozoa or fungi — e.g. the <strong>Apicomplexa</strong> taxon in the dropdown</td>
+</tr>
+<tr>
+<td><strong>core_nt</strong></td>
+<td>very broad nucleotide collection (hundreds of GB)</td>
+<td>a server-class machine, and you need maximum breadth</td>
+</tr>
+</tbody>
+</table></div>
+<blockquote>
+<p>🧠 <strong>RAM is the real constraint.</strong> Kraken2 loads its index into memory, so plan
+on needing <strong>about as much RAM as the index is big</strong>. That is why the capped
+Standard-8 build is the suite's default — it runs on a laptop.</p>
+</blockquote>
+<blockquote>
+<p>⚠️ <strong>Two consequences worth knowing before you read your first chart.</strong>
+<strong>(1)</strong> The Standard family has <strong>no protozoa and no fungi</strong> — a <em>Theileria</em> or
+<em>Aspergillus</em> sample screened against Standard-8 looks mostly unclassified.
+Use <strong>PlusPF</strong> for those. <strong>(2)</strong> It contains <strong>human but no livestock
+genomes</strong>, so <strong>bovine host reads mostly land in &quot;unclassified&quot;</strong> rather than
+being named. A large unclassified fraction in a veterinary sample is usually
+host DNA, not a failed run.</p>
+</blockquote>
+<p><strong>To add another index</strong>, download and unpack it (its folder must contain
+<code>hash.k2d</code>, <code>opts.k2d</code> and <code>taxo.k2d</code> — Kraken2 reads all three), then either:</p>
+<ul>
+<li><strong>in the GUI</strong> — <strong>Settings → Kraken2 databases</strong>, paste the folder path (or
+<strong>Browse…</strong>), click <strong>+ Add</strong>, then <strong>Use this database</strong> and <strong>Save &amp;
+Refresh</strong>; or</li>
+<li><strong>from the umbrella repo</strong> —<pre><code class="language-bash">python3 bin/lib/db_config.py kraken --kraken-db /path/to/kraken2/k2_pluspf
+</code></pre>
+</li>
+</ul>
+<p>Saved databases then appear in the <strong>Kraken2 DB path</strong> dropdown in the run panel,
+so switching index for a single run is one click — and the vSNP GUI reads the same
+list when it launches a Kraken run.</p>
+<h3 id="the-three-run-modes--the-concept-to-learn-here">The three run modes — the concept to learn here</h3>
+<p>You pick one <strong>Run mode</strong> card before every run. They are cumulative: each does
+everything the one above it does, and more.</p>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th>Run mode</th>
+<th>Needs</th>
+<th>Leaves you with</th>
+<th>Roughly</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Kraken + Krona only</strong></td>
+<td>Kraken2 DB</td>
+<td>Krona chart + the top-taxon verdict. No target taxon needed.</td>
+<td>a few min/sample</td>
+</tr>
+<tr>
+<td><strong>Kraken + parse reads</strong></td>
+<td>+ a <strong>target taxon</strong></td>
+<td>the target's reads as <code>FASTQ.gz</code>, a statistics workbook and a run report</td>
+<td>a few min more</td>
+</tr>
+<tr>
+<td><strong>Kraken + parse + BLAST</strong></td>
+<td>+ a <strong>BLAST DB</strong></td>
+<td>assembly, a BLAST species call, coverage charts, the full report</td>
+<td>budget most of an hour</td>
+</tr>
+</tbody>
+</table></div>
+<h3 id="the-data-1">The data</h3>
+<pre><code>Accession	Why this one
+SRR28623786	M. tuberculosis complex isolate — the sample the suite validates this tool against
+SRR1173725	One of the poor-mapping TB samples from Module 4 — here you see what else is in it
+</code></pre>
+<p><em>Two samples of the same declared organism: one clean, one that vSNP3 struggles
+with. Reading them side by side is the whole point of this module.</em></p>
+<h3 id="part-1--identify-what-is-in-the-tube">Part 1 — Identify: what is in the tube?</h3>
+<ol>
+<li><em>(First-time only)</em> <code>bin/bdtools setup-databases kraken</code>.</li>
+<li><strong>Launch</strong> <strong>Kraken ID-Parse</strong> from the dashboard — its card reads <strong>Kraken ID
+/ Parse</strong>. Create a project — e.g. <code>kraken_training</code>. (Projects are shared with
+vSNP3, so this one will be visible there too.)</li>
+<li><strong>Inputs → SRA Download</strong> → paste both accessions → <strong>Download</strong>.</li>
+<li>Expand the project and <strong>check</strong> both samples.</li>
+<li>In <strong>Configure &amp; Run</strong>, choose the <strong>Kraken + Krona only</strong> mode card. Leave
+<strong>Target Taxon</strong> alone — this mode doesn't use it.</li>
+<li>Confirm <strong>Kraken2 DB path</strong> is filled in (it is, if <code>setup-databases</code> ran).</li>
+<li>Click <strong>▶ Run selected (2)</strong>.</li>
+</ol>
+<h3 id="how-to-read-the-identification">How to read the identification</h3>
+<p>The <strong>Results</strong> table gives you the verdict per sample:</p>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th>Column</th>
+<th>What it tells you</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Top taxon</strong> / <strong>%</strong></td>
+<td>The highest-scoring <strong>species-rank</strong> row of the Kraken report, and its share of reads.</td>
+</tr>
+<tr>
+<td><strong>Runner-up</strong></td>
+<td>The second species, with its share — <em>this is your contamination column.</em></td>
+</tr>
+<tr>
+<td><strong>Status</strong></td>
+<td>pass / review / fail, with the reason behind the chip.</td>
+</tr>
+<tr>
+<td><strong>Open</strong></td>
+<td><strong>📊 Krona</strong> — the interactive chart. (<strong>📄 Report</strong> appears for the parse and BLAST modes; a Kraken-only run stops at the chart.)</td>
+</tr>
+<tr>
+<td><strong>Files</strong></td>
+<td>Expands to the run's output files — everything lands in <code>&lt;project&gt;/kraken/&lt;sample&gt;/</code>.</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>Open the 📊 Krona chart.</strong> It is a zoomable ring: the centre holds all the
+reads, and each ring outwards is one rank deeper (domain → phylum → … →
+species). <strong>Click a wedge to zoom into it</strong>; click the centre, or the lineage
+breadcrumb at the top, to come back out. Wedge size <em>is</em> the read proportion — a
+contaminant is a wedge that has no business being there.</p>
+<p><strong>What you should see:</strong></p>
+<ul>
+<li><strong><code>SRR28623786</code></strong> — one dominant <em>Mycobacterium</em> wedge (~96% of reads). A clean
+isolate looks like this: one big wedge, a thin rim of noise.</li>
+<li><strong><code>SRR1173725</code></strong> — a busier chart: the target is there, but it shares the
+space. What else shows up is the likely reason vSNP3 maps this one poorly, and
+the <strong>Runner-up</strong> column names the biggest of them.</li>
+</ul>
+<blockquote>
+<p>🔎 <strong>Teaching point — read the complex, not the species.</strong> For MTBC the
+<em>species</em> row is misleading: <em>M. tuberculosis</em>, <em>M. bovis</em>, <em>M. orygis</em> and the
+rest are near-identical, so Kraken splits reads across all of them and no single
+species looks dominant. The suite's own validation asserts the <strong>genus</strong>
+(~96% <em>Mycobacterium</em>) for exactly this reason. Zoom out one ring in Krona and
+judge at the <strong>complex/genus</strong> level; use vSNP3 or MLST when you need the member.</p>
+</blockquote>
+<blockquote>
+<p>💡 <strong>Unclassified is information too.</strong> A high unclassified fraction is normal
+for veterinary samples (no livestock genomes in the Standard index) and for
+targets your index doesn't cover — see the database table above. It is not, by
+itself, a failed run.</p>
+</blockquote>
+<h3 id="part-2--parse-extract-the-targets-reads">Part 2 — Parse: extract the target's reads</h3>
+<p>Now clean up <code>SRR1173725</code> so vSNP3 can use it.</p>
+<ol>
+<li>Same project. Uncheck <code>SRR28623786</code> and leave <strong><code>SRR1173725</code></strong> checked, then
+choose the <strong>Kraken + parse reads</strong> mode card.</li>
+<li>In <strong>Target Taxon</strong>, select <strong><code>Mycobacterium tuberculosis complex</code></strong>. The
+dropdown is a shared list — if the taxon you need isn't there, type it into
+<strong>Add a new taxon to the list…</strong> and click <strong>+ Add</strong>. It must match the name
+Kraken reports <strong>exactly</strong>; new entries are saved to this install's
+<code>config/taxa.yaml</code> and show up in the vSNP GUI too.</li>
+<li>Click <strong>▶ Run selected (1)</strong>.</li>
+</ol>
+<p><strong>What you get</strong>, in <code>&lt;project&gt;/kraken/&lt;sample&gt;/</code>:</p>
+<ul>
+<li><strong><code>&lt;sample&gt;_&lt;taxon&gt;_R1.fastq.gz</code> / <code>_R2.fastq.gz</code></strong> — the parsed reads: the
+target taxon <strong>and its children</strong>, everything else dropped. These are the
+deliverable of this mode.</li>
+<li><strong>Run statistics workbook</strong> (<code>*_stats.xlsx</code>) and <strong>Report HTML/PDF</strong> — input read
+QC (read counts, % passing Q30, mean quality, average length), the taxon and
+<strong>Taxon ID</strong>, total input reads, <strong>extracted reads</strong> and the <strong>extraction rate
+(%)</strong>, plus the classification summary.</li>
+<li><strong>Bracken results workbook</strong> — abundance re-estimation. <em>Linux and OOD only:</em>
+Bracken has no macOS build, so on a Mac the run prints a warning, skips it, and
+carries on.</li>
+</ul>
+<p>The number to look at is the <strong>extraction rate</strong> — what fraction of the input
+reads belonged to your target. A sample that is only partly target comes back as a
+smaller but much cleaner FASTQ pair, which is exactly why its mapping improves on
+the re-run.</p>
+<blockquote>
+<p>⚠️ <strong>If the taxon isn't found</strong>, the run stops cleanly and says so: the workbook
+records <code>Extracted Reads: No Reads Found</code> and the sample is flagged in Results.
+Nine times out of ten the name doesn't match what Kraken reports — check the
+spelling against the Krona chart.</p>
+</blockquote>
+<p><strong>Hand the parsed reads to vSNP3.</strong> Both tools see the same project folder, so in
+the vSNP GUI you can <strong>Import → Step 1</strong> the parsed reads and re-run alignment on
+them. Module 4 does this from the other direction — launching this same parse from
+a vSNP3 Step 1 Results row, without leaving vSNP.</p>
+<h3 id="part-3--identify-by-blast-optional-needs-the-blast-database">Part 3 — Identify by BLAST (optional; needs the BLAST database)</h3>
+<p>Use this when the read-level call is not enough — an unknown isolate, or a
+species-level answer you want to see evidence for.</p>
+<ol>
+<li><em>(First-time only)</em> <code>bin/bdtools setup-databases blast</code>.</li>
+<li>Check <strong><code>SRR28623786</code></strong>, choose the <strong>Kraken + parse + BLAST</strong> mode card, keep
+the target taxon, and confirm <strong>BLAST DB path</strong> points at
+<code>…/blast/ref_prok_rep_genomes</code>.</li>
+<li>Click <strong>▶ Run selected (1)</strong> and expect it to take a while — it assembles,
+BLASTs, downloads the top reference sequences, and aligns your reads back to
+them.</li>
+</ol>
+<p>Extra outputs in the <strong>Files</strong> cell:</p>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th>File</th>
+<th>What it is</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>BLAST summary</strong></td>
+<td>Top hits for each contig — accession, % identity, bit score, organism. The species call and its evidence.</td>
+</tr>
+<tr>
+<td><strong>De novo assembly FASTA</strong></td>
+<td>The contigs assembled from the parsed reads.</td>
+</tr>
+<tr>
+<td><strong>Reference-guided FASTA</strong></td>
+<td>The consensus built by mapping the original reads back to the best-matching reference.</td>
+</tr>
+<tr>
+<td><strong>Coverage &amp; Variants (interactive)</strong></td>
+<td>Coverage across each reference with variants marked — open this one first.</td>
+</tr>
+<tr>
+<td><strong>Coverage graph PDF</strong></td>
+<td>The same coverage, print-ready for a report.</td>
+</tr>
+<tr>
+<td><strong>Report HTML / PDF</strong></td>
+<td>Everything above in one document: read QC, extraction, assembly stats (contigs, longest contig, N50, mean coverage), the BLAST table and the coverage figures.</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>How to judge it:</strong> a confident identification is a <strong>high-identity BLAST hit
+covered evenly across the reference</strong>. Patchy coverage with a high identity
+usually means only part of the organism is present (or too few reads); even
+coverage at mediocre identity means the true organism isn't in the database and
+you're seeing its nearest relative.</p>
+<blockquote>
+<p>⚠️ <strong>Match the BLAST database to the target.</strong> <code>ref_prok_rep_genomes</code> holds
+<em>prokaryotes</em> — it can identify the MTBC sample above, but it cannot identify a
+virus. For viral targets stage a database that contains them (e.g. <code>core_nt</code>)
+and select it in <strong>BLAST DB path</strong>. The pipeline also carries taxon-specific
+logic for some targets — an <strong>Orbivirus</strong> run, for example, goes on to separate
+<strong>bluetongue virus</strong> from <strong>epizootic hemorrhagic disease virus</strong> and orders the
+coverage by segment.</p>
+</blockquote>
+<blockquote>
+<p>🔎 <strong>Teaching point — three tools, three kinds of answer.</strong> Kraken answers
+<em>&quot;what is in here?&quot;</em> from reads, in minutes, across everything in its database.
+BLAST answers <em>&quot;which species, and how good is the match?&quot;</em> from an assembly.
+vSNP3 and kSNP answer <em>&quot;how are these isolates related?&quot;</em> — but only once you
+already know what they are. Screening first is what keeps the later answer
+honest.</p>
+</blockquote>
+<hr />
+<h2 id="module-4--vsnp3-the-two-step-snp-workflow-introduction">Module 4 — vSNP3: the two-step SNP workflow (introduction)</h2>
+<blockquote>
+<p>🖥 <strong>Slides first?</strong> <a href="https://github.com/kapurlab/bioinformatic_diagnostic_tools/blob/main/docs/vsnp3_orientation_slides.html"><strong>vSNP3 — the whole process</strong></a> is a twelve-slide
+walkthrough of everything in Modules 4 and 5: what the two steps do, how the reference-type database is
+organised, how defining SNPs split large sets into groups, and how a SNP call is validated in the reads.
+It is one self-contained file — save it from <code>docs/</code> and open it in any browser; hover the underlined
+phrases to see the matching bdtools screen, and use <strong>Print / PDF</strong> if you want a paper copy.</p>
+</blockquote>
+<p><strong>What it does.</strong> vSNP3 (USDA) is the suite's high-resolution SNP tool for
+bacteria and viruses. It answers <em>&quot;how closely related are these isolates?&quot;</em> —
+the application is for outbreak surveillance. This example will use TB as
+the practice organism.</p>
+<p><strong>The two-step model — the single most important concept:</strong></p>
+<ul>
+<li><strong>Step 1 — one sample at a time.</strong> Align a sample's reads to a reference genome
+and call its variants, producing a per-sample <strong>VCF</strong> file. Do this once per
+sample.</li>
+<li><strong>Step 2 — compare many samples.</strong> Collect the Step 1 VCFs with zero coverage
+(<code>zc.vcf</code>), build a <strong>SNP table</strong> (who differs from whom, and where) and a
+<strong>phylogenetic tree</strong>. Using <strong>defining SNPs</strong>, samples are arranged into
+meaningful small groups to speed analysis time and provide detailed focus to
+the relevant samples.</li>
+</ul>
+<p>The power of this split: you run Step 1 once, then re-run Step 2 as often as you
+like — adding samples, changing thresholds — <strong>without repeating the major
+computation workload of alignment and SNP calling.</strong></p>
+<h3 id="the-data-2">The data</h3>
+<pre><code>Accession	Organism
+SRR12882448	M. tuberculosis complex
+SRR1173725	M. tuberculosis complex
+SRR998630	M. tuberculosis complex
+SRR7236232	M. tuberculosis complex
+SRR6797355	M. tuberculosis complex
+SRR10251192	M. tuberculosis complex
+SRR10251191	M. tuberculosis complex
+SRR10251185	M. tuberculosis complex
+SRR10251193	M. tuberculosis complex
+</code></pre>
+<p><em>A small TB / M. bovis complex set — enough to learn Step 1 → QC → Step 2.</em></p>
+<h3 id="step-1--align-and-call-variants">Step 1 — align and call variants</h3>
+<ol>
+<li><strong>First-time only:</strong> set up the reference databases (Part A.2):<pre><code class="language-bash">bin/bdtools setup-databases vsnp-refs vsnp-deps
+</code></pre>
+</li>
+<li><strong>Launch</strong> <strong>vSNP3</strong>. Click <strong>Preflight</strong> in Settings — it must go green before
+the Run buttons enable.</li>
+<li>Create a project — e.g. <code>TB_intro</code>.</li>
+<li>In <strong>Inputs → SRA Download</strong>, paste the nine accessions above and click
+<strong>Download</strong>.</li>
+<li>In the <strong>Step 1</strong> section, click <strong>Setup</strong> (this organizes the downloaded reads
+into one folder per sample).</li>
+<li><strong>Choose a reference</strong> if one isn't already selected. The two built-in TB
+references are <strong><code>Mycobacterium_H37</code></strong> (<em>M. tuberculosis</em>) and
+<strong><code>Mycobacterium_AF2122</code></strong> (<em>M. bovis</em>).</li>
+<li>Click <strong>▶ Run</strong>. Step 1 processes a few samples in parallel; use <strong>Stop</strong> to
+halt if needed. This is the slow part — reads are being aligned.</li>
+</ol>
+<h3 id="review-quality-before-you-go-on">Review quality before you go on</h3>
+<p>Open <strong>QC Summary / Step 1 Results</strong>. This is a mandatory checkpoint. Key columns:</p>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Healthy</th>
+<th>Worry when…</th>
+<th>Why it matters</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Avg Depth of Coverage</strong></td>
+<td>≥ 40×</td>
+<td>&lt; 20×</td>
+<td>Low depth = unreliable SNP calls.</td>
+</tr>
+<tr>
+<td><strong>% Reference with Zero Coverage</strong></td>
+<td>&lt; 5%</td>
+<td>&gt; 10%</td>
+<td>High = wrong reference or poor library.</td>
+</tr>
+<tr>
+<td><strong>R1/R2 % passing Q20</strong></td>
+<td>&gt; 50%</td>
+<td>very low</td>
+<td>Poor-quality sequencing run.</td>
+</tr>
+<tr>
+<td><strong>Quality SNPs</strong></td>
+<td>organism-typical</td>
+<td>unusually high</td>
+<td>A spike often means the <em>wrong reference</em> or contamination.</td>
+</tr>
+</tbody>
+</table></div>
+<p>Tick the <strong>Exclude</strong> box for any sample that fails, then click <strong>Save
+Exclusions</strong> — Step 2 will automatically leave those samples out.</p>
+<h3 id="low-mapping-decontaminate-with-kraken-then-re-run-step-1">Low mapping? Decontaminate with Kraken, then re-run Step 1</h3>
+<p>In this dataset <strong><code>SRR1173725</code></strong> and <strong><code>SRR998630</code></strong> map poorly to the reference.
+Low mapping usually means <strong>contaminated reads</strong> — host DNA or other bacteria
+mixed in with the target. Rather than discard the samples, clean them and try
+again. This is <a href="#module-3--kraken-id-parse-what-is-actually-in-this-sample">Module 3</a>'s
+parse step, launched from inside vSNP so you never leave Step 1 — run it there
+first if you want to <em>see</em> what the contamination is before removing it:</p>
+<ol>
+<li>From the Step 1 Results row for a low-mapping sample, run <strong>Kraken</strong> on it.
+Choose <strong>Parse reads only (skip BLAST)</strong> and select the target taxon
+<strong>Mycobacterium tuberculosis complex</strong> — this keeps only the reads that
+classify to the complex and drops the contaminating ones.</li>
+<li>When the parse finishes, <strong>Import → Step 1</strong> the parsed reads so they appear
+as a sample in this project's download set.</li>
+<li>With the parsed samples added, click <strong>Setup</strong>, then <strong>▶ Run</strong>. Only the
+newly-added (parsed) samples are aligned — samples already marked <strong>Complete</strong>
+are skipped, so this is quick. (Use <strong>Force re-run</strong> only if you deliberately
+want to re-align everything.)</li>
+<li>Re-check the QC for the parsed samples — mapping should now be much higher.</li>
+</ol>
+<h3 id="step-2--build-the-snp-table-and-tree">Step 2 — build the SNP table and tree</h3>
+<ol>
+<li>Go to the <strong>Step 2</strong> section and choose <strong>Use Step 1 only</strong> (compare the samples
+you just processed).</li>
+<li>Click <strong>Setup</strong>. vSNP3 links your Step 1 VCFs and confirms they all used the
+<strong>same reference</strong> (it refuses to mix references — that's correct behavior).</li>
+<li>Click <strong>▶ Run</strong>.</li>
+<li>When done, expand the timestamped run under <strong>Results</strong>.</li>
+</ol>
+<h3 id="how-to-read-the-output-2">How to read the output</h3>
+<ul>
+<li><strong><code>…_sort_table.xlsx</code> (the cascading SNP table)</strong> — the go-to SNP table. Rows
+are SNP positions, columns are samples, and each cell shows the base that
+sample carries. It's called <em>cascading</em> because the positions and samples are
+ordered so shared SNPs line up into a staircase — samples that carry the same
+block of SNPs sit together, making related groups easy to read off at a glance.
+Samples that share the same pattern of SNPs are closely related. This is the
+table you'd put in a report.</li>
+</ul>
+<blockquote>
+<p>🖱 <strong>Try it.</strong> Open the cascading table and find the <strong><code>La3_orygis</code></strong> group,
+then click one of its SNP cells — the viewer shows the read <strong>alignment at that
+position</strong>, so you can confirm the call directly in the reads.</p>
+</blockquote>
+<ul>
+<li><strong><code>…_tree.tre</code> (phylogenetic tree)</strong> — open it in a tree viewer (FigTree, or
+the built-in viewer). <strong>Branch length ≈ number of SNPs.</strong> Isolates on a tight
+cluster (a handful of SNPs apart) are plausibly linked; isolates far apart are
+not.</li>
+<li><strong><code>step2_summary.html</code></strong> — an interactive summary tying it together.</li>
+<li><strong>IUPAC codes in the table</strong> — a pure base (<code>A/C/G/T</code>) is a clean call. A letter
+like <strong><code>R</code>, <code>Y</code>, <code>M</code>, <code>K</code>, <code>S</code>, <code>W</code></strong> means a <em>mixed</em> position (two bases at
+once) — a red flag for contamination or co-infection. A <strong><code>-</code></strong> means no
+coverage there.</li>
+</ul>
+<blockquote>
+<p>🔎 <strong>Teaching point.</strong> &quot;How many SNPs apart is a real outbreak link?&quot; depends on
+the organism, but for TB, isolates within ~5–12 SNPs are often considered
+potentially linked. The tree and the SNP table are two views of the same
+answer — always look at both.</p>
+</blockquote>
+<hr />
+<h2 id="module-5--vsnp3-a-whole-complex-phylogeny">Module 5 — vSNP3: a whole-complex phylogeny</h2>
+<p>Now scale up. This module builds a tree spanning the <strong>entire <em>M. tuberculosis</em>
+complex</strong> — every human lineage plus the animal-adapted members (<em>M. bovis</em>,
+<em>M. caprae</em>, <em>M. orygis</em>, <em>M. microti</em>, and more). It's the same Step 1 → Step 2
+workflow as Module 4, just with a broader, labeled panel so you can <em>see</em> the
+lineage structure in the tree.</p>
+<h3 id="the-data--mtbc-representation-panel">The data — MTBC representation panel</h3>
+<p>Paste any subset (or all) of these into <strong>SRA Download</strong>. Each is labeled with the
+lineage/species it represents, so you can confirm the tree groups them correctly.</p>
+<pre><code>Accession	Lineage / species
+ERR212113	Lineage 1
+ERR270648	Lineage 1
+ERR2704680	Lineage 1
+SRR671797	Lineage 2
+ERR2704702	Lineage 2
+ERR234100	Lineage 2
+ERR553373	Lineage 2
+ERR221591	Lineage 3
+SRR6797316	Lineage 3
+SRR6964550	Lineage 3
+ERR2704693	Lineage 3
+ERR234198	Lineage 4
+ERR270639	Lineage 4
+SRR671750	Lineage 4
+ERR2704709	Lineage 4
+ERR234113	Lineage 5
+ERR234680	Lineage 5
+ERR2704812	Lineage 5
+ERR2704686	Lineage 5
+ERR234186	Lineage 6
+ERR2383628	Lineage 6
+ERR270805	Lineage 6
+ERR2704681	Lineage 6
+ERR1200604	Lineage 7
+ERR181435	Lineage 7
+ERR756345	Lineage 7
+ERR2704711	Lineage 7
+SRR10828835	Lineage 8
+SRR1173725	Lineage 8
+ERR181314	Lineage 9
+ERR181315	Lineage 9
+ERR4192384	Lineage 9
+ERR2516384	Lineage 10
+ERR2707158	Lineage 10
+ERR212091	M. bovis
+SRR5216728	M. bovis
+SRR7983754	M. bovis
+SRR1791695	M. bovis
+ERR10430697	M. caprae
+ERR10430698	M. caprae
+ERR1462610	M. caprae
+SRR7617662	M. caprae
+ERR027295	M. microti
+ERR553376	M. microti
+ERR027297	M. microti
+SRR3647357	M. microti
+SRR3500411	M. mungi
+ERR015582	M. orygis
+ERR234682	M. orygis
+SRR6797355	M. orygis
+SRR5642711	M. orygis
+SRR1239336	M. pinnipedii
+SRR1239339	M. pinnipedii
+SRR7693584	M. pinnipedii
+ERR970409	M. suricattae
+ERR970410	M. suricattae
+ERR970412	M. suricattae
+ERR266120	M. canettii
+</code></pre>
+<blockquote>
+<p>💡 <strong>Start small.</strong> This is a large panel — dozens of genomes, each aligned
+individually in Step 1, which is time-consuming. For a first pass, pick <strong>~2
+samples per lineage</strong> (say 12–16 total). Add the rest later and just re-run
+Step 2 — no re-alignment needed. That's the payoff of the two-step design.</p>
+</blockquote>
+<h3 id="steps-2">Steps</h3>
+<p>Identical to Module 4:</p>
+<ol>
+<li>New project — e.g. <code>MTBC_phylogeny</code>.</li>
+<li><strong>SRA Download</strong> → paste your chosen accessions → <strong>Download</strong>.</li>
+<li><strong>Step 1</strong>: <strong>Setup</strong> → <strong>choose a single common reference</strong> (e.g.
+<strong><code>Mycobacterium_H37</code></strong>) so the whole panel aligns to the same coordinates and
+Step 2 can compare them all in one tree → <strong>Run</strong>.</li>
+<li><strong>QC Summary</strong>: review, exclude any failures, <strong>Save Exclusions</strong>.</li>
+<li><strong>Step 2</strong>: <strong>Use Step 1 only</strong> → <strong>Setup</strong> → <strong>Run</strong>.</li>
+</ol>
+<blockquote>
+<p>🏷 <strong>Label the tree with a metadata file.</strong> The tree tips default to the
+accession. To show readable names (lineage/species), take the <strong>sample list</strong>
+for your panel and build a small <strong>metadata Excel</strong> with two columns —
+<code>Original name</code> (the VCF file-stem) and <code>Display label</code> (e.g. <code>L2_Beijing</code>,
+<code>M_orygis_ERR015582</code>). Add it in the <strong>Sample Metadata</strong> pane; Step 2 renames
+the tips to your labels. (This is also how you'd re-label an outbreak set for a
+report.)</p>
+</blockquote>
+<h3 id="how-to-read-the-output-3">How to read the output</h3>
+<p>Open the <strong>tree</strong> (<code>…_tree.tre</code>). Because you know each sample's true lineage from
+the labels above, this is a self-checking exercise:</p>
+<ul>
+<li>Samples of the <strong>same lineage should form clusters</strong> (clades) together.</li>
+<li>Look at how the lineages that are <strong>historically regarded as human-adapted</strong>
+vs. <strong>animal-adapted</strong> fall out on the tree. The human lineages (Lineages 1–4,
+7, …) and the animal-associated species (<em>M. bovis</em>, <em>M. caprae</em>, <em>M. orygis</em>,
+<em>M. microti</em>, <em>M. pinnipedii</em>, …) each tend to group among their own kind — a
+useful sanity check that the panel resolved as expected.</li>
+<li>If a sample lands in the &quot;wrong&quot; clade, it's usually a QC problem (low coverage,
+wrong reference) you can trace back in the Step 1 stats.</li>
+</ul>
+<p>The <strong>cascading SNP table</strong> shows the shared-SNP patterns that <em>define</em> each
+lineage — the columns of SNPs that all Lineage-2 samples share, for instance.</p>
+<blockquote>
+<p>📏 <strong>These tables get big.</strong> A whole-complex SNP table has thousands of
+positions across dozens of samples — far too large to read cell-by-cell. That's
+exactly why we use <strong>defining SNPs</strong> to collapse the panel into smaller, more
+meaningful <strong>outbreak groups</strong>: instead of the full matrix, you work with the
+handful of SNPs that define a cluster, which is what makes a report legible.</p>
+</blockquote>
+<hr />
+<h2 id="module-6--amrfinderplus-antimicrobial-resistance-genes">Module 6 — AMRFinderPlus: antimicrobial-resistance genes</h2>
+<p><strong>What it does.</strong> AMRFinderPlus (NCBI) scans a bacterial genome for <strong>acquired
+resistance genes</strong> and <strong>resistance-conferring point mutations</strong>. The GUI adds two
+conveniences: it <strong>assembles</strong> raw reads for you (so you can start from SRA), and
+it <strong>detects the organism</strong> (via Kraken2) so it can screen for the right
+species-specific mutations.</p>
+<p><strong>Input.</strong> Raw reads (FASTQ) or an assembled genome (FASTA). We'll start from
+reads.</p>
+<h3 id="the-data-3">The data</h3>
+<p>Two isolates — put both in one project, or one each. The <em>Pasteurella</em> isolate is reused for MLST in Module 7.</p>
+<pre><code>Accession	Organism
+SRR28320745	Pasteurella multocida
+SRR39605045	Escherichia coli
+</code></pre>
+<h3 id="steps-3">Steps</h3>
+<ol>
+<li><em>(Required, first-time)</em> install the AMRFinderPlus database:
+<code>bin/bdtools setup-databases amrfinder</code>. Nothing is detected without it — the
+run still writes a report, it just has no AMR calls in it.
+<em>(Recommended)</em> also set up the Kraken2 DB for automatic organism detection:
+<code>bin/bdtools setup-databases kraken</code>. Without that one you just pick the
+organism manually — that's fine.</li>
+<li><strong>Launch</strong> <strong>AMRFinderPlus</strong>. Create a project — e.g. <code>AMR_training</code>.</li>
+<li><strong>Inputs → SRA Download</strong> → paste <code>SRR28320745</code> (and/or <code>SRR39605045</code>) →
+<strong>Download</strong>. When it finishes, a <strong>per-sample status list</strong> shows which
+accessions downloaded (<code>✓</code>) and which failed (<code>✗</code>); if one fails, the Pipeline
+Log has the per-method reason, and you can just retry that accession.</li>
+<li>Expand the project and <strong>check</strong> the sample.</li>
+<li>In <strong>Run AMRFinderPlus</strong>:
+<ul>
+<li><strong>Force organism</strong> — leave on <strong>Auto-detect (recommended)</strong> if you set up
+Kraken2. Otherwise choose the species by hand (e.g. <code>Escherichia</code> for the
+<em>E. coli</em> run). The organism selection matters: it enables the correct
+<strong>point-mutation</strong> screen for that species.</li>
+<li><strong><code>--plus</code></strong> — leave ✅ on to also report virulence/stress/biocide genes.</li>
+</ul>
+</li>
+<li>Click <strong>▶ Run selected (1)</strong>. The tool assembles the reads, QCs the assembly,
+optionally types it (MLST), then runs AMRFinderPlus.</li>
+<li>Open <strong>Results</strong>.</li>
+</ol>
+<h3 id="how-to-read-the-output-4">How to read the output</h3>
+<p>The <strong>resistance table</strong> is the main output. Key columns:</p>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th>Column</th>
+<th>What it tells you</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Element symbol</strong></td>
+<td>The gene or mutation, e.g. <code>blaROB-1</code>, <code>tet(H)</code>, <code>gyrA_S83L</code>.</td>
+</tr>
+<tr>
+<td><strong>Class / Subclass</strong></td>
+<td>The drug class it affects, e.g. <code>BETA-LACTAM</code> / <code>Cephalosporin</code>.</td>
+</tr>
+<tr>
+<td><strong>Method</strong></td>
+<td><em>How</em> it was found — see below.</td>
+</tr>
+<tr>
+<td><strong>% Identity / % Coverage</strong></td>
+<td>How well the hit matches the reference gene. Near 100% = a confident, full-length match.</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>Report (HTML + PDF).</strong> Beyond the table, the run produces a comprehensive
+<strong>report</strong> — open <strong>Report (HTML)</strong> in the browser or <strong>Report (PDF)</strong> to share.
+It gathers the input read QC, assembly QC, organism identification (Kraken +
+<strong>MLST scheme, ST and alleles</strong>), the full resistance table and an AMR summary in
+one professional document, styled to match the suite's other tool reports.</p>
+<p><strong>The Method column is your confidence guide:</strong></p>
+<ul>
+<li><strong><code>ALLELE</code> / <code>EXACT</code></strong> — an exact match to a known resistance gene. High
+confidence.</li>
+<li><strong><code>POINT</code></strong> — a resistance-conferring <strong>point mutation</strong> (e.g. a fluoroquinolone
+mutation in <code>gyrA</code>). Only screened when the organism is known — hence the
+organism selection in step 5.</li>
+<li><strong><code>PARTIAL</code> / <code>INTERNAL_STOP</code></strong> — a truncated or interrupted gene. Flag for
+review — it may not confer resistance.</li>
+</ul>
+<blockquote>
+<p>🔎 <strong>Teaching point.</strong> A gene being <em>present</em> is not the same as resistance being
+<em>expressed</em>, and <code>% coverage &lt; 100%</code> (a partial hit) deserves a second look.
+AMRFinderPlus reports the genotype; clinical interpretation is a further step.
+Compare the <em>E. coli</em> result (typically a rich set of acquired genes) with the
+<em>Pasteurella</em> result (usually sparser) to see how organism and resistance
+content vary.</p>
+</blockquote>
+<hr />
+<h2 id="module-7--mlst-assign-a-sequence-type">Module 7 — MLST: assign a sequence type</h2>
+<p><strong>What it does.</strong> MLST (Multi-Locus Sequence Typing) reads the alleles at a fixed
+set of ~7 housekeeping genes and looks up the combination in the PubMLST database
+to assign a <strong>Sequence Type (ST)</strong> — a compact, portable label for a strain.
+Identical STs across isolates suggest they're the same clone.</p>
+<p><strong>Input.</strong> Raw reads (assembled for you) or an assembled genome. It <strong>auto-detects
+the scheme</strong> — you don't tell it the species.</p>
+<h3 id="the-data--same-isolate-as-module-6">The data — same isolate as Module 6</h3>
+<pre><code>Accession	Organism
+SRR28320745	Pasteurella multocida
+</code></pre>
+<p>Reusing the <em>Pasteurella</em> isolate lets you see two tools describe one organism:
+its <strong>resistance genes</strong> (Module 6) and its <strong>strain type</strong> (here).</p>
+<h3 id="steps-4">Steps</h3>
+<ol>
+<li><strong>Launch</strong> <strong>MLST</strong>. Create a project — e.g. <code>MLST_training</code>.</li>
+<li>Get the isolate in: <strong>Inputs → SRA Download</strong> → paste <code>SRR28320745</code> →
+<strong>Download</strong> (MLST assembles the reads for you). Or, if you already have an
+assembly, use <strong>Download genome FASTA by accession</strong> to fetch a GenBank/RefSeq
+or <code>GCA_</code>/<code>GCF_</code> genome directly — the same downloader kSNP and GenoFLU use.
+MLST can type an assembly with no read-download/assembly step.</li>
+<li>Expand the project, <strong>check</strong> the sample.</li>
+<li>In <strong>Run MLST</strong>, leave <strong>Force scheme</strong> on <strong>Autodetect (recommended)</strong> — the
+tool picks the right scheme from the assembly.</li>
+<li>Click <strong>▶ Run selected (1)</strong>.</li>
+<li>Read the inline result / <strong>Results</strong> pane.</li>
+</ol>
+<h3 id="how-to-read-the-output-5">How to read the output</h3>
+<ul>
+<li><strong>Scheme</strong> — the PubMLST scheme that matched, e.g. <code>pmultocida_rirdc</code> for
+<em>Pasteurella multocida</em>. This confirms the species.</li>
+<li><strong>ST</strong> — the <strong>Sequence Type</strong>, e.g. <code>ST 13</code>. This is the headline result.</li>
+<li><strong>Allele numbers</strong> — the allele called at each locus (e.g. <code>adk: 1</code>, <code>est: 2</code>,
+…). The combination <em>is</em> the ST.</li>
+<li><strong>Badges:</strong>
+<ul>
+<li><strong>novel</strong> — one or more alleles aren't in the database (marked <code>~</code>). Possibly
+a new variant; worth confirming.</li>
+<li><strong>partial</strong> — an allele call was incomplete (marked <code>?</code>), usually from an
+assembly gap — lower confidence.</li>
+</ul>
+</li>
+</ul>
+<blockquote>
+<p>🔎 <strong>Teaching point.</strong> MLST and AMRFinderPlus are complementary: MLST answers
+<em>&quot;which strain is this?&quot;</em> and AMRFinderPlus answers <em>&quot;what resistance does it
+carry?&quot;</em>. In fact AMRFinderPlus can call MLST internally to cross-check the
+organism — that's why the two tools share a project layout.</p>
+</blockquote>
+<hr />
+<h2 id="module-8--ksnp-a-reference-free-snp-tree">Module 8 — kSNP: a reference-free SNP tree</h2>
+<p><strong>What it does.</strong> kSNP4 builds a SNP matrix and phylogenetic tree <strong>without a
+reference genome and without alignment</strong> — it compares genomes by their k-mers
+(short DNA words). Use it when you have <em>finished genomes</em> (assemblies) and want a
+quick, alignment-free tree — for example, to place unknown isolates among known
+references.</p>
+<p><strong>Input.</strong> <strong>Assembled genomes (FASTA)</strong> — not reads. Conveniently, kSNP can
+<strong>download genomes directly by accession number.</strong></p>
+<h3 id="the-data--mtbc-reference-genomes-by-accession">The data — MTBC reference genomes (by accession)</h3>
+<p>kSNP takes <strong>GenBank/RefSeq genome accessions</strong>, not SRA runs. Paste these into
+kSNP's <strong>&quot;Download genome FASTA by accession&quot;</strong> box (not the SRA box):</p>
+<pre><code>Accession	Lineage / species
+CP041800	Lineage 1
+CP017920	Lineage 2
+CP046309	Lineage 3
+NC_000962	Lineage 4 (M. tuberculosis H37Rv reference)
+CP020381	Lineage 4
+CP089775	Lineage 4
+CP041837	Lineage 4
+CP069067	Lineage 5
+NZ_CP014617	Lineage 6
+CP041791	Lineage 7
+CP048071	Lineage 8
+NC_002945	M. bovis
+CP109681	M. bovis BCG
+CP016401	M. caprae
+LR882497	M. microti
+CP063804	M. orygis
+</code></pre>
+<h3 id="steps-5">Steps</h3>
+<ol>
+<li><strong>Launch</strong> <strong>kSNP</strong>. Create a project — e.g. <code>MTBC_ksnp</code>.</li>
+<li>In <strong>Inputs</strong>, find <strong>&quot;Download genome FASTA by accession&quot;</strong>, paste the
+accessions above (the labels are just notes — paste the accession column), and
+keep <strong>&quot;Name files by organism / strain metadata (recommended)&quot;</strong> ✅ ticked so
+the tree labels are readable. Click <strong>Fetch FASTA</strong>.</li>
+<li><em>(Optional but recommended)</em> In the file list, click the <strong>✎ (pencil)</strong> next to
+each genome to give it a short, clear label (e.g. <code>L4_H37Rv</code>, <code>M_bovis</code>). <strong>This
+label becomes the name in the tree</strong> — clean names now save confusion later.</li>
+<li>Expand the project and make sure the genomes you want are <strong>checked</strong> (kSNP
+needs at least 2).</li>
+<li>In <strong>Run kSNP4</strong>, the defaults are the validated standard:
+<ul>
+<li><strong>k-mer size</strong> — leave <strong>blank</strong> so <em>Kchooser4</em> picks the optimum
+automatically.</li>
+<li><strong>Core-SNP analysis</strong>, <strong>Maximum-likelihood tree</strong>, <strong>Per-SNP VCF</strong> — leave
+✅ on.</li>
+<li><strong>min_frac</strong> — leave at <strong>0.8</strong>.</li>
+</ul>
+</li>
+<li>Click <strong>▶ Run kSNP4</strong>.</li>
+<li>Open <strong>Results</strong>.</li>
+</ol>
+<h3 id="how-to-read-the-output-6">How to read the output</h3>
+<p>The <strong>Results</strong> pane gives you three SNP counts and a quality verdict:</p>
+<ul>
+<li><strong>Core SNPs</strong> — SNPs present in <strong>every</strong> genome. <strong>The core-SNP tree is the one
+to trust</strong> — no missing data.</li>
+<li><strong>All (pan) SNPs</strong> — every SNP found in any genome. Most detail, but some
+positions are missing in some genomes.</li>
+<li><strong>Majority SNPs</strong> — a middle ground (present in ≥ <code>min_frac</code> of genomes).</li>
+</ul>
+<p>Then the trees:</p>
+<ul>
+<li>Open <strong><code>tree.core_SNPs.parsimony.tre</code></strong> first — the most reliable. Because you
+loaded labeled MTBC lineages, the genomes should again group by lineage, with
+<em>M. bovis</em>/BCG/<em>M. caprae</em>/<em>M. orygis</em> clustering in the animal-adapted part.</li>
+<li><strong>FCK (Fraction of Core K-mers)</strong> in the metrics strip is your sanity check:
+<strong>≥ 0.1</strong> means the genomes share enough sequence for reliable SNP detection.
+A very low FCK means the set is too divergent for kSNP to resolve well.</li>
+</ul>
+<blockquote>
+<p>🔎 <strong>Teaching point.</strong> kSNP (reference-free, from assemblies) and vSNP3
+(reference-based, from reads) answer the same <em>&quot;how related?&quot;</em> question by
+different routes. kSNP is fast and needs no reference — great for a quick look or
+when no good reference exists. vSNP3 is the validated, reference-anchored
+workflow for diagnostic reporting. Running the same organisms through both
+(Modules 4–5 vs. here) is a great way to understand the trade-offs.</p>
+</blockquote>
+<hr />
+<h2 id="wrap-up--what-youve-learned">Wrap-up — what you've learned</h2>
+<div class="tablewrap"><table>
+<thead>
+<tr>
+<th>You started with…</th>
+<th>Tool</th>
+<th>You produced…</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Influenza reads (SRA)</td>
+<td>IRMA</td>
+<td>Assembled genome, subtype, QC report</td>
+</tr>
+<tr>
+<td>An influenza assembly</td>
+<td>GenoFLU</td>
+<td>A genotype call (clade/constellation)</td>
+</tr>
+<tr>
+<td>TB reads (SRA)</td>
+<td>Kraken ID-Parse</td>
+<td>A taxonomic profile + clean, single-taxon reads</td>
+</tr>
+<tr>
+<td>TB reads (SRA)</td>
+<td>vSNP3</td>
+<td>Per-sample VCFs → SNP table + tree</td>
+</tr>
+<tr>
+<td>An MTBC panel</td>
+<td>vSNP3</td>
+<td>A whole-complex phylogeny</td>
+</tr>
+<tr>
+<td>Bacterial reads</td>
+<td>AMRFinderPlus</td>
+<td>A resistance-gene profile</td>
+</tr>
+<tr>
+<td>A bacterial isolate</td>
+<td>MLST</td>
+<td>A sequence type (ST)</td>
+</tr>
+<tr>
+<td>Genome accessions</td>
+<td>kSNP</td>
+<td>A reference-free SNP tree</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>The one pattern to remember:</strong> <em>create a project → paste accessions → check
+samples → Run → read the Results.</em> Every tool in the suite follows it.</p>
+<h3 id="where-to-go-next">Where to go next</h3>
+<ul>
+<li><strong>Something won't run?</strong> <code>bin/bdtools doctor</code> explains every gap and its fix.</li>
+<li><strong>Reference databases:</strong> <a href="https://github.com/kapurlab/bioinformatic_diagnostic_tools/blob/main/README.md#-reference-databases">the README's Reference databases section</a>.</li>
+<li><strong>Validate your install</strong> against known-good results: <code>bin/bdtools test all</code>.</li>
+<li><strong>Per-tool detail:</strong> each tool has its own README and <code>docs/</code> in its repository
+(e.g. vSNP3 ships a comprehensive user guide under <code>docs/</code>).</li>
+</ul>
+<blockquote>
+<p>⚠️ <strong>A note on interpretation.</strong> These tools report genotypes, resistance
+genotypes, and genetic distances. Turning those into a <em>diagnostic conclusion</em>
+is a professional judgment that combines this output with clinical and
+epidemiological context. Two tools in the suite (Bovine MHC Typer, NCBI Submit)
+carry development-status notices on their dashboard cards — heed them.</p>
+</blockquote>
+
+  </main>
+
+  <footer class="page">
+    vSNP3 &middot; Kapur Lab &middot; Penn State &middot; USDA &middot;
+    <a href="https://github.com/kapurlab/bioinformatic_diagnostic_tools">github.com/kapurlab/bioinformatic_diagnostic_tools</a>
+  </footer>
+</div>
+<a id="top" href="#pagetop">&uarr; Top</a>
+</body>
+</html>

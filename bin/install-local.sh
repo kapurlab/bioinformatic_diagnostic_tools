@@ -789,6 +789,10 @@ _note_fresh_relocation() {
 # of have_usable_npm so tests can override it with a fabricated path.
 _npm_path() { command -v npm 2>/dev/null || true; }
 
+# _node_version — `node --version` output ("v20.19.0"), "" when there is none.
+# Split out for the same reason as _npm_path: so tests can fabricate one.
+_node_version() { node --version 2>/dev/null || true; }
+
 # have_usable_npm — is there an npm on PATH this build can actually use?
 #
 # On WSL the answer is not "command -v npm succeeded": Windows' Node install
@@ -818,6 +822,36 @@ have_usable_npm() {
         return 1
       fi;;
   esac
+  # An npm that EXISTS is not an npm that can build. The GUIs' frontends are
+  # vite 8, whose rolldown imports node:util's styleText — added in Node 20.19
+  # — so on Node 18 `vite build` dies with an ESM SyntaxError before it reads a
+  # single source file. Treating too-old Node as "npm not found" is what makes
+  # every caller fall back to the committed prebuilt dist, exactly as it already
+  # does when npm is absent entirely.
+  #
+  # Without this, the DELEGATED build path had no fallback at all. generic_build
+  # and build_vsnp_local catch a failed frontend build and keep the existing
+  # dist, but a tool's own deploy/install.sh just exits non-zero and takes the
+  # whole install down with it. So on a server with distro Node 18 and a
+  # perfectly good committed dist, `install <tool> --fresh` — the command doctor
+  # prints for an env whose solve is capped by stale sibling packages — could
+  # never complete, and the tool was left un-rebuildable with no way to act on
+  # doctor's own advice. install-server.sh never had the bug: it skips the
+  # frontend whenever a prebuilt dist exists, which is why --server worked on
+  # the very machine where --fresh could not.
+  #
+  # >=20.19 is the same floor the rest of this file states in its fallback
+  # messages; keeping one rule means the pre-check and the error text cannot
+  # disagree about what "new enough" means.
+  local nv maj min; nv="$(_node_version)"
+  if [[ -n "${nv}" ]]; then
+    maj="${nv#v}"; min="${maj#*.}"; min="${min%%.*}"; maj="${maj%%.*}"
+    if [[ "${maj}" =~ ^[0-9]+$ && "${min}" =~ ^[0-9]+$ ]] \
+       && { (( maj < 20 )) || { (( maj == 20 )) && (( min < 19 )); }; }; then
+      warn "node ${nv} cannot build the frontend (vite 8 needs Node >=20.19) — treating npm as not found so the committed prebuilt dist is used instead."
+      return 1
+    fi
+  fi
   return 0
 }
 

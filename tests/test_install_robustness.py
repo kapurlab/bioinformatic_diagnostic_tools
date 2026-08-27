@@ -1204,10 +1204,14 @@ class NpmWslGuardTests(unittest.TestCase):
     WSL = "Linux version 5.15.167.4-microsoft-standard-WSL2 (gcc ...)"
     LINUX = "Linux version 6.5.0-41-generic (buildd@lcy02) ..."
 
-    def _probe(self, kernel, npm_path):
+    # node_version is stubbed too: these cases are about the npm PATH, and the
+    # host's real `node` (18 on some servers) would otherwise trip the version
+    # gate and make every one of them NOT-USABLE for the wrong reason.
+    def _probe(self, kernel, npm_path, node_version="v22.11.0"):
         return sh(f'''
           eval "$(sed -n '/^_npm_path()/,/^}}/p' "{ROOT}/bin/install-local.sh")"
           _npm_path() {{ printf '%s' "{npm_path}"; }}
+          _node_version() {{ printf '%s' "{node_version}"; }}
           if have_usable_npm "{kernel}"; then echo USABLE; else echo NOT-USABLE; fi
         ''')
 
@@ -1245,6 +1249,64 @@ class NpmWslGuardTests(unittest.TestCase):
         r = self._probe("", "/usr/local/bin/npm")
         self.assertIn("USABLE", r.stdout)
         self.assertEqual(r.stderr.strip(), "", r.stderr)
+
+
+class NodeVersionGuardTests(unittest.TestCase):
+    """An npm that exists is not an npm that can build.
+
+    The GUIs' frontends are vite 8; its rolldown imports node:util's styleText,
+    added in Node 20.19, so on Node 18 `vite build` dies with an ESM
+    SyntaxError. have_usable_npm must report that as "npm not found" so callers
+    fall back to the committed prebuilt dist.
+
+    This is not hypothetical: on a server with distro Node 18, `install <tool>
+    --fresh` — the command doctor prints for an env whose solve is capped by
+    stale sibling packages — failed outright, because the delegated
+    deploy/install.sh path has no post-failure dist fallback the way
+    generic_build does. Fabricated version strings only; never a real node.
+    """
+
+    LINUX = "Linux version 6.5.0-41-generic (buildd@lcy02) ..."
+
+    def _probe(self, node_version):
+        return sh(f'''
+          eval "$(sed -n '/^_npm_path()/,/^}}/p' "{ROOT}/bin/install-local.sh")"
+          _npm_path() {{ printf '%s' "/usr/bin/npm"; }}
+          _node_version() {{ printf '%s' "{node_version}"; }}
+          if have_usable_npm "{self.LINUX}"; then echo USABLE; else echo NOT-USABLE; fi
+        ''')
+
+    def test_node_18_is_rejected_loudly(self):
+        r = self._probe("v18.19.1")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("NOT-USABLE", r.stdout)
+        # actionable: name the version found and the floor it missed
+        self.assertIn("v18.19.1", r.stderr)
+        self.assertIn(">=20.19", r.stderr)
+
+    def test_node_20_below_19_is_rejected(self):
+        # The floor is a MINOR: 20.18 ships without styleText just like 18 does.
+        self.assertIn("NOT-USABLE", self._probe("v20.18.0").stdout)
+
+    def test_node_20_19_is_exactly_new_enough(self):
+        r = self._probe("v20.19.0")
+        self.assertIn("USABLE", r.stdout)
+        self.assertNotIn("cannot build the frontend", r.stderr)
+
+    def test_a_current_node_is_accepted_silently(self):
+        r = self._probe("v22.11.0")
+        self.assertIn("USABLE", r.stdout)
+        self.assertEqual(r.stderr.strip(), "", r.stderr)
+
+    def test_no_node_at_all_is_not_this_guard_s_call(self):
+        # npm present but node absent is a broken install, not an old one — the
+        # build's own error is clearer than a version warning about nothing.
+        self.assertIn("USABLE", self._probe("").stdout)
+
+    def test_an_unparseable_version_does_not_block(self):
+        # Never turn "I could not read the version" into "too old": that would
+        # silently stop shipping rebuilt UIs on a machine that can build fine.
+        self.assertIn("USABLE", self._probe("not-a-version").stdout)
 
 
 class WslHomeGuardTests(unittest.TestCase):

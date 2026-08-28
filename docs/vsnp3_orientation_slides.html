@@ -11,36 +11,53 @@
 <body>
 <style>
 :root{
-  --ground:#EDF1F0; --surface:#FBFDFC; --surface-2:#E6EBEA; --surface-3:#F2F6F5;
-  --ink:#1E2E2D; --ink-2:#566867; --hair:#CBD5D2;
-  --accent:#146D6A; --signal:#A06A20;
-  --base-a:#357F55; --base-c:#31629F; --base-g:#836A2E; --base-t:#A9483A;
-  --ok:#357F55; --warn:#9C4B31;
+  --ground:#E9EFEE; --surface:#FFFFFF; --surface-2:#E1E9E7; --surface-3:#F1F6F5;
+  --ink:#162726; --ink-2:#4E6462; --hair:#C4D1CE;
+  --accent:#0C716D; --signal:#9A6412;
+  --base-a:#2C7C51; --base-c:#2A5EA0; --base-g:#7E6425; --base-t:#A73E30;
+  --ok:#2C7C51; --warn:#98432A;
   --shadow:0 1px 2px rgba(30,46,45,.05), 0 10px 30px rgba(30,46,45,.06);
+  --ground-fx:none;
+  /* figure ink weights: dialled up in dark so line art keeps its presence */
+  --o-line:.55; --o-thin:.30; --o-box:.32; --o-soft:.075; --o-soft2:.18;
+  --o-accsoft:.12; --o-sigsoft:.14; --o-label:.62; --o-small:.55;
+  --soft-fill:#12544F;
+  --line-ink:#16403E;
   --r:5px;
 }
 @media (prefers-color-scheme: dark){
   :root:not([data-theme="light"]){
-    --ground:#0F1A1C; --surface:#17262A; --surface-2:#1F3034; --surface-3:#1B2C30;
-    --ink:#DFE8E6; --ink-2:#9BADAC; --hair:#2E4145;
-    --accent:#6FC5BE; --signal:#E0A75C;
-    --base-a:#6FC28E; --base-c:#82B2E6; --base-g:#D6B872; --base-t:#E4897B;
-    --ok:#6FC28E; --warn:#DE9683;
-    --shadow:0 1px 2px rgba(0,0,0,.3), 0 12px 34px rgba(0,0,0,.26);
+    --ground:#122E3A; --surface:#1D4A5C; --surface-2:#2C6B84; --surface-3:#235A70;
+    --ink:#FFFFFF; --ink-2:#AFD6DD; --hair:#3F7E96;
+    --accent:#1FF2D6; --signal:#FFBA24;
+    --base-a:#3BF98A; --base-c:#77CBFF; --base-g:#FFE04F; --base-t:#FF7C63;
+    --ok:#3BF98A; --warn:#FF7C63;
+    --shadow:0 2px 6px rgba(0,0,0,.38), 0 16px 40px rgba(0,0,0,.40);
+    --ground-fx:none;
+    --o-line:.92; --o-thin:.62; --o-box:.70; --o-soft:.16; --o-soft2:.34;
+    --o-accsoft:.32; --o-sigsoft:.32; --o-label:.88; --o-small:.82;
+    --soft-fill:#3FCFC0;
+    --line-ink:#63E4D6;
   }
 }
 :root[data-theme="dark"]{
-  --ground:#0F1A1C; --surface:#17262A; --surface-2:#1F3034; --surface-3:#1B2C30;
-  --ink:#DFE8E6; --ink-2:#9BADAC; --hair:#2E4145;
-  --accent:#6FC5BE; --signal:#E0A75C;
-  --base-a:#6FC28E; --base-c:#82B2E6; --base-g:#D6B872; --base-t:#E4897B;
-  --ok:#6FC28E; --warn:#DE9683;
-  --shadow:0 1px 2px rgba(0,0,0,.3), 0 12px 34px rgba(0,0,0,.26);
+  --ground:#122E3A; --surface:#1D4A5C; --surface-2:#2C6B84; --surface-3:#235A70;
+  --ink:#FFFFFF; --ink-2:#AFD6DD; --hair:#3F7E96;
+  --accent:#1FF2D6; --signal:#FFBA24;
+  --base-a:#3BF98A; --base-c:#77CBFF; --base-g:#FFE04F; --base-t:#FF7C63;
+  --ok:#3BF98A; --warn:#FF7C63;
+  --shadow:0 2px 6px rgba(0,0,0,.38), 0 16px 40px rgba(0,0,0,.40);
+  --ground-fx:none;
+  --o-line:.92; --o-thin:.62; --o-box:.70; --o-soft:.16; --o-soft2:.34;
+  --o-accsoft:.32; --o-sigsoft:.32; --o-label:.88; --o-small:.82;
+  --soft-fill:#3FCFC0;
+  --line-ink:#63E4D6;
 }
 
 *{box-sizing:border-box}
 body{
-  margin:0; background:var(--ground); color:var(--ink);
+  margin:0; background-color:var(--ground); background-image:var(--ground-fx);
+  background-attachment:fixed; background-repeat:no-repeat; color:var(--ink);
   font-family:"IBM Plex Sans","Helvetica Neue",Arial,sans-serif;
   -webkit-font-smoothing:antialiased;
 }
@@ -64,6 +81,11 @@ body{
   display:none;
   flex-direction:column;
   overflow:hidden;
+}
+.slide::before{
+  content:""; position:absolute; left:0; right:0; top:0; height:calc(.42 * var(--u));
+  background:linear-gradient(90deg, var(--accent), var(--signal) 62%, var(--base-c));
+  border-top-left-radius:var(--r); border-top-right-radius:var(--r);
 }
 .slide.is-on{display:flex}
 .deck.is-all .slide{display:flex}
@@ -102,7 +124,7 @@ p{margin:0 0 calc(1 * var(--u))}
 
 code{
   font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:.9em;
-  background:var(--surface-2); padding:.14em .38em; border-radius:3px;
+  background:var(--surface-2); color:var(--accent); padding:.14em .38em; border-radius:3px;
   white-space:nowrap;
 }
 .cmd{
@@ -119,7 +141,7 @@ code{
   padding-left:calc(1.2 * var(--u));
   font-size:calc(1.38 * var(--u)); line-height:1.42; color:var(--ink-2);
 }
-.note b{color:var(--ink)}
+.note b{color:var(--signal)}
 
 .cols{display:grid; gap:calc(2.4 * var(--u)); align-items:start}
 .cols-2{grid-template-columns:1fr 1fr}
@@ -129,13 +151,13 @@ code{
 ul.tight{margin:0; padding-left:calc(1.7 * var(--u)); font-size:calc(1.4 * var(--u)); line-height:1.4}
 ul.tight li{margin-bottom:calc(.7 * var(--u))}
 ul.tight li::marker{color:var(--accent)}
-ul.tight b{font-weight:600}
+ul.tight b{font-weight:600; color:var(--accent)}
 
 .facts{display:grid; grid-template-columns:repeat(3,1fr); gap:calc(1.5 * var(--u)) calc(2.2 * var(--u))}
 .fact{border-top:calc(.2 * var(--u)) solid var(--accent); padding-top:calc(.55 * var(--u))}
 .fact .n{
   font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:calc(1.05 * var(--u));
-  letter-spacing:.14em; color:var(--ink-2); display:block; margin-bottom:calc(.35 * var(--u));
+  letter-spacing:.14em; color:var(--accent); display:block; margin-bottom:calc(.35 * var(--u));
 }
 .fact p{font-size:calc(1.26 * var(--u)); line-height:1.32; color:var(--ink-2); margin:0}
 .pin{margin-top:auto}
@@ -147,7 +169,7 @@ table{width:100%; border-collapse:collapse; font-size:calc(1.34 * var(--u))}
 th{
   text-align:left; font-family:"IBM Plex Mono",ui-monospace,monospace; font-weight:500;
   text-transform:uppercase; letter-spacing:.09em; font-size:calc(1.05 * var(--u));
-  color:var(--ink-2); border-bottom:1px solid var(--hair);
+  color:var(--accent); border-bottom:1px solid var(--hair);
   padding:calc(.5 * var(--u)) calc(.8 * var(--u)) calc(.5 * var(--u)) 0;
 }
 td{
@@ -174,7 +196,7 @@ td.num{font-family:"IBM Plex Mono",ui-monospace,monospace; font-variant-numeric:
   color:var(--signal); font-weight:500; font-variant-numeric:tabular-nums;
 }
 .steps .v{font-size:calc(1.46 * var(--u)); line-height:1.4}
-.steps .v b{font-weight:600}
+.steps .v b{font-weight:600; color:var(--accent)}
 
 /* ---------- figures ---------- */
 figure{margin:0}
@@ -184,19 +206,19 @@ figcaption{
   font-size:calc(1.2 * var(--u)); line-height:1.34; color:var(--ink-2);
   margin-top:calc(.6 * var(--u)); max-width:88ch;
 }
-.dline{fill:none; stroke:currentColor; stroke-width:1.5; opacity:.55}
-.dthin{fill:none; stroke:currentColor; stroke-width:1; opacity:.3}
-.dbox{fill:none; stroke:currentColor; stroke-width:1.2; opacity:.32}
-.dsoft{fill:currentColor; opacity:.075}
-.dsoft2{fill:currentColor; opacity:.18}
+.dline{fill:none; stroke:var(--line-ink); stroke-width:1.5; opacity:var(--o-line)}
+.dthin{fill:none; stroke:var(--line-ink); stroke-width:1; opacity:var(--o-thin)}
+.dbox{fill:none; stroke:var(--line-ink); stroke-width:1.2; opacity:var(--o-box)}
+.dsoft{fill:var(--soft-fill); opacity:var(--o-soft)}
+.dsoft2{fill:var(--soft-fill); opacity:var(--o-soft2)}
 .dtext{fill:currentColor; font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:12.5px}
-.dlabel{fill:currentColor; opacity:.62; font-family:"IBM Plex Sans",sans-serif; font-size:12.5px}
+.dlabel{fill:currentColor; opacity:var(--o-label); font-family:"IBM Plex Sans",sans-serif; font-size:12.5px}
 .dhead{fill:currentColor; font-family:"IBM Plex Sans",sans-serif; font-weight:600; font-size:13.5px}
-.dsmall{fill:currentColor; opacity:.55; font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:10.5px; letter-spacing:.08em}
+.dsmall{fill:currentColor; opacity:var(--o-small); font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:10.5px; letter-spacing:.08em}
 .sigF{fill:var(--signal)} .sigS{stroke:var(--signal); fill:none; stroke-width:1.6}
-.sigSoft{fill:var(--signal); opacity:.14}
+.sigSoft{fill:var(--signal); opacity:var(--o-sigsoft)}
 .accF{fill:var(--accent)} .accS{stroke:var(--accent); fill:none; stroke-width:1.6}
-.accSoft{fill:var(--accent); opacity:.12}
+.accSoft{fill:var(--accent); opacity:var(--o-accsoft)}
 .warnF{fill:var(--warn)} .warnS{stroke:var(--warn); fill:none; stroke-width:1.6}
 .okF{fill:var(--ok)}
 .bA{fill:var(--base-a)} .bC{fill:var(--base-c)} .bG{fill:var(--base-g)} .bT{fill:var(--base-t)}
@@ -262,7 +284,7 @@ figcaption{
 .links a:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
 .linkhead{
   font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:calc(1.1 * var(--u));
-  letter-spacing:.15em; text-transform:uppercase; color:var(--ink-2);
+  letter-spacing:.15em; text-transform:uppercase; color:var(--accent);
   margin:0 0 calc(1.1 * var(--u));
 }
 .reftypes{margin-top:calc(1.4 * var(--u))}
@@ -283,7 +305,8 @@ figcaption{
 }
 .reflist li{
   display:flex; flex-direction:column; gap:calc(.45 * var(--u));
-  border:1px solid var(--hair); border-radius:var(--r);
+  border:1px solid var(--hair); border-left:calc(.28 * var(--u)) solid var(--accent);
+  border-radius:var(--r);
   background:var(--surface-3); padding:calc(.7 * var(--u)) calc(.9 * var(--u));
 }
 .reflist code{
@@ -321,7 +344,7 @@ figcaption{
 .snum{
   position:absolute; right:calc(2.4 * var(--u)); bottom:calc(1.15 * var(--u));
   font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:calc(1.1 * var(--u));
-  color:var(--ink-2); font-variant-numeric:tabular-nums; letter-spacing:.1em; opacity:.8;
+  color:var(--accent); font-variant-numeric:tabular-nums; letter-spacing:.1em; opacity:.9;
 }
 .foot{
   position:absolute; left:calc(4.6 * var(--u)); bottom:calc(1.15 * var(--u));
@@ -329,8 +352,8 @@ figcaption{
   color:var(--ink-2); letter-spacing:.1em; text-transform:uppercase; opacity:.6;
 }
 .slide::after{
-  content:""; position:absolute; left:0; bottom:0; height:calc(.26 * var(--u));
-  background:var(--accent); opacity:.55; width:var(--prog,0%);
+  content:""; position:absolute; left:0; bottom:0; height:calc(.34 * var(--u));
+  background:linear-gradient(90deg, var(--accent), var(--signal)); width:var(--prog,0%);
   border-bottom-left-radius:var(--r);
 }
 
@@ -381,15 +404,21 @@ figcaption{
 
 /* ---------- print / PDF: one 16:9 page per slide ---------- */
 @media print{
-  :root, :root[data-theme="dark"]{
+  :root, :root:not([data-theme="light"]), :root[data-theme="dark"]{
     --ground:#FFFFFF; --surface:#FFFFFF; --surface-2:#EEF2F1; --surface-3:#F6F9F8;
     --ink:#1A2A29; --ink-2:#556666; --hair:#C2CCC9;
     --accent:#12615E; --signal:#8A5A18;
-    --ok:#2C6A47; --warn:#8C4630; --shadow:none;
+    --base-a:#2C7C51; --base-c:#2A5EA0; --base-g:#7E6425; --base-t:#A73E30;
+    --ok:#2C6A47; --warn:#8C4630; --shadow:none; --ground-fx:none;
+    --o-line:.55; --o-thin:.30; --o-box:.32; --o-soft:.075; --o-soft2:.18;
+    --o-accsoft:.12; --o-sigsoft:.14; --o-label:.62; --o-small:.55;
+    --soft-fill:#12544F;
+    --line-ink:#16403E;
   }
   @page{ size:1240px 698px; margin:0 }
   html,body{background:#FFFFFF; print-color-adjust:exact; -webkit-print-color-adjust:exact}
   .nav, .guipop{display:none !important}
+  .slide::before{display:none}
   .gui{border-bottom:none}
   .gui::after{content:""}
   .stage{display:block; padding:0}

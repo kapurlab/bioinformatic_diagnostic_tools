@@ -210,13 +210,16 @@ restore_site_edits() {  # DIR TMPDIR
 
 # Resolve a tool's checkout, nearest-first:
 #   1. $BDTOOLS_TOOLSDIR/<tool>  — what a launcher or OOD job script exported
-#   2. <this checkout's parent>/<tool> — a SITE TREE. The umbrella installed at
+#   2. $TOOLS_ROOT/<tool> from the site's own config (sites/site.conf, then the
+#      per-machine record under BDTOOLS_HOME) — what the admin WROTE DOWN about
+#      where this deployment keeps its tools.
+#   3. <this checkout's parent>/<tool> — a SITE TREE. The umbrella installed at
 #      <root>/tools/bioinformatic_diagnostic_tools has its siblings right there,
 #      so the location of the script being run already says which deployment it
 #      is talking about.
-#   3. the managed per-user checkout
+#   4. the managed per-user checkout
 #
-# Step 2 is new because step 1 is a variable someone has to remember to export,
+# Step 3 exists because step 1 is a variable someone has to remember to export,
 # and forgetting it is silent: on a site whose umbrella lives at
 # /project/shared/bdtools/tools/bioinformatic_diagnostic_tools, `bdtools
 # check-updates` run from inside that very tree reported the OPERATOR's personal
@@ -226,17 +229,51 @@ restore_site_edits() {  # DIR TMPDIR
 # bin/bdtools's python search already resolved roots this way; tool_dir did not,
 # and the two disagreeing is the whole bug.
 #
+# Step 2 came from the deployment step 3 cannot see (ICAR-NIVEDI, 2026-09-01):
+# the umbrella cloned into the operator's home, the tools in /srv/icar/tools.
+# Nothing is a sibling of anything, so `status` and `doctor` reported every
+# deployed tool as "(not installed)" — on a box whose sites/site.conf had named
+# TOOLS_ROOT the whole time. sync.sh already read that file; tool_dir did not,
+# and two resolvers disagreeing is the same shape of bug the sibling rule fixed.
+# Configuration outranks the sibling inference because it is a statement about
+# the layout, where the sibling is a guess about what a parent directory means.
+#
 # Each step requires the directory to EXIST, so this recognises a site tree
 # rather than assuming one: a laptop has no sibling checkout beside the umbrella
 # and lands on step 3 exactly as before. Recognising it does not mean bdtools
 # may rewrite it — `update` still refuses any checkout outside the managed
 # per-user root (see check-updates.sh:apply_one), which is now a refusal the
 # operator SEES instead of a silent divergence.
+# The tools root this SITE configured, or nothing. Read exactly the way sync.sh
+# reads it: sites/site.conf is sourced as bash, so `TOOLS_ROOT=${SITE_ROOT}/tools`
+# expands the way its author meant, then the per-machine record the installer
+# writes under BDTOOLS_HOME overrides — the same two files in the same order as
+# site_paths.site_config(), which is what keeps the python resolver and this one
+# agreeing. TOOLS_ROOT is unset first so a value merely exported in the caller's
+# environment cannot count as configuration (python's reader would not see it).
+# Empty output means "nothing configured". A configured root is a claim about
+# the layout, not proof of it, so callers still check the path they build exists.
+site_tools_root() {
+  (
+    set +eu
+    unset TOOLS_ROOT
+    local f
+    for f in "${REPO_DIR}/sites/site.conf" "${BDTOOLS_HOME}/site.conf"; do
+      # shellcheck disable=SC1090
+      [[ -f "${f}" ]] && { source "${f}" >/dev/null 2>&1 || true; }
+    done
+    printf '%s\n' "${TOOLS_ROOT:-}"
+  )
+}
+
 tool_dir() {
   local name="$1"
   local site_root; site_root="$(dirname "${REPO_DIR}")"
+  local conf_root; conf_root="$(site_tools_root)"
   if [[ -n "${BDTOOLS_TOOLSDIR:-}" && -d "${BDTOOLS_TOOLSDIR}/${name}" ]]; then
     echo "${BDTOOLS_TOOLSDIR}/${name}"
+  elif [[ -n "${conf_root}" && -d "${conf_root}/${name}/.git" ]]; then
+    echo "${conf_root}/${name}"
   elif [[ -d "${site_root}/${name}/.git" ]]; then
     echo "${site_root}/${name}"
   else

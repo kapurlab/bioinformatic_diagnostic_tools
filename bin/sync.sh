@@ -64,8 +64,30 @@ sync_one() {
     warn "${name}: no git checkout at ${dir} — skipping (install it first, or it is not deployed here)"
     return 0
   fi
+  # Can git open it at all? Site checkouts are owned by whoever installed them,
+  # and git refuses another user's repo until it is marked safe. That has to be
+  # asked BEFORE the dirty check: `git diff --quiet` on a repo git will not open
+  # exits 129 and prints the whole `git diff --no-index` usage text, and the
+  # check below read any non-zero exit as "has local edits". So a root-owned
+  # but CLEAN checkout was skipped as (dirty) on every run — a guard that never
+  # lets go — and the safe.directory hint, which only the fetch printed, never
+  # appeared because the fetch was never reached (ICAR-NIVEDI, 2026-09-01:
+  # eight tools, 58 KB of usage text, the one line per tool that mattered lost
+  # in it).
+  local probe_err
+  if ! probe_err="$(git -C "${dir}" rev-parse --git-dir 2>&1)"; then
+    if [[ "${probe_err}" == *"dubious ownership"* ]]; then
+      warn "${name}: git refuses ${dir} (owned by another user). Mark it safe once, then re-run:"
+      warn "    git config --global --add safe.directory ${dir}"
+    else
+      warn "${name}: git cannot open ${dir} — skipped"
+      warn "    $(printf '%s\n' "${probe_err}" | head -1)"
+    fi
+    FAILED+=("${name} (unreadable)")
+    return 0
+  fi
   # Local tracked edits mean a human is mid-something; never move under them.
-  if ! git -C "${dir}" diff --quiet || ! git -C "${dir}" diff --cached --quiet; then
+  if ! git -C "${dir}" diff --quiet 2>/dev/null || ! git -C "${dir}" diff --cached --quiet 2>/dev/null; then
     warn "${name}: local tracked edits in ${dir} — skipped (commit/stash them, then re-run)"
     FAILED+=("${name} (dirty)")
     return 0

@@ -89,12 +89,22 @@ def tool_dir(name):
     """Mirror common.sh:tool_dir, nearest-first:
 
       1. $BDTOOLS_TOOLSDIR/<tool>  — what a launcher or OOD job script exported
-      2. <this checkout's parent>/<tool> — a SITE TREE. An umbrella installed at
+      2. $TOOLS_ROOT/<tool> from the site's own config (sites/site.conf, then
+         the per-machine record under BDTOOLS_HOME) — what the admin wrote down
+         about where this deployment keeps its tools.
+      3. <this checkout's parent>/<tool> — a SITE TREE. An umbrella installed at
          <root>/tools/bioinformatic_diagnostic_tools has its siblings there, so
          where this file lives already says which deployment it is talking about.
-      3. the managed per-user checkout
+      4. the managed per-user checkout
 
-    Step 2 exists because step 1 is a variable someone has to remember to
+    Step 2 came from the deployment step 3 cannot see (ICAR-NIVEDI,
+    2026-09-01): umbrella in the operator's home, tools in /srv/icar/tools,
+    nothing a sibling of anything, and a sites/site.conf naming TOOLS_ROOT the
+    whole time. sync.sh read it; this did not, so `status` and `doctor` called
+    every deployed tool "(not installed)". Configuration outranks the sibling
+    inference: one is a statement, the other a guess.
+
+    Step 3 exists because step 1 is a variable someone has to remember to
     export, and forgetting it is silent: on a site whose umbrella lives at
     /project/shared/bdtools/tools/bioinformatic_diagnostic_tools, commands run
     from inside that tree resolved the OPERATOR's personal copies instead of the
@@ -108,6 +118,9 @@ def tool_dir(name):
     td = os.environ.get("BDTOOLS_TOOLSDIR", "").strip()
     if td and os.path.isdir(os.path.join(td, name)):
         return os.path.join(td, name)
+    conf = (site_paths.site_config(_REPO_DIR).get("TOOLS_ROOT") or "").strip()
+    if conf and os.path.isdir(os.path.join(conf, name, ".git")):
+        return os.path.join(conf, name)
     site = os.path.join(os.path.dirname(_REPO_DIR), name)
     if os.path.isdir(os.path.join(site, ".git")):
         return site

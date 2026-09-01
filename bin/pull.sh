@@ -33,6 +33,12 @@
 # suite code — someone's experiment, or a hand-patch that a pull is about to
 # make invisible. Same rule and same reasoning as the tool updaters; naming them
 # and stopping is the only safe answer.
+#
+# NOT THERE YET. An umbrella older than 2026-08-24 (before e3fc092) has no
+# `bdtools pull` — this file did not exist. The equivalent on such a box is
+#     git -C <umbrella> pull --ff-only origin main
+# run once; after that this command exists and every later pull should use it.
+# (ICAR-NIVEDI was at 6c8f090, 2026-06-17, and had to do exactly that.)
 set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
 

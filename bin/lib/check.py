@@ -2057,7 +2057,7 @@ def _default_path(db):
     return _expand(db["default"]) if db.get("default") else ""
 
 
-def check_db(tool, db, env_bin=""):
+def _check_db_inner(tool, db, env_bin=""):
     # What the tool actually reads at run time wins over what a config key says.
     for root in _paths_file_roots(env_bin, db.get("paths_file", "")):
         p = Path(root)
@@ -2070,6 +2070,22 @@ def check_db(tool, db, env_bin=""):
     # is what config.py falls back to when the key was never written). Check
     # whichever the tool would actually use.
     val = config_value(tool, db["config_key"])
+    # A saved value can belong to ANOTHER deployment: a literal a tool's old
+    # DEFAULTS wrote into this user's config.json on first run, or a value carried
+    # over from a machine with a different layout. ICAR-NIVEDI, 2026-09-02: doctor
+    # reported BLAST "missing /srv/kapurlab/databases/blast/ref_prok_rep_genomes"
+    # on a site whose databases live under /srv/icar — grading a path that was
+    # never this machine's, and proposing a download to fix it. config_hygiene's
+    # three-clause rule is the one judgement of "foreign" the suite has (the
+    # launcher sweeps exactly these at start-up); apply it here, grade what the
+    # tool would use once the value is evicted, and name the repair.
+    if val and config_hygiene is not None:
+        try:
+            if config_hygiene.is_foreign(val, config_hygiene.local_roots(
+                    str(Path(__file__).resolve().parents[2]))):
+                val = ""          # grade what the tool uses once this is evicted
+        except Exception:      # noqa: BLE001 — hygiene must never break doctor
+            pass
     if not val:
         val = _default_path(db)
     kind = db["kind"]
@@ -2116,6 +2132,23 @@ def check_db(tool, db, env_bin=""):
         ok = p.exists()
     return ok, val
 
+
+
+def check_db(tool, db, env_bin=""):
+    """(ok, detail) for one database requirement — see _check_db_inner. When the
+    saved config value was judged foreign, the detail says so and names the
+    repair, whatever the graded default turned out to be."""
+    ok, detail = _check_db_inner(tool, db, env_bin)
+    val = config_value(tool, db["config_key"])
+    if val and config_hygiene is not None:
+        try:
+            if config_hygiene.is_foreign(val, config_hygiene.local_roots(
+                    str(Path(__file__).resolve().parents[2]))):
+                detail = (f"{detail} [saved {db['config_key']}={val} belongs to another "
+                          f"deployment — bin/bdtools check-paths {tool} --apply]")
+        except Exception:      # noqa: BLE001
+            pass
+    return ok, detail
 
 def run_checks(tool, env_py, scope, tool_dir=None, deep=False):
     """Return (status, lines, issues, notes). status: 'ok'|'issues'|'skip'.

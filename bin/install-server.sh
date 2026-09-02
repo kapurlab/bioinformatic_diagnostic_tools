@@ -84,7 +84,7 @@ done
 if [[ ${DRY_RUN} -eq 0 ]]; then
   "${PYBIN:-python3}" - "${KT_BIN_DIR}/lib" \
       "${SHARED_PROJECTS_ROOT:-${SITE_ROOT}/projects}" \
-      "${DB_ROOT:-${SITE_ROOT}/databases}" \
+      "${DB_ROOT:-${DATABASES_ROOT:-${SITE_ROOT}/databases}}" \
       "${TOOLS_ROOT}" \
       "${SITE_ROOT}" <<'PY' 2>/dev/null || warn "could not record site paths (tools will fall back to per-user defaults)"
 import sys
@@ -228,6 +228,22 @@ phase_toolchain() {
   # origin/* forever (see common.sh:normalize_checkout_remote).
   normalize_checkout_remote "${DIR}"
   assert_pinned_source
+  # Hand the tool installer the deployment's roots, the way tool_launch hands them
+  # to a running tool (site_paths.as_env). A tool's deploy/install.sh that stages a
+  # database defaults its destination to a literal — amr_plus_gui's to
+  # /srv/kapurlab/databases/amrfinderplus — which is correct on one machine and
+  # silently wrong everywhere else: on ICAR-NIVEDI (2026-09-02) the AMRFinderPlus
+  # database was fetched to /srv/kapurlab on a box whose site.conf said
+  # /srv/icar/databases, where no GUI would ever look for it. The installers that
+  # honour these variables now build where the site said; the ones that do not
+  # yet are unchanged by this (their literal still wins) until they read it.
+  # Only set when the operator has not already set them: an explicit export is
+  # a decision, not a default.
+  export BDTOOLS_SITE_ROOT="${BDTOOLS_SITE_ROOT:-${SITE_ROOT}}"
+  export BDTOOLS_TOOLS_ROOT="${BDTOOLS_TOOLS_ROOT:-${TOOLS_ROOT}}"
+  export BDTOOLS_DB_ROOT="${BDTOOLS_DB_ROOT:-${DB_ROOT:-${DATABASES_ROOT:-${SITE_ROOT}/databases}}}"
+  export BDTOOLS_SHARED_PROJECTS_ROOT="${BDTOOLS_SHARED_PROJECTS_ROOT:-${SHARED_PROJECTS_ROOT:-${SITE_ROOT}/projects}}"
+  info "site roots for the installer: DB ${BDTOOLS_DB_ROOT}  projects ${BDTOOLS_SHARED_PROJECTS_ROOT}  tools ${BDTOOLS_TOOLS_ROOT}"
   # Build env + frontend via the tool's own no-sudo installer (shared env at <dir>/env).
   if [[ -x "${DIR}/deploy/install.sh" ]]; then
     local a=(); [[ ${DRY_RUN} -eq 1 ]] && a+=(--dry-run)

@@ -105,7 +105,7 @@ cmd_status() {
 }
 
 cmd_install() {
-  local mode="local"; local raw=() passthru=() with_dev=0 no_dashboard=0 dashboard=0 site_conf=""
+  local mode="local"; local raw=() passthru=() with_dev=0 with_card=0 no_dashboard=0 dashboard=0 site_conf=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --local)   mode="local";   shift;;
@@ -115,6 +115,7 @@ cmd_install() {
       --prefix)    export BDTOOLS_HOME="$2"; passthru+=(--prefix "$2"); shift 2;;
       --site-conf) site_conf="$2"; passthru+=(--site-conf "$2"); shift 2;;
       --with-dev)  with_dev=1; shift;;
+      --with-card) with_card=1; shift;;   # server: ALSO render the tool's dedicated per-tool card (sunset; see docs)
       --no-card)   passthru+=(--no-card); shift;;   # server: build a tool's env but skip its per-tool card
       --dashboard) dashboard=1; shift;;             # server: install the consolidated dashboard card
       --no-dashboard) no_dashboard=1; shift;;   # local: don't auto-open the dashboard at the end
@@ -139,6 +140,9 @@ Options:
   --no-card          --server: build the environment, register no per-tool card
   --dashboard        --server: register the single consolidated dashboard card
   --with-dev         --server: also register developer branch-picker cards
+  --with-card        --server: also (re)render the tool's dedicated per-tool card
+                     (sunset in favour of --dashboard; the `app` phase does the
+                     same: bdtools install --server <tool> app)
   --no-dashboard     --local: don't open the dashboard when finished
   --rebuild          apply newly-declared dependencies to an existing env
                      (additive: `conda env update` — it cannot remove anything)
@@ -174,6 +178,15 @@ EOF
   if [[ ${with_dev} -eq 1 ]]; then
     [[ "${mode}" == "server" ]] || die "--with-dev only applies to --server installs"
     passthru+=(--with-dev)
+  fi
+  # --with-card: install-server.sh has accepted it all along (per-tool cards are
+  # sunset, but a site may still want one, and a card that predates a release
+  # can only be re-rendered by asking for it). The wrapper rejected it as an
+  # unknown option, so the documented way to refresh a site's cards did not
+  # exist through the front door (ICAR-NIVEDI, 2026-09-02).
+  if [[ ${with_card} -eq 1 ]]; then
+    [[ "${mode}" == "server" ]] || die "--with-card only applies to --server installs"
+    passthru+=(--with-card)
   fi
   [[ ${#raw[@]} -gt 0 ]] || die "install: name a tool or 'all' (see: bdtools list)"
   local targets=() phases=() r n

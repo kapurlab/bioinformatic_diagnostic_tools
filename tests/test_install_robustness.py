@@ -278,6 +278,21 @@ class FreshRebuildTests(unittest.TestCase):
                                capture_output=True, text=True)
             self.assertNotIn("unknown option", r.stdout + r.stderr, flag)
 
+    def test_with_card_is_known_and_server_only(self):
+        # install-server.sh accepted --with-card all along; the wrapper called it an
+        # unknown option, so a site could not re-render its per-tool cards through
+        # the documented front door (ICAR-NIVEDI, 2026-09-02). Known now, and
+        # refused for the right reason outside --server, exactly like --with-dev.
+        r = subprocess.run([str(ROOT / "bin/bdtools"), "install",
+                            "kraken_id_parse_gui", "--with-card", "--dry-run"],
+                           capture_output=True, text=True)
+        out = r.stdout + r.stderr
+        self.assertNotIn("unknown option", out)
+        self.assertIn("--with-card only applies to --server", out)
+        h = subprocess.run([str(ROOT / "bin/bdtools"), "install", "--help"],
+                           capture_output=True, text=True)
+        self.assertIn("--with-card", h.stdout)
+
 
 class LaunchPathTests(unittest.TestCase):
     """The env that provides a tool's python must provide its PATH.

@@ -673,6 +673,51 @@ tool_env_prefix() {   # TOOL
   printf '%s' "${py%/bin/python}"
 }
 
+# Build or refresh a tool's conda env straight from its spec — the path a tool
+# takes when it ships no deploy/install.sh of its own.
+#
+#   env_from_spec DIR        DIR is the tool checkout; the env is DIR/env and the
+#                            spec DIR/conda_setup/environment.yml
+#
+# ICAR-NIVEDI, 2026-09-02: `bdtools install --server kraken_id_parse_gui` moved
+# the checkout to v0.2.22 and then said "has no deploy/install.sh — build its
+# env+frontend manually" — kraken never had that script. v0.2.22's report stage
+# imports weasyprint and plotly, both newly declared in its environment.yml, so
+# every kraken job on that site would have failed at the report while `status`
+# showed a clean install. The spec is a complete statement of the env; when a
+# tool has nothing more to say, the spec alone is enough to act on.
+#
+# No env yet: `conda env create`. Env present: `conda env update`, which is
+# additive — it installs what the spec now declares and removes nothing, the same
+# semantics as install-local.sh --rebuild. A tool without a spec is left alone
+# with a warning (vsnp_gui: its env is the shared vsnp3 one, built elsewhere).
+# Dry-run aware via `run`; hooks hardened around the transaction for the same
+# reason install-server.sh hardens them around deploy/install.sh.
+# Returns 0 when the env is built or refreshed, 2 when there was no spec.
+env_from_spec() {
+  local dir="$1" spec conda
+  spec="${dir}/conda_setup/environment.yml"
+  if [[ ! -f "${spec}" ]]; then
+    warn "$(basename "${dir}") has no deploy/install.sh and no conda_setup/environment.yml — nothing to build an env from"
+    return 2
+  fi
+  conda="$(detect_conda)" || die "conda/mamba not found — cannot build $(basename "${dir}")/env from ${spec}"
+  harden_conda_hooks "${dir}/env"
+  if [[ -x "${dir}/env/bin/python" ]]; then
+    log "$(basename "${dir}"): env present — updating it from conda_setup/environment.yml (additive)"
+    run "${conda}" env update -p "${dir}/env" -f "${spec}" || die "conda env update failed for ${dir}/env"
+  else
+    log "$(basename "${dir}"): creating env from conda_setup/environment.yml (a solve can take several minutes)"
+    run "${conda}" env create -p "${dir}/env" -f "${spec}" || die "conda env create failed for ${dir}/env"
+  fi
+  harden_conda_hooks "${dir}/env"
+  if [[ -f "${dir}/backend/requirements.txt" ]]; then
+    log "$(basename "${dir}"): pip install backend/requirements.txt"
+    run "${dir}/env/bin/python" -m pip install -r "${dir}/backend/requirements.txt" || die "pip install failed for ${dir}"
+  fi
+  return 0
+}
+
 # harden_conda_hooks ENVDIR — make an env's conda activate/deactivate hooks
 # survive `set -u`. Idempotent; safe to call before and after every conda op.
 #

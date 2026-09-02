@@ -254,8 +254,15 @@ phase_toolchain() {
     run "${DIR}/deploy/install.sh" ${a[@]+"${a[@]}"} || die "${TOOL} deploy/install.sh failed"
     harden_conda_hooks "${DIR}/env"
   else
-    warn "${TOOL} has no deploy/install.sh — build its env+frontend manually,"
-    warn "  or (for vsnp_gui) use vsnp_gui/deploy/install_ood.sh which builds the vsnp3 env."
+    # No installer of its own: the spec is a complete statement of the env, so
+    # build or refresh it from that (common.sh:env_from_spec). kraken_id_parse_gui
+    # is the live case — until 2026-09-02 this branch only printed advice, and a
+    # site that followed the procedure got new code on an env missing the
+    # packages the new code imports. The shipped frontend/dist is served as-is,
+    # as on the deploy/install.sh path.
+    if ! env_from_spec "${DIR}"; then
+      warn "  (for vsnp_gui) use vsnp_gui/deploy/install_ood.sh, which builds the shared vsnp3 env."
+    fi
   fi
 }
 

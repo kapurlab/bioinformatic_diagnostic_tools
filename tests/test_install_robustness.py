@@ -1901,6 +1901,75 @@ class BlastUpdaterResolutionTests(unittest.TestCase):
             # and the fallback recipe stays bare: there is no env path to name.
             self.assertIn("update_blastdb.pl --decompress ref_prok_rep_genomes", out)
 
+class EnvFromSpecTests(unittest.TestCase):
+    """env_from_spec: a tool with no deploy/install.sh still gets its env built.
+
+    ICAR-NIVEDI, 2026-09-02: kraken_id_parse_gui ships conda_setup/environment.yml
+    but no deploy/install.sh, so `install --server` moved its code to v0.2.22 and
+    printed "build its env manually" — leaving an env without the weasyprint and
+    plotly the new report stage imports. The spec is enough to act on."""
+
+    def setUp(self):
+        self.td = tempfile.TemporaryDirectory()
+        self.addCleanup(self.td.cleanup)
+        base = Path(self.td.name)
+        self.tool = base / "tools/kraken_id_parse_gui"
+        (self.tool / "conda_setup").mkdir(parents=True)
+        # A fake conda first on PATH, and a HOME with no conda under it, so
+        # detect_conda lands on this shim and records what it was asked to do.
+        self.home = base / "home"; self.home.mkdir()
+        self.log = base / "conda.calls"
+        # Both names: detect_conda prefers `mamba` over `conda`, so a conda-only
+        # shim with the real toolchain still on PATH hands the fake spec to a
+        # REAL solver (this test hung for ten minutes exactly that way). PATH is
+        # hermetic on purpose: the shims plus the system bins bash itself needs.
+        for name in ("conda", "mamba"):
+            write(base / "bin" / name, f"""\
+                #!/usr/bin/env bash
+                printf '%s\\n' "$*" >> "{self.log}"
+                """, mode=0o755)
+        self.env = {"HOME": str(self.home), "PATH": f"{base / 'bin'}:/usr/bin:/bin",
+                    "CONDA_BASE": "", "CONDA_EXE": ""}
+
+    def calls(self):
+        return self.log.read_text().splitlines() if self.log.exists() else []
+
+    def test_no_env_yet_is_created_from_the_spec(self):
+        write(self.tool / "conda_setup/environment.yml", "name: x\ndependencies: [python]\n")
+        r = sh(f'env_from_spec "{self.tool}"', env=self.env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.calls(), [f"env create -p {self.tool}/env -f {self.tool}/conda_setup/environment.yml"])
+
+    def test_an_existing_env_is_updated_additively_not_recreated(self):
+        write(self.tool / "conda_setup/environment.yml", "name: x\ndependencies: [python, weasyprint]\n")
+        write(self.tool / "env/bin/python", "#!/bin/sh\nexit 0\n", mode=0o755)
+        r = sh(f'env_from_spec "{self.tool}"', env=self.env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.calls(), [f"env update -p {self.tool}/env -f {self.tool}/conda_setup/environment.yml"])
+
+    def test_pip_requirements_follow_the_env(self):
+        write(self.tool / "conda_setup/environment.yml", "name: x\ndependencies: [python]\n")
+        write(self.tool / "backend/requirements.txt", "humanize\n")
+        pylog = Path(self.td.name) / "python.calls"
+        write(self.tool / "env/bin/python", f"#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> \"{pylog}\"\n", mode=0o755)
+        r = sh(f'env_from_spec "{self.tool}"', env=self.env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(pylog.read_text().strip(), f"-m pip install -r {self.tool}/backend/requirements.txt")
+
+    def test_no_spec_is_a_warning_and_a_distinct_exit_not_a_die(self):
+        (self.tool / "conda_setup").rmdir()
+        r = sh(f'env_from_spec "{self.tool}"', env=self.env)
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("no conda_setup/environment.yml", r.stderr)
+        self.assertEqual(self.calls(), [])
+
+    def test_dry_run_prints_the_command_and_touches_nothing(self):
+        write(self.tool / "conda_setup/environment.yml", "name: x\ndependencies: [python]\n")
+        r = sh(f'env_from_spec "{self.tool}"', env={**self.env, "DRY_RUN": "1"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("[dry-run]", r.stdout); self.assertIn("env create -p", r.stdout)
+        self.assertEqual(self.calls(), [])
+
 
 if __name__ == "__main__":
     unittest.main()

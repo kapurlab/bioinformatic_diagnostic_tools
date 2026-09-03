@@ -543,14 +543,15 @@ addEventListener('storage',e=>{if(e.key===THEME_KEY)applyTheme(preferredTheme(),
    --shadow:0 1px 2px rgba(38,36,42,.08),0 14px 34px -14px rgba(38,36,42,.38);
    --pop-shadow:0 1px 2px rgba(38,36,42,.08),0 22px 60px -20px rgba(38,36,42,.45);
    --overlay:rgba(38,36,42,.7);
-   /* Title and card headlines: ink shaded lighter at the top, a hairline stroke
-      under the fill, a paper highlight beneath and a soft drop. The depth is a
+   /* Title and card headlines: ink shaded a touch lighter at the top of each
+      letter, and one soft drop. No stroke and no highlight line — both soften
+      the glyph edges, and crisp letters matter more than depth. The drop is a
       filter rather than text-shadow, because a gradient fill leaves text-shadow
-      with nothing to shadow. paint-order keeps the fill crisp over the stroke. */
-   --title-grad:linear-gradient(180deg,#403c46 0%,#1a181d 100%);--title-stroke:.5px rgba(38,36,42,.7);
-   --title-depth:drop-shadow(0 1px 0 rgba(255,255,255,.9)) drop-shadow(0 2.5px 4.5px rgba(38,36,42,.3));
-   --head-grad:linear-gradient(180deg,#3a3740 0%,#1c1a1f 100%);--head-stroke:.35px rgba(38,36,42,.6);
-   --head-depth:drop-shadow(0 1px 0 rgba(255,255,255,.8)) drop-shadow(0 1.5px 3px rgba(38,36,42,.22));
+      with nothing to shadow. */
+   --title-grad:linear-gradient(180deg,#3b3841 0%,#1e1c21 100%);
+   --title-depth:drop-shadow(0 2px 3px rgba(38,36,42,.22));
+   --head-grad:linear-gradient(180deg,#34313a 0%,#232127 100%);
+   --head-depth:drop-shadow(0 1px 2px rgba(38,36,42,.16));
  }
  html[data-theme="dark"]{
    --bg:#161412;--card:#2a2725;--soft:#363230;--hair:#3a3633;--line:#4a4541;
@@ -568,10 +569,10 @@ addEventListener('storage',e=>{if(e.key===THEME_KEY)applyTheme(preferredTheme(),
    --shadow:0 1px 2px rgba(0,0,0,.4),0 16px 40px -16px rgba(0,0,0,.75);
    --pop-shadow:0 1px 2px rgba(0,0,0,.3),0 22px 60px -18px rgba(0,0,0,.75);
    --overlay:rgba(18,17,16,.78);
-   --title-grad:linear-gradient(180deg,#fdf9f3 0%,#c9c0b5 100%);--title-stroke:.5px rgba(255,255,255,.28);
-   --title-depth:drop-shadow(0 1px 0 rgba(0,0,0,.85)) drop-shadow(0 2.5px 7px rgba(0,0,0,.7));
-   --head-grad:linear-gradient(180deg,#f7f2ec 0%,#cfc6bb 100%);--head-stroke:.35px rgba(255,255,255,.22);
-   --head-depth:drop-shadow(0 1px 0 rgba(0,0,0,.75)) drop-shadow(0 1.5px 3.5px rgba(0,0,0,.6));
+   --title-grad:linear-gradient(180deg,#f8f4ee 0%,#d6cec3 100%);
+   --title-depth:drop-shadow(0 2px 5px rgba(0,0,0,.55));
+   --head-grad:linear-gradient(180deg,#f2ede6 0%,#d8d0c6 100%);
+   --head-depth:drop-shadow(0 1px 3px rgba(0,0,0,.5));
  }
  @media (prefers-color-scheme: dark){
   html:not([data-theme="light"]){
@@ -590,10 +591,10 @@ addEventListener('storage',e=>{if(e.key===THEME_KEY)applyTheme(preferredTheme(),
    --shadow:0 1px 2px rgba(0,0,0,.4),0 16px 40px -16px rgba(0,0,0,.75);
    --pop-shadow:0 1px 2px rgba(0,0,0,.3),0 22px 60px -18px rgba(0,0,0,.75);
    --overlay:rgba(18,17,16,.78);
-   --title-grad:linear-gradient(180deg,#fdf9f3 0%,#c9c0b5 100%);--title-stroke:.5px rgba(255,255,255,.28);
-   --title-depth:drop-shadow(0 1px 0 rgba(0,0,0,.85)) drop-shadow(0 2.5px 7px rgba(0,0,0,.7));
-   --head-grad:linear-gradient(180deg,#f7f2ec 0%,#cfc6bb 100%);--head-stroke:.35px rgba(255,255,255,.22);
-   --head-depth:drop-shadow(0 1px 0 rgba(0,0,0,.75)) drop-shadow(0 1.5px 3.5px rgba(0,0,0,.6));
+   --title-grad:linear-gradient(180deg,#f8f4ee 0%,#d6cec3 100%);
+   --title-depth:drop-shadow(0 2px 5px rgba(0,0,0,.55));
+   --head-grad:linear-gradient(180deg,#f2ede6 0%,#d8d0c6 100%);
+   --head-depth:drop-shadow(0 1px 3px rgba(0,0,0,.5));
   }
  }
 
@@ -615,10 +616,10 @@ addEventListener('storage',e=>{if(e.key===THEME_KEY)applyTheme(preferredTheme(),
     control that is about the dashboard itself (appearance, this machine, the
     update state) lives in the page foot. ---- */
  header{padding:34px 0 2px}
- h1{margin:0;font-size:36px;font-weight:800;letter-spacing:-.025em;line-height:1.12;
+ h1{margin:0;font-size:36px;font-weight:700;letter-spacing:-.022em;line-height:1.12;
    display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
  /* The title text alone carries the shading and depth; the tag beside it stays plain. */
- h1 .ttl{background:var(--title-grad);-webkit-background-clip:text;background-clip:text;color:transparent;-webkit-text-stroke:var(--title-stroke);paint-order:stroke fill;filter:var(--title-depth)}
+ h1 .ttl{background:var(--title-grad);-webkit-background-clip:text;background-clip:text;color:transparent;filter:var(--title-depth)}
  h1 .tag{font:600 12px/1 ui-monospace,"SF Mono",Menlo,Consolas,monospace;letter-spacing:.02em;
    color:var(--muted);background:var(--soft);border:1px solid var(--hair);border-radius:999px;padding:5px 9px;
    position:relative;top:-3px}
@@ -716,7 +717,7 @@ addEventListener('storage',e=>{if(e.key===THEME_KEY)applyTheme(preferredTheme(),
  .card .dev{order:5}.card .setup{order:6}.card .plat{order:7}.card .err{order:8}
  .blurb .nowrap{white-space:nowrap}  /* SARS-CoV-2 never breaks at its hyphen */
  .card .blurb{grid-column:1;font-size:19px;line-height:1.28;font-weight:600;letter-spacing:-.012em;text-wrap:balance;
-   color:transparent;background:var(--head-grad);-webkit-background-clip:text;background-clip:text;-webkit-text-stroke:var(--head-stroke);paint-order:stroke fill;filter:var(--head-depth)}
+   color:transparent;background:var(--head-grad);-webkit-background-clip:text;background-clip:text;filter:var(--head-depth)}
  .card .name{grid-column:1;margin-top:5px;font-size:13.5px;font-weight:500;color:var(--ink2)}
  .card .name .qual{color:var(--muted);font-weight:400}
  .card .name .qual::before{content:"·";margin:0 6px;opacity:.6}

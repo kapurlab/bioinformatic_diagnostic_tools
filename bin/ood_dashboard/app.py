@@ -598,24 +598,24 @@ addEventListener('storage',e=>{{if(e.key===THEME_KEY)applyTheme(preferredTheme()
    --accent:#6d3a5a;--accent-hover:#5c2f4c;--accent2:#3f6b48;--button-ink:#fff;--disabled-bg:#dcd6ce;--disabled-ink:#5f5a55;
    --success-bg:#dfeadf;--success-ink:#2f5c3a;--dev-bg:#f6eedf;--dev-ink:#6b4a1a;--err-ink:#a13c2e;
    --shadow:0 1px 2px rgba(38,36,42,.08),0 14px 34px -14px rgba(38,36,42,.38);
-   --title-grad:linear-gradient(180deg,#403c46 0%,#1a181d 100%);--title-stroke:.5px rgba(38,36,42,.7);
-   --title-depth:drop-shadow(0 1px 0 rgba(255,255,255,.9)) drop-shadow(0 2.5px 4.5px rgba(38,36,42,.3));
-   --head-grad:linear-gradient(180deg,#3a3740 0%,#1c1a1f 100%);--head-stroke:.35px rgba(38,36,42,.6);
-   --head-depth:drop-shadow(0 1px 0 rgba(255,255,255,.8)) drop-shadow(0 1.5px 3px rgba(38,36,42,.22))}}
+   --title-grad:linear-gradient(180deg,#3b3841 0%,#1e1c21 100%);
+   --title-depth:drop-shadow(0 2px 3px rgba(38,36,42,.22));
+   --head-grad:linear-gradient(180deg,#34313a 0%,#232127 100%);
+   --head-depth:drop-shadow(0 1px 2px rgba(38,36,42,.16))}}
  html[data-theme="dark"]{{--bg:#161412;--card:#2a2725;--soft:#363230;--hair:#3a3633;--line:#4a4541;--ink:#ece7e1;--ink2:#cbc4bc;--muted:#a59d94;
    --accent:#8b4f78;--accent-hover:#9c5c88;--accent2:#3f7a4b;--button-ink:#fff;--disabled-bg:#3b3633;--disabled-ink:#aaa299;
    --success-bg:#233327;--success-ink:#a7d3ae;--dev-bg:#332c22;--dev-ink:#e3c68e;--err-ink:#f0a09b;
    --shadow:0 1px 2px rgba(0,0,0,.4),0 16px 40px -16px rgba(0,0,0,.75);
-   --title-grad:linear-gradient(180deg,#fdf9f3 0%,#c9c0b5 100%);--title-stroke:.5px rgba(255,255,255,.28);
-   --title-depth:drop-shadow(0 1px 0 rgba(0,0,0,.85)) drop-shadow(0 2.5px 7px rgba(0,0,0,.7));
-   --head-grad:linear-gradient(180deg,#f7f2ec 0%,#cfc6bb 100%);--head-stroke:.35px rgba(255,255,255,.22);
-   --head-depth:drop-shadow(0 1px 0 rgba(0,0,0,.75)) drop-shadow(0 1.5px 3.5px rgba(0,0,0,.6))}}
+   --title-grad:linear-gradient(180deg,#f8f4ee 0%,#d6cec3 100%);
+   --title-depth:drop-shadow(0 2px 5px rgba(0,0,0,.55));
+   --head-grad:linear-gradient(180deg,#f2ede6 0%,#d8d0c6 100%);
+   --head-depth:drop-shadow(0 1px 3px rgba(0,0,0,.5))}}
  *{{box-sizing:border-box}}html{{background:var(--bg)}}
  body{{margin:0;background:var(--bg);color:var(--ink);font:14.5px/1.5 -apple-system,"SF Pro Text","Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;-webkit-font-smoothing:antialiased}}
  .wrap{{max-width:1180px;margin:0 auto;padding:0 28px}}
  header{{padding:34px 0 2px}}
- h1{{margin:0;font-size:36px;font-weight:800;letter-spacing:-.025em;line-height:1.12;display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}}
- h1 .ttl{{background:var(--title-grad);-webkit-background-clip:text;background-clip:text;color:transparent;-webkit-text-stroke:var(--title-stroke);paint-order:stroke fill;filter:var(--title-depth)}}
+ h1{{margin:0;font-size:36px;font-weight:700;letter-spacing:-.022em;line-height:1.12;display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}}
+ h1 .ttl{{background:var(--title-grad);-webkit-background-clip:text;background-clip:text;color:transparent;filter:var(--title-depth)}}
  h1 .tag{{font:600 12px/1 ui-monospace,"SF Mono",Menlo,Consolas,monospace;letter-spacing:.02em;color:var(--muted);background:var(--soft);border:1px solid var(--hair);border-radius:999px;padding:5px 9px;position:relative;top:-3px}}
  header::after{{content:"";display:block;width:56px;height:3px;border-radius:2px;background:var(--accent);margin-top:14px}}
  .footbar{{display:flex;align-items:baseline;justify-content:space-between;gap:20px;flex-wrap:wrap;margin:28px 0 0;padding-top:16px;border-top:1px solid var(--hair)}}
@@ -625,7 +625,7 @@ addEventListener('storage',e=>{{if(e.key===THEME_KEY)applyTheme(preferredTheme()
  @media (max-width:759px){{.grid{{grid-template-columns:1fr}}.wrap{{padding:0 18px}}}}
  .card{{background:var(--card);border:1px solid var(--hair);border-radius:14px;padding:18px 20px 18px 22px;box-shadow:var(--shadow);
    display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:20px;row-gap:0;align-content:start}}
- .blurb{{grid-column:1;font-size:19px;line-height:1.28;font-weight:600;letter-spacing:-.012em;text-wrap:balance;color:transparent;background:var(--head-grad);-webkit-background-clip:text;background-clip:text;-webkit-text-stroke:var(--head-stroke);paint-order:stroke fill;filter:var(--head-depth)}}
+ .blurb{{grid-column:1;font-size:19px;line-height:1.28;font-weight:600;letter-spacing:-.012em;text-wrap:balance;color:transparent;background:var(--head-grad);-webkit-background-clip:text;background-clip:text;filter:var(--head-depth)}}
  .name{{grid-column:1;margin-top:5px;font-size:13.5px;font-weight:500;color:var(--ink2)}}
  .name .qual{{color:var(--muted);font-weight:400}}.name .qual::before{{content:"·";margin:0 6px;opacity:.6}}
  .row{{grid-column:2;grid-row:1/span 2;align-self:start;display:flex;align-items:center;gap:10px}}

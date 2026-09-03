@@ -973,11 +973,14 @@ We would rather you hear these from us than discover them.
   the shared area, which is how a laptop switches off a server-only path), and a
   *local* `bdtools install` repoints vSNP's derived reference paths. Neither applies
   to a server deployment's database configuration.
-- **Two tools are labelled "under active development"** and the dashboard shows a
-  caveat on their cards: `mhc_gui` (DRB3 typing is production-ready, Class I calls
-  are provisional; not validated for diagnostic use) and `ncbi_submit_gui`
-  (review generated submission files before sending them to NCBI). If you would
-  rather not offer one at all, the dashboard lists exactly what is in `tools.yml`
+- **Two tools are labelled "under active development"** in `tools.yml`: `mhc_gui`
+  (DRB3 typing is production-ready, Class I calls are provisional; not validated
+  for diagnostic use) and `ncbi_submit_gui` (review generated submission files
+  before sending them to NCBI). Their dashboard cards carried a notice saying so
+  until 2026-09-02, when the lab retired it; `CAVEAT` in
+  `bin/lib/suite_common.py` is where such a notice is declared should a site want
+  one back. If you would rather not offer a tool at all, the dashboard lists
+  exactly what is in `tools.yml`
   — remove that tool's entry, or point the card at a trimmed copy of the manifest
   by exporting `BDTOOLS_MANIFEST=/path/to/site-tools.yml` in
   `template/script.sh.erb`. The second option leaves the repository untouched,

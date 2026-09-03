@@ -592,54 +592,86 @@ applyTheme(preferredTheme(),false);
 matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change',()=>{{if(document.documentElement.dataset.themeMode==='system')applyTheme('system',false);}});
 addEventListener('storage',e=>{{if(e.key===THEME_KEY)applyTheme(preferredTheme(),false);}});
 </script><style>
- :root{{--bg:#f6f3ee;--card:#fff;--ink:#2c2a26;--muted:#7c756a;--accent:#a8553a;--accent2:#6b8f71;--line:#e6ded2;--soft:#efe9df;--button-ink:#fff}}
- html[data-theme="dark"]{{--bg:#0c1217;--card:#141d24;--ink:#e8eef1;--muted:#9aa9b2;--accent:#dc8b6d;--accent2:#76ae83;--line:#2b3a44;--soft:#1c2931;--button-ink:#10191d}}
- *{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}}
- header{{padding:28px 24px 8px}}.hbar{{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}}
- h1{{margin:0;font-size:22px}}p.sub{{margin:4px 0 0;color:var(--muted)}}
- .who{{color:var(--muted);font-size:13px;padding:2px 24px 0}}
- .grid{{display:grid;gap:16px;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));padding:20px 24px 40px}}
- .card{{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:8px}}
- .name{{font-weight:650;font-size:16px}}.blurb{{color:var(--muted);font-size:13px;min-height:34px}}
- .row{{display:flex;align-items:center;justify-content:space-between;margin-top:4px}}
- button{{font:inherit;border:0;border-radius:8px;padding:8px 14px;cursor:pointer;background:var(--accent);color:var(--button-ink);font-weight:600}}
- button:disabled{{background:#cfc7ba;cursor:not-allowed}}button.open{{background:var(--accent2)}}
- .pill{{font-size:12px;padding:2px 9px;border-radius:999px;background:var(--soft);color:var(--muted)}}
- .pill.on{{background:#e2efe4;color:#3f6b48}}.err{{color:#b23b2e;font-size:12px;min-height:14px}}
+ /* The same tokens and card as the full page (bin/dashboard.py), reduced to what
+    this fallback renders, so the two never look like different products. */
+ :root{{--bg:#ece8e1;--card:#fffdfa;--soft:#e4dfd7;--hair:#dcd6cd;--line:#cfc8be;--ink:#26242a;--ink2:#4a474f;--muted:#64606a;
+   --accent:#6d3a5a;--accent-hover:#5c2f4c;--accent2:#3f6b48;--button-ink:#fff;--disabled-bg:#dcd6ce;--disabled-ink:#5f5a55;
+   --success-bg:#dfeadf;--success-ink:#2f5c3a;--dev-bg:#f6eedf;--dev-ink:#6b4a1a;--err-ink:#a13c2e;
+   --shadow:0 1px 2px rgba(38,36,42,.08),0 14px 34px -14px rgba(38,36,42,.38)}}
+ html[data-theme="dark"]{{--bg:#161412;--card:#2a2725;--soft:#363230;--hair:#3a3633;--line:#4a4541;--ink:#ece7e1;--ink2:#cbc4bc;--muted:#a59d94;
+   --accent:#8b4f78;--accent-hover:#9c5c88;--accent2:#3f7a4b;--button-ink:#fff;--disabled-bg:#3b3633;--disabled-ink:#aaa299;
+   --success-bg:#233327;--success-ink:#a7d3ae;--dev-bg:#332c22;--dev-ink:#e3c68e;--err-ink:#f0a09b;
+   --shadow:0 1px 2px rgba(0,0,0,.4),0 16px 40px -16px rgba(0,0,0,.75)}}
+ *{{box-sizing:border-box}}html{{background:var(--bg)}}
+ body{{margin:0;background:var(--bg);color:var(--ink);font:14.5px/1.5 -apple-system,"SF Pro Text","Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;-webkit-font-smoothing:antialiased}}
+ .wrap{{max-width:1180px;margin:0 auto;padding:0 28px}}
+ header{{padding:34px 0 2px}}
+ h1{{margin:0;font-size:30px;font-weight:700;letter-spacing:-.022em;line-height:1.15;display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}}
+ h1 .tag{{font:600 12px/1 ui-monospace,"SF Mono",Menlo,Consolas,monospace;letter-spacing:.02em;color:var(--muted);background:var(--soft);border:1px solid var(--hair);border-radius:999px;padding:5px 9px;position:relative;top:-3px}}
+ header::after{{content:"";display:block;width:56px;height:3px;border-radius:2px;background:var(--accent);margin-top:14px}}
+ .footbar{{display:flex;align-items:baseline;justify-content:space-between;gap:20px;flex-wrap:wrap;margin:28px 0 0;padding-top:16px;border-top:1px solid var(--hair)}}
+ .themerow{{display:flex;justify-content:flex-end;margin:14px 0 44px}}
+ .who{{color:var(--muted);font-size:13px;margin:0}}
+ .grid{{display:grid;gap:14px;grid-template-columns:repeat(2,minmax(0,1fr));padding:22px 0 8px;align-items:stretch}}
+ @media (max-width:759px){{.grid{{grid-template-columns:1fr}}.wrap{{padding:0 18px}}}}
+ .card{{background:var(--card);border:1px solid var(--hair);border-radius:14px;padding:18px 20px 18px 22px;box-shadow:var(--shadow);
+   display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:20px;row-gap:0;align-content:start}}
+ .blurb{{grid-column:1;font-size:19px;line-height:1.28;font-weight:600;letter-spacing:-.012em;text-wrap:balance}}
+ .name{{grid-column:1;margin-top:5px;font-size:13.5px;font-weight:500;color:var(--ink2)}}
+ .name .qual{{color:var(--muted);font-weight:400}}.name .qual::before{{content:"·";margin:0 6px;opacity:.6}}
+ .row{{grid-column:2;grid-row:1/span 2;align-self:start;display:flex;align-items:center;gap:10px}}
+ .dev,.err,.note{{grid-column:1/-1}}
+ button{{font:inherit;border:0;border-radius:8px;padding:7px 14px;cursor:pointer;background:var(--accent);color:var(--button-ink);font-weight:600;font-size:13.5px;line-height:1.3}}
+ button:hover{{background:var(--accent-hover)}}button.open{{background:var(--accent2)}}
+ button:disabled,button:disabled:hover,button.open:disabled{{background:var(--disabled-bg);color:var(--disabled-ink);cursor:not-allowed}}
+ .pill{{font-size:11.5px;font-weight:550;letter-spacing:.01em;padding:3px 9px;border-radius:999px;background:var(--soft);color:var(--ink2);white-space:nowrap}}
+ .pill.on{{background:var(--success-bg);color:var(--success-ink)}}
+ .err{{margin-top:10px;color:var(--err-ink);font-size:12.5px}}.err:empty{{display:none}}
  /* A notice is not an error. Same slot, deliberately quieter: it reports
     something already done, and borrowing the failure styling for it is how a
     report earns the shrug that later hides a real one. */
- .note{{color:#6f6a60;font-size:11.5px;min-height:14px;line-height:1.45}}
- .dev{{background:#fbecec;border:1px solid #ecc9c4;border-radius:8px;padding:8px 10px;font-size:12px;color:#8a3324}}
- .theme-switch{{display:inline-flex;gap:2px;padding:3px;background:var(--soft);border:1px solid var(--line);border-radius:10px}}
- .theme-switch button{{min-width:34px;padding:5px 8px;background:transparent;color:var(--muted);border-radius:7px}}
- .theme-switch button[aria-pressed="true"]{{background:var(--card);color:var(--ink);box-shadow:0 1px 4px rgba(0,0,0,.16)}}
+ .note{{margin-top:10px;color:var(--muted);font-size:11.5px;line-height:1.45}}.note:empty{{display:none}}
+ .dev{{margin-top:14px;background:var(--dev-bg);color:var(--dev-ink);border-radius:9px;padding:9px 12px;font-size:12.5px;line-height:1.5}}
+ .theme-switch{{display:inline-flex;gap:1px;padding:2px;background:var(--soft);border:1px solid var(--hair);border-radius:8px}}
+ .theme-switch button{{min-width:26px;padding:2px 6px;background:transparent;color:var(--muted);border-radius:6px;font-size:12px;line-height:1.1}}
+ .theme-switch button:hover{{background:transparent;color:var(--ink)}}
+ .theme-switch button[aria-pressed="true"]{{background:var(--card);color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.14)}}
  .theme-switch button:focus-visible{{outline:2px solid var(--accent);outline-offset:2px}}
- html[data-theme="dark"] .pill.on{{background:#183326;color:#9bd8a7}}
- html[data-theme="dark"] .dev{{background:#3a2223;border-color:#633638;color:#f0a09b}}
- html[data-theme="dark"] .err{{color:#f0a09b}}
- html[data-theme="dark"] .note{{color:#9a948a}}
-</style></head><body>
-<header><div class="hbar"><div><h1>Bioinformatic Diagnostic Tools (bdtools)</h1>
-<p class="sub">One session, one allocation. Pick a tool to launch it on this node.</p></div>
-<div class="theme-switch" role="group" aria-label="Appearance">
+</style></head><body><div class="wrap">
+<header><h1>Bioinformatic Diagnostic Tools <span class="tag">bdtools</span></h1></header>
+<div id="grid" class="grid"></div>
+<footer><div class="footbar"><p class="who">{who} <span style="opacity:.75">Running on {host}.</span></p></div>
+<div class="themerow"><div class="theme-switch" role="group" aria-label="Appearance">
  <button data-theme-choice="light" aria-label="Use light theme" title="Light" onclick="applyTheme('light')">☀</button>
  <button data-theme-choice="system" aria-label="Use system theme" title="System" onclick="applyTheme('system')">◐</button>
  <button data-theme-choice="dark" aria-label="Use dark theme" title="Dark" onclick="applyTheme('dark')">☾</button>
-</div></div></header>
-<p class="who">{who} <span style="opacity:.75">Running on {host}.</span></p>
-<div id="grid" class="grid"></div>
-<script>
+</div></div></footer>
+</div><script>
 applyTheme(document.documentElement.dataset.themeMode||'system',false);
+function esc(s){{return String(s).replace(/[&<>]/g,c=>({{'&':'&amp;','<':'&lt;','>':'&gt;'}}[c]));}}
+// Function first, tool second — the same split rule as the full page's
+// splitBlurb(): a trailing parenthetical that repeats the tool is dropped, one
+// that contains the label becomes the tool line, anything else is a qualifier.
+function split(t){{
+ let head=t.blurb||'',tool=t.label||'',qual='';
+ const m=head.match(/^(.*?)\\s*\\(([^()]+)\\)\\s*$/);
+ if(m){{const q=m[2].trim(),norm=s=>s.toLowerCase().replace(/[^a-z0-9]+/g,''),first=norm(tool.split(/[\\s/]+/)[0]||'');
+  head=m[1];
+  if(norm(q)===norm(tool)||(first&&norm(q).startsWith(first))){{}}
+  else if(tool&&q.includes(tool)){{tool=q;}}
+  else{{qual=q;}}}}
+ return {{head,tool,qual}};
+}}
 async function load(){{
  const r=await fetch('./api/tools');const tools=await r.json();
  const g=document.getElementById('grid');g.innerHTML='';
  for(const t of tools){{
   const c=document.createElement('div');c.className='card';
-  const pill=t.running?'<span class="pill on">running</span>':'<span class="pill">'+(t.installed?'installed':'not installed')+'</span>';
-  c.innerHTML='<div class="name">'+t.label+'</div><div class="blurb">'+(t.blurb||'')+'</div>'+
-   (t.caveat?'<div class="dev"><b>⚠ Development status:</b> '+t.caveat+'</div>':'')+
+  const pill=t.running?'<span class="pill on">running</span>':(t.installed?'':'<span class="pill">not installed</span>');
+  const h=split(t);
+  c.innerHTML='<div class="blurb">'+esc(h.head)+'</div><div class="name">'+esc(h.tool)+(h.qual?'<span class="qual">'+esc(h.qual)+'</span>':'')+'</div>'+
    '<div class="row">'+pill+'<button '+(t.installed?'':'disabled')+' class="'+(t.running?'open':'')+'">'+(t.running?'Open':'Launch')+'</button></div>'+
+   (t.caveat?'<div class="dev"><b>⚠ Development status:</b> '+esc(t.caveat)+'</div>':'')+
    '<div class="err" id="err-'+t.name+'"></div>';
   const b=c.querySelector('button');b.onclick=()=>act(t.name,b);g.appendChild(c);
  }}
@@ -650,7 +682,7 @@ async function act(name,btn){{
  try{{const r=await fetch('./api/launch?tool='+encodeURIComponent(name),{{method:'POST'}});
   const j=await r.json();
   if(j.url){{
-    if(j.warnings&&j.warnings.length){{err.className='err';err.textContent='\u26a0 '+j.warnings.join(' ');}}
+    if(j.warnings&&j.warnings.length){{err.className='err';err.textContent='⚠ '+j.warnings.join(' ');}}
     else if(j.notices&&j.notices.length){{err.className='note';err.textContent=j.notices.join(' ');}}
     window.open(j.url,'_blank');
   }}else{{err.className='err';err.textContent=j.error||'failed to launch';}}

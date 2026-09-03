@@ -521,204 +521,380 @@ matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change',()=>{
 addEventListener('storage',e=>{if(e.key===THEME_KEY)applyTheme(preferredTheme(),false);});
 </script>
 <style>
- :root{--bg:#f6f3ee;--card:#fff;--ink:#2c2a26;--muted:#7c756a;--accent:#a8553a;
-       --accent2:#6b8f71;--line:#e6ded2;--soft:#efe9df;--code:#f3e7cf;
-       --success-bg:#e2efe4;--success-ink:#3f6b48;--warn-bg:#fbedd6;--warn-ink:#8a5a12;
-       --danger-bg:#fbecec;--danger-line:#ecc9c4;--danger-ink:#8a3324;--button-ink:#fff;}
- html[data-theme="dark"]{--bg:#0c1217;--card:#141d24;--ink:#e8eef1;--muted:#9aa9b2;
-   --accent:#dc8b6d;--accent2:#76ae83;--line:#2b3a44;--soft:#1c2931;--code:#26343c;
-   --success-bg:#183326;--success-ink:#9bd8a7;--warn-bg:#3b2e19;--warn-ink:#f1c77b;
-   --danger-bg:#3a2223;--danger-line:#633638;--danger-ink:#f0a09b;--button-ink:#10191d;}
- *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--ink);
-   font:15px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;transition:background .2s,color .2s}
- header{padding:28px 24px 8px}h1{margin:0;font-size:22px}
- p.sub{margin:4px 0 0;color:var(--muted)}
- .grid{display:grid;gap:16px;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));
-   padding:20px 24px 40px}
- .card{background:var(--card);border:1px solid var(--line);border-radius:12px;
-   padding:16px 16px 14px;display:flex;flex-direction:column;gap:8px;
-   box-shadow:0 1px 2px rgba(0,0,0,.03)}
- .name{font-weight:650;font-size:16px}
- .blurb{color:var(--muted);font-size:13px;min-height:34px}
- .row{display:flex;align-items:center;justify-content:space-between;margin-top:4px}
- button{font:inherit;border:0;border-radius:8px;padding:8px 14px;cursor:pointer;
-   background:var(--accent);color:var(--button-ink);font-weight:600}
- button:disabled{background:#cfc7ba;cursor:not-allowed}
+ /* ---- Tokens: graphite ink on warm-grey paper, one plum accent for Launch and a
+    gentle green for Open/running. The dark set is declared twice on purpose:
+    once for the theme the head script stamps on <html>, once for an un-stamped
+    document following the OS (no JS yet, or the page saved to disk). Every
+    colour on the page comes from these tokens; nothing is hard-coded for one
+    theme, so a rule that looks right in light cannot go unreadable in dark. ---- */
+ :root{
+   --bg:#ece8e1;--card:#fffdfa;--soft:#e4dfd7;--hair:#dcd6cd;--line:#cfc8be;
+   --ink:#26242a;--ink2:#4a474f;--muted:#64606a;
+   --accent:#6d3a5a;--accent-hover:#5c2f4c;--accent-text:#6d3a5a;
+   --accent2:#3f6b48;--accent2-hover:#355c3e;--button-ink:#fff;
+   --disabled-bg:#dcd6ce;--disabled-ink:#5f5a55;
+   --success-bg:#dfeadf;--success-ink:#2f5c3a;
+   --warn-bg:#f5e6c4;--warn-ink:#6e4a10;--warn-line:#d7c39c;
+   --drift-bg:#f8e4dc;--drift-line:#ebc4b6;--drift-ink:#8a3f2a;
+   --danger-bg:#f9e7e4;--danger-line:#ecc9c4;--danger-ink:#8a3324;--err-ink:#a13c2e;
+   --dev-bg:#f6eedf;--dev-ink:#6b4a1a;
+   --setup-bg:#f7f1e6;--setup-line:#eadfca;--setup-ink:#6b4a1a;
+   --code:#ece5d8;--log-bg:#26242a;--log-ink:#ece7e1;
+   --shadow:0 1px 2px rgba(38,36,42,.08),0 14px 34px -14px rgba(38,36,42,.38);
+   --pop-shadow:0 1px 2px rgba(38,36,42,.08),0 22px 60px -20px rgba(38,36,42,.45);
+   --overlay:rgba(38,36,42,.7);
+ }
+ html[data-theme="dark"]{
+   --bg:#161412;--card:#2a2725;--soft:#363230;--hair:#3a3633;--line:#4a4541;
+   --ink:#ece7e1;--ink2:#cbc4bc;--muted:#a59d94;
+   --accent:#8b4f78;--accent-hover:#9c5c88;--accent-text:#d6a5c6;
+   --accent2:#3f7a4b;--accent2-hover:#386b42;--button-ink:#fff;
+   --disabled-bg:#3b3633;--disabled-ink:#aaa299;
+   --success-bg:#233327;--success-ink:#a7d3ae;
+   --warn-bg:#3d3218;--warn-ink:#ecc985;--warn-line:#635330;
+   --drift-bg:#45281d;--drift-line:#66382a;--drift-ink:#f0b299;
+   --danger-bg:#3a2626;--danger-line:#5a3a3a;--danger-ink:#efa9a2;--err-ink:#f0a09b;
+   --dev-bg:#332c22;--dev-ink:#e3c68e;
+   --setup-bg:#312a1f;--setup-line:#4a3f2c;--setup-ink:#e3c68e;
+   --code:#38332f;--log-bg:#121110;--log-ink:#e4ddd5;
+   --shadow:0 1px 2px rgba(0,0,0,.4),0 16px 40px -16px rgba(0,0,0,.75);
+   --pop-shadow:0 1px 2px rgba(0,0,0,.3),0 22px 60px -18px rgba(0,0,0,.75);
+   --overlay:rgba(18,17,16,.78);
+ }
+ @media (prefers-color-scheme: dark){
+  html:not([data-theme="light"]){
+   --bg:#161412;--card:#2a2725;--soft:#363230;--hair:#3a3633;--line:#4a4541;
+   --ink:#ece7e1;--ink2:#cbc4bc;--muted:#a59d94;
+   --accent:#8b4f78;--accent-hover:#9c5c88;--accent-text:#d6a5c6;
+   --accent2:#3f7a4b;--accent2-hover:#386b42;--button-ink:#fff;
+   --disabled-bg:#3b3633;--disabled-ink:#aaa299;
+   --success-bg:#233327;--success-ink:#a7d3ae;
+   --warn-bg:#3d3218;--warn-ink:#ecc985;--warn-line:#635330;
+   --drift-bg:#45281d;--drift-line:#66382a;--drift-ink:#f0b299;
+   --danger-bg:#3a2626;--danger-line:#5a3a3a;--danger-ink:#efa9a2;--err-ink:#f0a09b;
+   --dev-bg:#332c22;--dev-ink:#e3c68e;
+   --setup-bg:#312a1f;--setup-line:#4a3f2c;--setup-ink:#e3c68e;
+   --code:#38332f;--log-bg:#121110;--log-ink:#e4ddd5;
+   --shadow:0 1px 2px rgba(0,0,0,.4),0 16px 40px -16px rgba(0,0,0,.75);
+   --pop-shadow:0 1px 2px rgba(0,0,0,.3),0 22px 60px -18px rgba(0,0,0,.75);
+   --overlay:rgba(18,17,16,.78);
+  }
+ }
+
+ /* ---- Base. System faces only: this page is served from compute nodes with no
+    outbound network, so nothing here may be fetched. ---- */
+ *{box-sizing:border-box}
+ html{background:var(--bg)}
+ body{margin:0;background:var(--bg);color:var(--ink);
+   font:14.5px/1.5 -apple-system,"SF Pro Text","Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+   -webkit-font-smoothing:antialiased;transition:background .2s,color .2s}
+ code,.vers,.ulog,.kpanel pre,.kpanel code{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace}
+ a{color:var(--accent-text)}
+ a.foot{color:var(--accent-text)}
+ :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+ .wrap{max-width:1180px;margin:0 auto;padding:0 28px}
+ @media (prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;animation:none!important}}
+
+ /* ---- Header: the page title and nothing else. The cards are the page; every
+    control that is about the dashboard itself (appearance, this machine, the
+    update state) lives in the page foot. ---- */
+ header{padding:34px 0 2px}
+ h1{margin:0;font-size:30px;font-weight:700;letter-spacing:-.022em;line-height:1.15;
+   display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+ h1 .tag{font:600 12px/1 ui-monospace,"SF Mono",Menlo,Consolas,monospace;letter-spacing:.02em;
+   color:var(--muted);background:var(--soft);border:1px solid var(--hair);border-radius:999px;padding:5px 9px;
+   position:relative;top:-3px}
+ header::after{content:"";display:block;width:56px;height:3px;border-radius:2px;background:var(--accent);margin-top:14px}
+ .theme-switch{display:inline-flex;gap:1px;padding:2px;background:var(--soft);border:1px solid var(--hair);border-radius:8px}
+ .theme-switch button{min-width:26px;padding:2px 6px;background:transparent;color:var(--muted);
+   border-radius:6px;font-size:12px;line-height:1.1;box-shadow:none}
+ .theme-switch button:hover{color:var(--ink);background:transparent}
+ .theme-switch button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+ .theme-switch button[aria-pressed="true"]{background:var(--card);color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.14)}
+ .ctl{text-align:right}
+ .host{color:var(--muted);font-size:12.5px;margin:0}
+ .host b{color:var(--ink);font-weight:600}
+ .ctlbtns{display:flex;gap:8px;justify-content:flex-end}
+ /* Ghost buttons: the only filled accents on the page are Launch and Open. */
+ .ctlbtns button{padding:5px 11px;font-size:12.5px;font-weight:550;background:transparent;
+   border:1px solid var(--line);color:var(--ink2);border-radius:8px}
+ .ctlbtns button:hover{background:var(--soft);color:var(--ink)}
+ button.restart{color:var(--ink2)}
+ button.shutdown{color:var(--danger-ink);border-color:var(--danger-line)}
+ button.shutdown:hover{background:var(--danger-bg);color:var(--danger-ink)}
+
+ /* ---- Buttons ---- */
+ button{font:inherit;border:0;border-radius:8px;padding:7px 14px;cursor:pointer;
+   background:var(--accent);color:var(--button-ink);font-weight:600;font-size:13.5px;line-height:1.3;
+   transition:background .15s,color .15s}
+ button:hover{background:var(--accent-hover)}
  button.open{background:var(--accent2)}
- .pill{font-size:12px;padding:2px 9px;border-radius:999px;background:var(--soft);color:var(--muted)}
- .pill.on{background:var(--success-bg);color:var(--success-ink)}
- .pill.warn{background:var(--warn-bg);color:var(--warn-ink)}
- .note{padding:0 24px;color:var(--muted);font-size:13px}
- a.foot{color:var(--accent)}
- .err{color:#b23b2e;font-size:12px;min-height:14px}
- .setup{background:#fbf5ea;border:1px solid #f0e2c8;border-radius:8px;padding:8px 10px;
-   font-size:12px;color:#7a5a1e}
- .setup b{color:#6b4f1a}
- .setup code{background:var(--code);padding:1px 5px;border-radius:4px;
-   font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;
-   user-select:all;word-break:break-all}
- .plat{font-size:12px;color:var(--muted);font-style:italic}
- .vers{font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums;
-       display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin-top:2px}
- .vers .vtool{font-weight:650;color:var(--ink);opacity:.75}
- .vers .vsep{opacity:.45}
- .vers .vnew{color:#7a5a1e;background:#fbf1dc;border-radius:999px;padding:0 6px;font-weight:650}
- .vers .vheld{color:var(--muted);background:var(--soft);border-radius:999px;padding:0 6px;
-              border:1px solid var(--line)}
- /* Off the validated pin — a correctness statement, not an update offer, so it
-    reads as a warning rather than as the muted "held" note beside it. */
- .vers .vdrift{color:#8a4a2b;background:#fdeae2;border:1px solid #efc3ad;border-radius:999px;
-               padding:0 6px;font-weight:650}
- html[data-theme="dark"] .vers .vnew{color:#f0cf95;background:#3a3115}
- html[data-theme="dark"] .vers .vdrift{color:#f0b79a;background:#3f2317;border-color:#5d3826}
- /* Software version policy — the formal footer that explains what the badges
-    above mean and why versions here move deliberately. Styled like a card so it
-    reads as part of the product, not an afterthought. */
- .policy{background:var(--card);border:1px solid var(--line);border-radius:12px;
-   padding:16px 18px;margin:22px 0 8px;box-shadow:0 1px 2px rgba(0,0,0,.03)}
- .policy h2{margin:0 0 6px;font-size:15px}
- .policy p{margin:6px 0;color:var(--muted);font-size:13px;line-height:1.55;max-width:105ch}
- .policy .plegend{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;
-   margin:10px 0 4px;font-size:13px;align-items:baseline}
- .policy .plegend .vers{font-size:12.5px;white-space:nowrap}
- .policy .plegend div{color:var(--muted);line-height:1.5}
- .policy .pfoot{margin-top:8px;font-size:12.5px;color:var(--muted)}
- .policy code{background:var(--code);border-radius:6px;padding:1px 5px}
- .dev{background:var(--danger-bg);border:1px solid var(--danger-line);border-radius:8px;padding:8px 10px;
-   font-size:12px;color:var(--danger-ink)}
- .dev b{color:var(--danger-ink)}
- .recheck{padding:0 24px 12px;font-size:13px}
- .recheck button{background:transparent;color:var(--accent);padding:4px 0;font-weight:600}
- /* Subtle by default (checking / up-to-date are just a small muted line, so the
-    dashboard is usable immediately); only 'updates available' is a real banner. */
- .updates{margin:6px 24px 0;font-size:12.5px;color:var(--muted)}
+ button.open:hover{background:var(--accent2-hover)}
+
+ /* ---- Status line under the header. Subtle by default (checking / up-to-date
+    are one quiet line, so the dashboard is usable immediately); only
+    'updates available' and 'could not reach the repositories' are banners. ---- */
+ .updates{margin:14px 0 0;font-size:13px;color:var(--muted)}
  .updates:empty{display:none}
  .updates.checking{color:var(--muted)}
- .updates.current{color:#3f6b48}
- /* The check ran but couldn't reach the repos: a real warning banner, visually
-    distinct from both "up to date" and "updates available". */
- .updates.blind{background:#fdeae2;border:1px solid #efc3ad;color:#8a4a2b;
-   border-radius:10px;padding:12px 14px;font-size:13.5px;margin-top:8px}
+ .updates.current{color:var(--success-ink)}
+ .updates.current a{color:inherit;text-decoration:underline;text-underline-offset:3px}
+ .updates.blind{background:var(--drift-bg);border:1px solid var(--drift-line);color:var(--drift-ink);
+   border-radius:12px;padding:12px 16px;font-size:13.5px;margin-top:14px}
  .updates.blind a{color:inherit;font-weight:600}
- .updates.avail{background:#fbf1dc;border:1px solid #f0dcae;color:#7a5a1e;
-   border-radius:10px;padding:12px 14px;font-size:13.5px;margin-top:8px}
+ .updates.avail{background:var(--warn-bg);border:1px solid var(--warn-line);color:var(--warn-ink);
+   border-radius:12px;padding:12px 16px;font-size:13.5px;margin-top:14px}
  .updates.avail a{color:inherit}
  .updates .uhead{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
  .updates .utitle{font-weight:650}
  .updates ul{margin:8px 0 0;padding-left:18px}
  .updates .ustep{display:inline-flex;align-items:center;justify-content:center;
    min-width:16px;height:16px;margin-right:6px;padding:0 4px;border-radius:999px;
-   background:rgba(0,0,0,.18);font-size:11px;font-weight:700;line-height:1}
+   background:rgba(128,128,128,.25);background:color-mix(in srgb,currentColor 18%,transparent);
+   font-size:11px;font-weight:700;line-height:1}
  .updates .uarrow{margin:0 6px;opacity:.55;font-weight:700}
- .updates .ukind{font-size:11px;opacity:.75;border:1px solid currentColor;
-   border-radius:999px;padding:0 5px;margin-left:4px;white-space:nowrap}
+ .updates .ukind{font-size:11px;opacity:.75;border:1px solid currentColor;border-radius:999px;padding:0 5px;margin-left:4px;white-space:nowrap}
  .updates ul.usteps{list-style:none;padding-left:0}
  .updates li.ugroup{margin-top:6px;font-weight:650}
  .updates li.ugroup ul{font-weight:400;margin-top:2px}
  .updates li{margin:2px 0}
  .updates .uheldnote{border-bottom:1px dotted currentColor;cursor:help}
  .updates a.uheldnote{color:inherit;text-decoration:none;cursor:pointer}
- /* The kept-updates panel is NOT nested in .updates — it renders at the foot of
-    the page (see #keptPanelHost), so its rules must not be descendant-scoped or
-    it would lose every one of them the moment it moved out of the banner. */
- .kpanel{margin:18px 0 2px;padding:10px 14px;border:1px solid var(--line);
-   border-radius:10px;background:var(--soft);color:var(--ink);font-size:13px;line-height:1.55}
+ .updates .uactions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+ .updates button.u{background:var(--accent);color:var(--button-ink)}
+ .updates button.u:hover{background:var(--accent-hover)}
+ .updates button.link{background:transparent;color:inherit;padding:4px 6px;font-weight:600;text-decoration:underline;text-underline-offset:3px}
+ .updates button.link:hover{background:transparent}
+ .updates code,.urun code,.policy code,.setup code,.sessexp code,.obox code{background:var(--code);border-radius:5px;padding:1px 5px;font-size:12px}
+
+ .urun{margin:14px 0 0;font-size:13px;color:var(--ink);background:var(--soft);border:1px solid var(--hair);border-radius:12px;padding:10px 14px}
+ .urun .uclose{background:transparent;color:var(--accent-text);padding:2px 6px;font-weight:600}
+ .urun .uclose:hover{background:transparent;text-decoration:underline}
+ .urun .uhead{display:flex;align-items:center;justify-content:space-between;gap:12px}
+ .ulog{margin-top:10px;background:var(--log-bg);color:var(--log-ink);border-radius:8px;padding:8px 10px;
+   font-size:12px;line-height:1.45;max-height:220px;overflow:auto;white-space:pre-wrap}
+ .udone{margin-top:8px;font-weight:600}
+ /* Portal sign-in expired while the page sat open (OOD). Danger tokens, so no
+    per-theme override is needed. */
+ .sessexp{margin:14px 0 0;background:var(--danger-bg);border:1px solid var(--danger-line);color:var(--danger-ink);
+   border-radius:12px;padding:12px 16px;font-size:13.5px}
+ .sessexp button{margin-left:10px;background:var(--accent);color:var(--button-ink);padding:5px 12px;font-size:13px}
+
+ /* ---- The grid: two wide columns, a menu of functions. Each card is itself a
+    grid — text column left, a fixed action column right — so the Launch
+    buttons form one spine down the page. Cards in a row share a height
+    (align-items:stretch) so a short card beside one carrying a notice leaves
+    no hole; align-content:start keeps the text at the top. ---- */
+ .grid{display:grid;gap:14px;grid-template-columns:repeat(2,minmax(0,1fr));padding:22px 0 8px;align-items:stretch}
+ .card{background:var(--card);border:1px solid var(--hair);border-radius:14px;
+   padding:18px 20px 18px 22px;box-shadow:var(--shadow);
+   display:grid;grid-template-columns:minmax(0,1fr) 160px;column-gap:20px;row-gap:0;
+   align-content:start;transition:border-color .15s}
+ .card:hover{border-color:var(--line)}
+ /* The FUNCTION is the headline; the tool name and the version stamp sit
+    beneath it. order: values make placement independent of the template's
+    element order, so the card reads the same whichever way load() emits it. */
+ .card .blurb{order:1}.card .name{order:2}.card .vers{order:3}.card .row{order:4}
+ .card .dev{order:5}.card .setup{order:6}.card .plat{order:7}.card .err{order:8}
+ .blurb .nowrap{white-space:nowrap}  /* SARS-CoV-2 never breaks at its hyphen */
+ .card .blurb{grid-column:1;font-size:19px;line-height:1.28;font-weight:600;letter-spacing:-.012em;color:var(--ink);text-wrap:balance}
+ .card .name{grid-column:1;margin-top:5px;font-size:13.5px;font-weight:500;color:var(--ink2)}
+ .card .name .qual{color:var(--muted);font-weight:400}
+ .card .name .qual::before{content:"·";margin:0 6px;opacity:.6}
+ /* The version stamp: small, monospace, tabular — provenance, not clutter. */
+ .vers{grid-column:1;margin-top:9px;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;
+   display:flex;flex-wrap:wrap;align-items:center;gap:4px 5px;line-height:1.5}
+ .vers .vtool{font-weight:650;color:var(--ink2)}
+ .vers .vsep{opacity:.5}
+ .vers .vpkg{display:inline-flex;align-items:center;gap:5px;white-space:nowrap} /* a package and its badges wrap as one unit */
+ .vers .vnew{color:var(--warn-ink);background:var(--warn-bg);border-radius:999px;padding:0 7px;font-weight:650}
+ .vers .vheld{color:var(--ink2);background:var(--soft);border-radius:999px;padding:0 7px;border:1px solid var(--hair)}
+ /* Off the validated pin — a correctness statement, not an update offer, so it
+    reads as a warning rather than as the muted "held" note beside it. */
+ .vers .vdrift{color:var(--drift-ink);background:var(--drift-bg);border:1px solid var(--drift-line);border-radius:999px;padding:0 7px;font-weight:650}
+ /* Action column: fixed width, top-right, pill then button. */
+ .card .row{grid-column:2;grid-row:1/span 3;align-self:start;justify-self:end;
+   display:flex;flex-wrap:wrap;align-items:center;align-content:flex-start;justify-content:flex-end;gap:6px 10px;margin-top:1px}
+ .pill{font-size:11.5px;font-weight:550;letter-spacing:.01em;padding:3px 9px;border-radius:999px;
+   background:var(--soft);color:var(--ink2);white-space:nowrap}
+ .pill.on{background:var(--success-bg);color:var(--success-ink)}
+ .pill.warn{background:var(--warn-bg);color:var(--warn-ink)}
+ /* Full-width strips beneath the headline row; they never break the two-column rhythm. */
+ .card .dev,.card .setup,.card .plat,.card .err{grid-column:1/-1}
+ /* Development notice: honest caution, not an error, so it is amber rather than red. */
+ .dev{margin-top:14px;background:var(--dev-bg);color:var(--dev-ink);border-radius:9px;padding:9px 12px;font-size:12.5px;line-height:1.5}
+ .dev b{color:inherit;font-weight:650}
+ .setup{margin-top:14px;background:var(--setup-bg);border:1px solid var(--setup-line);border-radius:9px;padding:9px 12px;font-size:12.5px;color:var(--setup-ink);line-height:1.5}
+ .setup b{color:inherit;font-weight:650}
+ .setup code{font-size:11.5px;user-select:all;word-break:break-all}
+ .plat{margin-top:12px;font-size:12.5px;color:var(--muted);font-style:italic}
+ .err{margin-top:10px;color:var(--err-ink);font-size:12.5px}
+ .err:empty{display:none}
+ /* Nine is odd. The last card of an odd count takes the whole row ONLY when it
+    carries a development notice, which then moves into the space the tenth
+    card would have held; a notice-less odd card keeps its width. */
+ @media (min-width:760px){
+   .grid>.card:last-child:nth-child(odd):has(.dev){grid-column:1/-1;grid-template-columns:minmax(0,1fr) minmax(0,1fr) 160px;column-gap:24px}
+   .grid>.card:last-child:nth-child(odd):has(.dev) .row{grid-column:3}
+   .grid>.card:last-child:nth-child(odd):has(.dev) .dev{grid-column:2;grid-row:1/span 3;margin-top:0;align-self:start}
+ }
+ /* Below 1100 the action block stacks (pill over button) in a narrow column so
+    the headline keeps its width. */
+ @media (max-width:1100px){
+   .card{grid-template-columns:minmax(0,1fr) 110px;column-gap:16px}
+   .card .row{flex-direction:column;align-items:flex-end;gap:6px}
+   .grid>.card:last-child:nth-child(odd):has(.dev){grid-template-columns:minmax(0,1fr) minmax(0,1fr) 110px}
+ }
+ @media (max-width:759px){
+   .grid{grid-template-columns:1fr}
+   .card{grid-template-columns:minmax(0,1fr) auto;column-gap:14px;padding:16px 16px 16px 18px}
+   .card .row{gap:8px}
+   .card .blurb{font-size:18px}
+   .wrap{padding:0 18px}
+ }
+
+ .recheck{margin:6px 0 0;font-size:13px}
+ .recheck button{background:transparent;color:var(--accent-text);padding:4px 0;font-weight:600}
+ .recheck button:hover{background:transparent;text-decoration:underline}
+ .note{margin:8px 0 0;color:var(--muted);font-size:13px}
+ .note:empty{display:none}
+
+ /* ---- Software version policy: one quiet line at the foot of the page. The
+    full text and the badge legend open ABOVE it while the pointer or keyboard
+    focus is on the line, and a click pins them (Escape, another click, or a
+    click elsewhere unpins) — so what a mouse hovers, a keyboard and a touch
+    screen can reach too. Visibility is driven by ONE attribute, data-open,
+    which the script sets from hover, focus and click alike (see setPolicy):
+    a CSS :hover path of its own would let the panel stand open while
+    aria-expanded said otherwise. The panel abuts the line (bottom:100%, no
+    gap) so the pointer can travel from the line into the text; its height is
+    capped to the room above the line (--pol-room, measured at each opening),
+    or it opens below when there is almost none, because a box pushed above
+    the top of the document cannot be scrolled to. ---- */
+ /* ---- Page foot: the update state, the run log and the kept-updates panel,
+    then one bar with the version-policy line on the left and the appearance
+    switch and machine controls on the right — everything about the dashboard
+    itself, below the tools it is about. ---- */
+ footer.foot{margin:28px 0 44px}
+ .foot .updates{margin-top:0}
+ /* Row 1: the update state, with this machine's Restart / Shut down beside it
+    (the banner itself says "use Restart dashboard after each one"). Row 2, under
+    a hairline: the version-policy line and the machine's name. Row 3: the
+    appearance switch alone, bottom right. */
+ .footrow{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;flex-wrap:wrap}
+ .footrow .updates{flex:1 1 320px;min-width:0}
+ .footbar{display:flex;align-items:baseline;justify-content:space-between;gap:20px;flex-wrap:wrap;
+   margin-top:22px;padding-top:16px;border-top:1px solid var(--hair)}
+ .themerow{display:flex;justify-content:flex-end;margin-top:14px}
+ .polfoot{margin:0}
+ .pol{position:relative;display:inline-block}
+ .poltrig{background:transparent;color:var(--muted);font-weight:500;font-size:12.5px;padding:10px 0 2px;
+   border-radius:4px;text-decoration:underline dotted;text-decoration-color:var(--line);text-underline-offset:4px}
+ .poltrig:hover,.pol[data-open="true"] .poltrig{background:transparent;color:var(--ink);text-decoration-color:var(--muted)}
+ .pol .policy{display:none;position:absolute;left:0;bottom:100%;margin:0;z-index:30;
+   width:min(900px,calc(100vw - 56px));max-height:min(78vh,760px,var(--pol-room,760px));overflow:auto;
+   background:var(--card);border:1px solid var(--hair);border-radius:14px;padding:22px 26px 20px;
+   box-shadow:var(--pop-shadow);text-align:left}
+ .pol[data-open="true"] .policy{display:block}
+ .pol[data-flip="true"] .policy{bottom:auto;top:100%}
+ .policy h2{margin:0 0 8px;font-size:15px;font-weight:650;letter-spacing:-.005em}
+ .policy p{margin:6px 0;color:var(--ink2);font-size:13.5px;line-height:1.6;max-width:92ch}
+ .policy .plegend{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:0;margin:14px 0 6px;font-size:13.5px;align-items:baseline}
+ .policy .plegend>*{padding:8px 0;border-top:1px solid var(--hair)} /* gap:0 so each row rule runs unbroken */
+ .policy .plegend .vers{font-size:12px;white-space:nowrap;margin:0;grid-column:1;color:var(--ink2);padding-right:18px}
+ .policy .plegend div{color:var(--ink2);line-height:1.55}
+ .policy .pfoot{margin-top:10px;font-size:12.5px;color:var(--ink2)}
+ .policy code{font-size:12px}
+ /* Wide: prose on the left, legend on the right, so the panel is filled by design. */
+ @media (min-width:900px){
+   .pol[data-open="true"] .policy{display:grid;
+     grid-template-columns:minmax(0,1fr) minmax(0,1.25fr);grid-template-rows:auto auto 1fr;column-gap:44px;align-items:start}
+   .policy h2{grid-column:1/-1}
+   .policy p{grid-column:1}
+   .policy .plegend{grid-column:2;grid-row:2/span 2;margin:6px 0 0}
+   .policy .pfoot{grid-column:1;align-self:start}
+ }
+
+ /* ---- Kept-updates panel (a report-only tool has a newer release). It renders
+    at the foot of the page in #keptPanelHost, NOT inside .updates, so these
+    rules are deliberately not descendant-scoped — it would lose every one of
+    them the moment it moved out of the banner. ---- */
+ .kpanel{margin:18px 0 2px;padding:14px 18px;border:1px solid var(--hair);border-radius:12px;
+   background:var(--soft);color:var(--ink);font-size:13px;line-height:1.55}
  .kpanel table{border-collapse:collapse;margin:6px 0}
- .kpanel td{padding:2px 18px 2px 0;white-space:nowrap}
- .kpanel code{user-select:all}
- .kpanel pre{background:var(--bg);border:1px solid var(--line);border-radius:6px;
+ .kpanel td{padding:3px 18px 3px 0;white-space:nowrap}
+ .kpanel code{background:var(--code);border-radius:5px;padding:1px 5px;font-size:12px;user-select:all}
+ .kpanel pre{background:var(--card);border:1px solid var(--hair);border-radius:8px;
    padding:8px 10px;margin:6px 0;overflow-x:auto;font-size:12.5px;user-select:all}
- .kpanel p{margin:8px 0}
- .kpanel .ktitle{display:flex;align-items:baseline;gap:10px;font-weight:650;
-   font-size:14px;margin-bottom:2px}
+ .kpanel p{margin:8px 0;color:var(--ink2)}
+ .kpanel .ktitle{display:flex;align-items:baseline;gap:10px;font-weight:650;font-size:14px;margin-bottom:4px;color:var(--ink)}
  .kpanel .ktitle a{margin-left:auto;font-weight:400;font-size:13px}
  .kmuted{color:var(--muted)}
- .updates .uactions{display:flex;gap:8px;flex-wrap:wrap}
- .updates button.u{background:var(--accent)}
- .updates button.link{background:transparent;color:var(--accent);padding:4px 6px;font-weight:600}
- .ulog{margin-top:10px;background:#2c2a26;color:#eee;border-radius:8px;padding:8px 10px;
-   font:12px/1.45 ui-monospace,Menlo,Consolas,monospace;max-height:220px;overflow:auto;white-space:pre-wrap}
- .udone{margin-top:8px;font-weight:600}
- .urun{margin:8px 24px 0;font-size:13px;color:var(--ink);background:var(--soft);
-   border:1px solid var(--line);border-radius:10px;padding:10px 14px}
- .urun .uclose{background:transparent;color:var(--accent);padding:2px 6px;font-weight:600}
- .urun .uhead{display:flex;align-items:center;justify-content:space-between;gap:12px}
- .hbar{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap}
- .head-actions{display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap;justify-content:flex-end}
- .theme-switch{display:inline-flex;gap:2px;padding:3px;background:var(--soft);border:1px solid var(--line);
-   border-radius:10px;box-shadow:0 1px 2px rgba(0,0,0,.06)}
- .theme-switch button{min-width:34px;padding:5px 8px;background:transparent;color:var(--muted);
-   border-radius:7px;font-size:14px;line-height:1.1}
- .theme-switch button[aria-pressed="true"]{background:var(--card);color:var(--ink);
-   box-shadow:0 1px 4px rgba(0,0,0,.16)}
- .theme-switch button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
- .ctl{text-align:right}
- .host{color:var(--muted);font-size:12.5px;margin-bottom:6px}
- .host b{color:var(--ink)}
- .ctlbtns{display:flex;gap:8px;justify-content:flex-end}
- .ctlbtns button{padding:6px 12px;font-size:13px}
- button.restart{background:var(--accent2)}
- button.shutdown{background:#8a3a2e}
- .overlay{position:fixed;inset:0;background:rgba(44,42,38,.72);display:flex;
-   align-items:center;justify-content:center;z-index:999}
- .obox{background:var(--card);border-radius:14px;padding:28px 32px;max-width:460px;
-   text-align:center;box-shadow:0 8px 40px rgba(0,0,0,.25)}
+
+ /* ---- Overlay (restart / shutdown) ---- */
+ .overlay{position:fixed;inset:0;background:var(--overlay);display:flex;align-items:center;justify-content:center;z-index:999}
+ .obox{background:var(--card);border-radius:16px;padding:28px 32px;max-width:460px;text-align:center;box-shadow:0 8px 40px rgba(0,0,0,.3)}
  .obox h2{margin:14px 0 8px;font-size:19px}
  .obox p{margin:0;color:var(--muted);font-size:14px;line-height:1.5}
- .obox code{background:var(--code);padding:1px 6px;border-radius:4px;
-   font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px;user-select:all}
- .ospin{width:34px;height:34px;border:3px solid var(--line);border-top-color:var(--accent);
-   border-radius:50%;margin:0 auto;animation:spin 1s linear infinite}
+ .obox code{user-select:all}
+ .ospin{width:34px;height:34px;border:3px solid var(--hair);border-top-color:var(--accent);border-radius:50%;margin:0 auto;animation:spin 1s linear infinite}
  .ospin.done{animation:none;border:0;font-size:34px;line-height:34px;width:auto;height:auto}
- html[data-theme="dark"] .setup{background:#2e281d;border-color:#55472d;color:#e5c98f}
- html[data-theme="dark"] .setup b{color:#f0d59d}
- html[data-theme="dark"] .updates.current{color:var(--success-ink)}
- html[data-theme="dark"] .updates.avail{background:#302719;border-color:#5d4928;color:#ecd09a}
- html[data-theme="dark"] button:disabled{background:#34414a;color:#89959c}
- html[data-theme="dark"] .ulog{background:#080d11;color:#dce6eb}
- html[data-theme="dark"] .err{color:#f0a09b}
- /* Portal sign-in expired while the page sat open. Uses the danger tokens, which
-    are already redefined per theme, so this needs no dark-mode override. */
- .sessexp{margin:8px 24px 0;background:var(--danger-bg);border:1px solid var(--danger-line);
-   color:var(--danger-ink);border-radius:10px;padding:12px 14px;font-size:13.5px}
- .sessexp button{margin-left:10px;background:var(--accent);color:var(--button-ink);
-   padding:6px 12px;font-size:13px}
  @keyframes spin{to{transform:rotate(360deg)}}
+
+ /* ---- Disabled outranks every button variant above (Open, the banner's step
+    buttons, Reload), by specificity and by coming last: a button reading
+    Starting… or Updating… must never keep its accent ground under the muted
+    disabled ink, which is what made an Open button being clicked unreadable. ---- */
+ button:disabled,button:disabled:hover,button.open:disabled,button.open:disabled:hover,
+ .updates button.u:disabled,.updates button.u:disabled:hover,.sessexp button:disabled{
+   background:var(--disabled-bg);color:var(--disabled-ink);cursor:not-allowed}
 </style></head><body>
-<header><div class="hbar">
-  <div><h1>Bioinformatic Diagnostic Tools (bdtools)</h1>
-  <p class="sub">Pick a tool to launch it on this machine. Each opens in a new tab.</p></div>
-  <div class="head-actions">
-  <div class="theme-switch" role="group" aria-label="Appearance">
-    <button data-theme-choice="light" aria-label="Use light theme" title="Light" onclick="applyTheme('light')">☀</button>
-    <button data-theme-choice="system" aria-label="Use system theme" title="System" onclick="applyTheme('system')">◐</button>
-    <button data-theme-choice="dark" aria-label="Use dark theme" title="Dark" onclick="applyTheme('dark')">☾</button>
-  </div>
-  <div class="ctl" id="ctl" style="display:none">
-    <div class="host" id="host"></div>
-    <div class="ctlbtns">
-      <button class="restart" onclick="restartDash()">↻ Restart dashboard</button>
-      <button class="shutdown" onclick="shutdownDash()">⏻ Shut down</button>
-    </div>
-  </div></div>
-</div></header>
+<div class="wrap">
+<header><h1>Bioinformatic Diagnostic Tools <span class="tag">bdtools</span></h1></header>
 <div id="overlay" class="overlay" style="display:none"><div class="obox">
   <div class="ospin" id="ospin"></div>
   <h2 id="otitle"></h2><p id="omsg"></p>
 </div></div>
+<!-- The expired-sign-in notice stays ABOVE the cards: it is the one thing on
+     this page that has to interrupt, because until the reader acts on it
+     nothing below is live any more. -->
 <div id="sessexp" class="sessexp" style="display:none"></div>
+<div id="grid" class="grid"></div>
+<p class="recheck" id="recheck" style="display:none"><button onclick="recheck(this)">↻ Re-check readiness</button></p>
+<p class="note" id="note"></p>
+
+<!-- Everything that is about the dashboard itself rather than about a tool
+     lives below the tools: the update state, the update log, the kept-updates
+     directions, the version policy, the appearance switch and this machine's
+     controls. The cards are what the page is for; the rest waits underneath. -->
+<footer class="foot">
+<div class="footrow">
 <div id="updates" class="updates"></div>
+<div class="ctl" id="ctl" style="display:none"><div class="ctlbtns">
+  <button class="restart" onclick="restartDash()">↻ Restart dashboard</button>
+  <button class="shutdown" onclick="shutdownDash()">⏻ Shut down</button>
+</div></div>
+</div>
 <!-- The run panel lives OUTSIDE #updates on purpose. An update run ends by
      re-checking, which repaints #updates — and when the log lived in there, the
      repaint would have thrown away the record of what just happened. Separating
      them is what lets the banner go quiet the moment a run finishes while the
      log stays on screen until it is dismissed. -->
 <div id="urun" class="urun" style="display:none"></div>
-<div id="grid" class="grid"></div>
-<p class="recheck" id="recheck" style="display:none"><button onclick="recheck(this)">↻ Re-check readiness</button></p>
-<p class="note" id="note"></p>
-
-<section class="policy" aria-labelledby="policy-title">
+<!-- The "how to take an update" panel renders HERE rather than inside
+     #updates. It is a page of prose about a decision that is made rarely; the
+     banner keeps the one-line notice and a link down to this panel. -->
+<div id="keptPanelHost"></div>
+<div class="footbar">
+<!-- Software version policy — the formal statement of what the badges above
+     mean and why versions here move deliberately. One line; the text opens
+     above it on hover, focus or click (see .pol in the stylesheet and
+     setPolicy() below). A reference that is read once a month should not
+     compete with the tools that are used every day. -->
+<div class="polfoot"><div class="pol" id="pol" data-open="false">
+  <button class="poltrig" id="poltrig" type="button" aria-expanded="false" aria-controls="policy"
+          onclick="togglePolicy()">Software version policy</button>
+  <section class="policy" id="policy" aria-labelledby="policy-title">
   <h2 id="policy-title">Software version policy</h2>
   <p>Every analysis package in this suite runs at a <b>version pin</b> — the exact release this
   laboratory has validated, recorded in the suite manifest. Nothing updates itself: the versions
@@ -742,13 +918,19 @@ addEventListener('storage',e=>{if(e.key===THEME_KEY)applyTheme(preferredTheme(),
   <p class="pfoot">A pin is a quality control, not a limitation: every machine in the laboratory
   producing the same result from the same versions outranks running the newest release. Routine
   health checks: <code>bin/bdtools doctor</code> · safe automated repairs: <code>bin/bdtools fix</code>.</p>
-</section>
-<!-- The "how to take an update" panel renders HERE, at the foot of the page,
-     rather than inside #updates. It is a page of prose about a decision that is
-     made rarely; above the tool cards it pushed the tools themselves off the
-     screen on arrival. The banner keeps the one-line notice and a link down to
-     this panel, so the directions are still one click from the top. -->
-<div id="keptPanelHost"></div>
+  </section>
+</div></div>
+<div class="host" id="host" style="display:none"></div>
+</div>
+<div class="themerow">
+  <div class="theme-switch" role="group" aria-label="Appearance">
+    <button data-theme-choice="light" aria-label="Use light theme" title="Light" onclick="applyTheme('light')">☀</button>
+    <button data-theme-choice="system" aria-label="Use system theme" title="System" onclick="applyTheme('system')">◐</button>
+    <button data-theme-choice="dark" aria-label="Use dark theme" title="Dark" onclick="applyTheme('dark')">☾</button>
+  </div>
+</div>
+</footer>
+</div>
 <script>
 applyTheme(document.documentElement.dataset.themeMode||'system',false);
 function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
@@ -844,13 +1026,13 @@ function versionBlock(t){
     // and the card is where it belongs.
     const rel = releaseInfo[t.name];
     const newer = (rel && rel.newer && rel.latest)
-      ? ` <span class="vheld" title="${esc(rel.offered
+      ? `<span class="vheld" title="${esc(rel.offered
           ? "A newer release is available; the update banner offers it."
           : "tools.yml keeps this tool at the version you validated (updates: report). "
             + "To move it deliberately:\\n    bin/bdtools update " + t.name
             + " --allow-report-only")}">${esc(rel.latest)} available</span>`
       : '';
-    bits.push(`<span class="vtool">${esc(t.version)}</span>${newer}`);
+    bits.push(`<span class="vtool" title="GUI release">${esc(t.version)}</span>${newer}`);
   }
   for(const p of (t.packages||[])){
     if(!p.installed) continue;
@@ -862,9 +1044,9 @@ function versionBlock(t){
     // tools.yml — which was the wrong answer whenever the hold came from a solve
     // that was tried on this machine.
     const up = p.update_available
-      ? ` <span class="vnew" title="newest on the channel: ${esc(p.latest)}">↑${esc(p.latest)}</span>`
+      ? `<span class="vnew" title="newest on the channel: ${esc(p.latest)}">↑${esc(p.latest)}</span>`
       : (p.held && p.latest && p.latest !== p.installed
-          ? ` <span class="vheld" title="${esc(heldTitle(p))}">held (${esc(p.latest)})</span>`
+          ? `<span class="vheld" title="${esc(heldTitle(p))}">held (${esc(p.latest)})</span>`
           : '');
     // OFF THE VALIDATED PIN. Not the same statement as "an update exists": this
     // env is not running the version tools.yml records, so results here are not
@@ -873,12 +1055,17 @@ function versionBlock(t){
     // said what it should have been. Shown even when the package is also held,
     // because "held" explains the newest release, not the missing pin.
     const drift = p.pin_drift && p.pinned
-      ? ` <span class="vdrift" title="tools.yml pins ${esc(p.pinned)}; this environment has ${esc(p.installed)}. Results here are not from the version this site validated. Rebuild the env to get the pin: bin/bdtools install ${esc(t.name)} --fresh">≠ pinned ${esc(p.pinned)}</span>`
+      ? `<span class="vdrift" title="tools.yml pins ${esc(p.pinned)}; this environment has ${esc(p.installed)}. Results here are not from the version this site validated. Rebuild the env to get the pin: bin/bdtools install ${esc(t.name)} --fresh">≠ pinned ${esc(p.pinned)}</span>`
       : '';
     bits.push(`${esc(p.name)} ${esc(p.installed)}${up}${drift}`);
   }
   if(!bits.length) return '';
-  return `<div class="vers">${bits.join('<span class="vsep">·</span>')}</div>`;
+  // Each entry — the release, or a package with its badges — is one non-wrapping
+  // unit (.vpkg) that carries the separator INTRODUCING it, so when the stamp
+  // wraps, the dot moves to the next line with the package rather than hanging
+  // at the end of the one before.
+  return `<div class="vers">${bits.map((b, i) =>
+    `<span class="vpkg">${i ? '<span class="vsep">·</span>' : ''}${b}</span>`).join('')}</div>`;
 }
 // tool -> launch-time warning. Kept OUTSIDE load() so it survives the 5s
 // re-render: a missing vendored dependency only bites once an analysis runs, so a
@@ -930,6 +1117,32 @@ function clearSessionNotice(){
   const el = document.getElementById('sessexp');
   if(el && el.style.display !== 'none'){ el.style.display = 'none'; el.innerHTML = ''; }
 }
+// The card's headline is the FUNCTION ("Antimicrobial resistance genes") and
+// the tool's name sits beneath it. The blurbs in suite_common.BLURB were
+// written for the old order, where the name came first and the blurb often
+// ended by repeating it in parentheses. Rather than rewrite the data, a
+// trailing parenthetical is split off here and placed by what it says:
+//   "(AMRFinderPlus)" / "(kSNP4)" / "(Kraken2)"  — repeats the tool: dropped
+//   "(CDC IRMA)"          — contains the label: becomes the tool line
+//   "(High resolution genotyping)" — says something new: a qualifier after the name
+// A parenthetical mid-sentence ("Bovine MHC (BoLA) typing …") is left alone.
+function splitBlurb(t){
+  const blurb = t.blurb || '', label = t.label || '';
+  const m = blurb.match(/^(.*?)\\s*\\(([^()]+)\\)\\s*$/);
+  if(!m) return {head: blurb, tool: label, qual: ''};
+  const head = m[1], q = m[2].trim();
+  const norm = s => s.toLowerCase().replace(/[^a-z0-9]+/g, '');
+  const first = norm(label.split(/[\\s/]+/)[0] || '');
+  if(norm(q) === norm(label) || (first && norm(q).startsWith(first))) return {head, tool: label, qual: ''};
+  if(label && q.includes(label)) return {head, tool: q, qual: ''};
+  return {head, tool: label, qual: q};
+}
+// "SARS-CoV-2" must not break at a hyphen: any word with a hyphen before a
+// digit is kept on one line.
+function headlineHtml(head){
+  return String(head).split(' ')
+    .map(w => /-\\d/.test(w) ? `<span class="nowrap">${esc(w)}</span>` : esc(w)).join(' ');
+}
 async function load(){
   let tools;
   try{
@@ -952,18 +1165,25 @@ async function load(){
       : t.starting ? `<span class="pill">starting</span>`
       : t.running ? `<span class="pill on">running</span>`
       : needs ? `<span class="pill warn">needs setup</span>`
-      : `<span class="pill">${t.installed?'installed':'not installed'}</span>`;
-    c.innerHTML = `<div class="name">${t.label}</div>
-      <div class="blurb">${t.blurb||''}</div>
-      ${devBlock(t)}
-      ${setupBlock(t)}
-      ${noteBlock(t)}
+      // A plain installed tool gets no pill: the version stamp already says it
+      // is here. A pill is for a state the reader has to know about.
+      : t.installed ? '' : `<span class="pill">not installed</span>`;
+    // Function first, tool second, versions third, then the action column; the
+    // notices follow as full-width strips. (The stylesheet also fixes the
+    // order with order: values, so the card would read the same either way.)
+    const h = splitBlurb(t);
+    c.innerHTML = `<div class="blurb">${headlineHtml(h.head)}</div>
+      <div class="name">${esc(h.tool)}${h.qual ? `<span class="qual">${esc(h.qual)}</span>` : ''}</div>
       ${versionBlock(t)}
       <div class="row">
         ${pill}
         <button ${(t.installed&&!t.updating)?'':'disabled'} data-tool="${t.name}" class="${t.running?'open':''}">
           ${t.updating?'Updating…':t.starting?'Starting…':t.running?'Open':'Launch'}</button>
-      </div><div class="err" id="err-${t.name}">${launchWarn[t.name]||''}</div>`;
+      </div>
+      ${devBlock(t)}
+      ${setupBlock(t)}
+      ${noteBlock(t)}
+      <div class="err" id="err-${t.name}">${launchWarn[t.name]||''}</div>`;
     const b=c.querySelector('button');
     b.onclick=()=>act(t.name,b);
     g.appendChild(c);
@@ -1310,7 +1530,13 @@ async function loadInfo(){
     bootId=d.boot_id||'';
     document.getElementById('host').innerHTML =
       'This dashboard is running on <b>'+esc(d.host)+'</b>.';
-    if(d.can_control) document.getElementById('ctl').style.display='';
+    // The machine's name and its Restart / Shut down appear together, in local
+    // mode only: under OOD the node belongs to the session and cannot be
+    // restarted from here, so naming it would only invite the attempt.
+    if(d.can_control){
+      document.getElementById('ctl').style.display='';
+      document.getElementById('host').style.display='';
+    }
   }catch(e){ /* leave controls hidden */ }
 }
 function describeBlock(j){
@@ -1406,6 +1632,46 @@ async function restartDash(){
   };
   setTimeout(ping,1200);
 }
+// The version-policy line at the foot of the page. ONE piece of state — data-open
+// on #pol — drives both the stylesheet (display) and aria-expanded, so what a
+// screen reader is told always matches what is on screen. Hovering or focusing
+// the line opens the panel for as long as that lasts; a click PINS it (touch has
+// no hover, and a reader wants to move the pointer over the text without it
+// vanishing); Escape, a second click, or a click anywhere else unpins and closes
+// it — and it stays closed until the pointer leaves and returns, which is what
+// "dismissed" has to mean while the pointer is still on the line.
+let policyPinned = false;
+function setPolicy(open){
+  const p = document.getElementById('pol'), b = document.getElementById('poltrig');
+  if(!p || !b) return;
+  if(open) fitPolicy(p);
+  p.dataset.open = open ? 'true' : 'false';
+  b.setAttribute('aria-expanded', String(open));
+}
+function togglePolicy(force){
+  policyPinned = (typeof force === 'boolean') ? force : !policyPinned;
+  setPolicy(policyPinned);
+}
+// The panel opens ABOVE the line, and the line is the last thing on the page. A
+// deployment with two tools has less page above it than the panel is tall, and
+// a box pushed above y=0 cannot be scrolled to — so the room is measured at
+// each opening: the panel is capped to it (and scrolls inside), or, when there
+// is almost none, opens below the line instead, where the page can grow.
+function fitPolicy(p){
+  const room = Math.floor(p.getBoundingClientRect().top + window.scrollY) - 12;
+  if(room < 260){ p.dataset.flip = 'true'; p.style.removeProperty('--pol-room'); }
+  else { p.dataset.flip = 'false'; p.style.setProperty('--pol-room', room + 'px'); }
+}
+(function(){
+  const p = document.getElementById('pol');
+  if(!p) return;
+  p.addEventListener('mouseenter', () => { if(!policyPinned) setPolicy(true); });
+  p.addEventListener('mouseleave', () => { if(!policyPinned) setPolicy(false); });
+  p.addEventListener('focusin', () => { if(!policyPinned) setPolicy(true); });
+  p.addEventListener('focusout', e => { if(!policyPinned && !p.contains(e.relatedTarget)) setPolicy(false); });
+  document.addEventListener('click', e => { if(policyPinned && !p.contains(e.target)) togglePolicy(false); });
+  document.addEventListener('keydown', e => { if(e.key === 'Escape' && p.dataset.open === 'true') togglePolicy(false); });
+})();
 load(); setInterval(load, 5000);
 loadInfo();
 pollUpdates();   // background update check — the cards above are usable immediately

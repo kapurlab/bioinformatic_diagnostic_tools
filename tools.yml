@@ -282,7 +282,8 @@ tools:
     env: ncbi_submit
 
   # Under active development. Results are preliminary and not yet validated for
-  # diagnostic use (see the development notice on its dashboard card): DRB3 is
+  # diagnostic use (its dashboard card stopped carrying a notice saying so on
+  # 2026-09-02, at the lab's request, so this comment is the record): DRB3 is
   # production-ready, Class I calls are provisional. Has its own dedicated conda
   # env (like every other tool) with the full ONT amplicon toolchain; the BoLA
   # reference bundle ships in-repo.

@@ -22,6 +22,14 @@ REPO_DIR = os.path.dirname(os.path.dirname(_HERE))
 BDTOOLS = os.path.join(REPO_DIR, "bin", "bdtools")
 
 # Pretty display names + one-line blurbs. Fall back to a derived label.
+#
+# On the dashboard the BLURB is the card's HEADLINE — what the tool does for the
+# diagnostician ("Antimicrobial resistance genes") — and the PRETTY name sits
+# beneath it. A blurb that ends in a parenthetical is split by the page: one that
+# only repeats the tool ("(AMRFinderPlus)", "(kSNP4)") is dropped, one that
+# contains the label ("(CDC IRMA)") becomes the tool line, anything else stays as
+# a qualifier after the name ("vSNP3 · High resolution genotyping"). Write a new
+# blurb as the function itself, not as "Tool — what it does".
 PRETTY = {
     "vsnp_gui": "vSNP3",
     "amr_plus_gui": "AMRFinderPlus",
@@ -44,16 +52,14 @@ BLURB = {
     "ncbi_submit_gui": "Prepare SRA / GenBank submissions",
     "mhc_gui": "Bovine MHC (BoLA) typing from Nanopore amplicons",
 }
-# Static per-tool development notices — shown as a prominent banner for tools
-# not yet validated for diagnostic use (independent of the runtime readiness check).
-CAVEAT = {
-    "mhc_gui": ("This tool is under active development. Results are preliminary, "
-                "have not been fully validated, and should not be treated as "
-                "definitive; interpret with caution and confirm by orthogonal methods."),
-    "ncbi_submit_gui": ("This tool is under active development. Output is preliminary "
-                        "and has not been fully validated; review all generated "
-                        "submission files carefully before submitting to NCBI."),
-}
+# Static per-tool development notices — an amber notice on a tool's card for a
+# tool whose results are not yet validated for diagnostic use (independent of
+# the runtime readiness check). Empty since 2026-09-02: the notices that stood
+# on ncbi_submit_gui and mhc_gui were retired from the dashboard at the lab's
+# request; the validation status of those tools is recorded in tools.yml and
+# docs/INSTALL_HPC_OOD.md instead. To put one back:
+#     "mhc_gui": "One or two sentences, stated plainly.",
+CAVEAT = {}
 
 
 def pretty(name):

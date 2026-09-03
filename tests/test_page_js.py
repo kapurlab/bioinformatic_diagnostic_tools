@@ -382,5 +382,191 @@ class CardVersionTests(unittest.TestCase):
         self.assertIn("↑3.36", html)
 
 
+@unittest.skipUnless(NODE, "node is required to run the headline split")
+class CardHeadlineTests(unittest.TestCase):
+    """The FUNCTION is the card's headline and the tool's name sits beneath it.
+
+    The blurbs were written for the old order (name first) and often end by
+    repeating the tool in parentheses; splitBlurb() decides, per blurb, whether
+    that parenthetical is dropped, becomes the tool line, or stays as a
+    qualifier. These are the nine real blurbs, so a data edit that changes the
+    outcome shows up here rather than on the dashboard.
+    """
+
+    def split(self, label, blurb):
+        page = load_page()
+        main = re.findall(r"<script>(.*?)</script>", page, re.S)[-1]
+        body = main[main.index("function splitBlurb"):main.index("async function load(){")]
+        harness = (
+            "function esc(s){return String(s).replace(/[&<>]/g,"
+            "c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}\n"
+            + body
+            + f"\nconst r=splitBlurb({{label:{label!r},blurb:{blurb!r}}});"
+            "r.html=headlineHtml(r.head);console.log(JSON.stringify(r));\n"
+        )
+        with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as fh:
+            fh.write(harness)
+            path = fh.name
+        proc = subprocess.run([NODE, path], capture_output=True, text=True, timeout=60)
+        Path(path).unlink(missing_ok=True)
+        self.assertEqual(proc.returncode, 0, f"splitBlurb threw:\n{proc.stderr}")
+        import json
+        return json.loads(proc.stdout)
+
+    def test_a_parenthetical_that_repeats_the_tool_is_dropped(self):
+        for label, blurb, head in (
+                ("AMRFinderPlus", "Antimicrobial resistance genes (AMRFinderPlus)",
+                 "Antimicrobial resistance genes"),
+                ("kSNP", "Reference-free SNP phylogeny (kSNP4)", "Reference-free SNP phylogeny"),
+                ("Kraken ID / Parse", "Taxonomic identification (Kraken2)", "Taxonomic identification"),
+        ):
+            with self.subTest(label=label):
+                r = self.split(label, blurb)
+                self.assertEqual(r["head"], head)
+                self.assertEqual(r["tool"], label)
+                self.assertEqual(r["qual"], "")
+
+    def test_a_parenthetical_that_contains_the_label_becomes_the_tool_line(self):
+        r = self.split("IRMA", "Influenza / SARS-CoV-2 assembly (CDC IRMA)")
+        self.assertEqual(r["head"], "Influenza / SARS-CoV-2 assembly")
+        self.assertEqual(r["tool"], "CDC IRMA")
+        self.assertEqual(r["qual"], "")
+        # …and the organism name never breaks at its hyphen.
+        self.assertIn('<span class="nowrap">SARS-CoV-2</span>', r["html"])
+
+    def test_a_parenthetical_that_says_something_new_is_a_qualifier(self):
+        r = self.split("vSNP3", "SNP analysis & phylogeny (High resolution genotyping)")
+        self.assertEqual(r["head"], "SNP analysis & phylogeny")
+        self.assertEqual(r["tool"], "vSNP3")
+        self.assertEqual(r["qual"], "High resolution genotyping")
+        self.assertIn("&amp;", r["html"])          # escaped on the way into innerHTML
+
+    def test_a_parenthetical_mid_sentence_is_left_alone(self):
+        r = self.split("Bovine MHC Typer", "Bovine MHC (BoLA) typing from Nanopore amplicons")
+        self.assertEqual(r["head"], "Bovine MHC (BoLA) typing from Nanopore amplicons")
+        self.assertEqual(r["tool"], "Bovine MHC Typer")
+        self.assertEqual(r["qual"], "")
+
+    def test_a_blurb_without_a_parenthetical_is_used_whole(self):
+        r = self.split("GenoFLU", "H5 2.3.4.4b influenza genotyping")
+        self.assertEqual(r["head"], "H5 2.3.4.4b influenza genotyping")
+        self.assertEqual(r["tool"], "GenoFLU")
+
+    def test_a_plain_installed_tool_carries_no_pill(self):
+        # The version stamp already says the tool is here; a pill is reserved
+        # for a state the reader must know about (running, starting, updating,
+        # needs setup, not installed).
+        page = load_page()
+        main = re.findall(r"<script>(.*?)</script>", page, re.S)[-1]
+        load = main[main.index("async function load(){"):main.index("async function recheck(")]
+        self.assertIn("t.installed ? '' : `<span class=\"pill\">not installed</span>`", load)
+        self.assertNotIn("'installed':", load)
+
+    def test_the_card_template_puts_the_function_before_the_tool(self):
+        page = load_page()
+        main = re.findall(r"<script>(.*?)</script>", page, re.S)[-1]
+        load = main[main.index("async function load(){"):main.index("async function recheck(")]
+        self.assertLess(load.index('<div class="blurb">'), load.index('<div class="name">'))
+        # The versions follow the tool line, and the notices come after the
+        # action row — full-width strips, so they never break the two-column card.
+        self.assertLess(load.index('<div class="name">'), load.index("${versionBlock(t)}"))
+        self.assertLess(load.index('<div class="row">'), load.index("${devBlock(t)}"))
+
+
+class PolicyPopoverTests(unittest.TestCase):
+    """The version policy is one line at the foot of the page, opened on demand.
+
+    A hover-only disclosure is unreachable from a keyboard or a touch screen,
+    so the markup must also open on focus and on click, and the trigger must be
+    a real button that reports its state.
+    """
+
+    def test_the_policy_is_a_single_line_with_the_text_folded_behind_it(self):
+        page = load_page()
+        self.assertIn('id="poltrig"', page)
+        self.assertIn(">Software version policy</button>", page)
+        self.assertIn('aria-expanded="false"', page)
+        self.assertIn('aria-controls="policy"', page)
+        # The full statement and the legend are still on the page, verbatim.
+        self.assertIn("A pin is a quality control, not a limitation", page)
+        self.assertIn('class="plegend"', page)
+        for badge in ("↑ 1.3.5", "held (2.17.1)", "≠ pinned 2.17.1", "no badge"):
+            self.assertIn(badge, page)
+
+    def test_it_opens_on_hover_focus_and_click(self):
+        page = load_page()
+        css = re.search(r"<style>(.*?)</style>", page, re.S).group(1)
+        # ONE attribute drives the display…
+        self.assertIn(".pol .policy{display:none", css)
+        self.assertIn('.pol[data-open="true"] .policy{display:', css)
+        # …and no CSS-only path may open the panel behind the script's back: a
+        # :hover/:focus-within rule kept it standing after Escape and a second
+        # click while the button still had focus, with aria-expanded="false" on
+        # a visible panel.
+        self.assertNotIn(".pol:hover", css)
+        self.assertNotIn(".pol:focus-within", css)
+        main = re.findall(r"<script>(.*?)</script>", page, re.S)[-1]
+        for needle in ("function togglePolicy", "function setPolicy", "function fitPolicy",
+                       "'mouseenter'", "'mouseleave'", "'focusin'", "'focusout'",
+                       "e.key === 'Escape'", "aria-expanded"):
+            self.assertIn(needle, main)
+
+    def test_it_cannot_open_above_the_top_of_a_short_page(self):
+        # The line is the last thing on the page and the panel opens upward. With
+        # two tools there is less page above the line than the panel is tall, and
+        # a box above y=0 cannot be scrolled to. The opening measures the room
+        # and caps the panel to it, or flips it below the line.
+        page = load_page()
+        css = re.search(r"<style>(.*?)</style>", page, re.S).group(1)
+        self.assertIn("var(--pol-room", css)
+        self.assertIn('.pol[data-flip="true"] .policy{bottom:auto;top:100%}', css)
+        main = re.findall(r"<script>(.*?)</script>", page, re.S)[-1]
+        self.assertIn("--pol-room", main)
+        self.assertIn("dataset.flip", main)
+
+
+class ButtonStateTests(unittest.TestCase):
+    def test_disabled_outranks_every_button_variant(self):
+        # button.open (green) and .updates button.u (accent) set their own ground.
+        # The redesign gave disabled buttons a muted ink, so a disabled Open
+        # button that kept its green ground was unreadable (1.1:1) for as long
+        # as it read Starting… — the disabled rule must come last and be at
+        # least as specific as every variant.
+        page = load_page()
+        css = re.search(r"<style>(.*?)</style>", page, re.S).group(1)
+        disabled = css.rindex("button:disabled,button:disabled:hover")
+        self.assertGreater(disabled, css.index("button.open:hover"))
+        self.assertGreater(disabled, css.index(".updates button.u:hover"))
+        self.assertIn("button.open:disabled", css)
+        self.assertIn(".updates button.u:disabled", css)
+
+    def test_the_policy_is_the_last_thing_on_the_page(self):
+        # The kept-updates panel host stays ABOVE the policy line: the banner's
+        # "How to update ↓" link jumps to it, and a jump target below a popover
+        # trigger would open the policy under the reader's pointer.
+        page = load_page()
+        self.assertLess(page.index('id="keptPanelHost"'), page.index('id="poltrig"'))
+
+
+class PageFootTests(unittest.TestCase):
+    """The header is the title; everything about the dashboard itself sits below the tools."""
+
+    def test_the_header_is_only_the_title(self):
+        page = load_page()
+        body = page[page.index("<body>"):]
+        self.assertIn('<span class="tag">bdtools</span>', body)
+        self.assertNotIn("Pick a tool to launch", body)
+
+    def test_controls_and_update_state_sit_below_the_grid(self):
+        page = load_page()
+        grid = page.index('id="grid"')
+        for marker in ('class="theme-switch"', 'id="ctl"', 'id="updates"', 'id="urun"',
+                       'id="keptPanelHost"', 'id="poltrig"'):
+            self.assertGreater(page.index(marker), grid, marker)
+        # The expired-sign-in notice is the one exception: it stays above the
+        # cards because nothing below it is live until the reader acts on it.
+        self.assertLess(page.index('id="sessexp"'), grid)
+
+
 if __name__ == "__main__":
     unittest.main()

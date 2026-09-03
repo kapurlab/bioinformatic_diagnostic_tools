@@ -331,9 +331,11 @@ Adding the tool repo is not enough; these are all in
 1. **`tools.yml`** — `name`, `repo`, `version` (a tag), `ood_apps`, `dev_apps`,
    `env`, optional `databases`.
 2. **`bin/lib/suite_common.py`** — add to `PRETTY` (display name) and `BLURB`
-   (one line, shown on every dashboard card). Add to `CAVEAT` **only** if the
-   tool is not yet validated for diagnostic use — that renders the red
-   development banner.
+   (one line naming the FUNCTION, e.g. "Taxonomic identification" — it is the
+   card's headline, and the display name sits beneath it, so do not repeat the
+   tool's name in the blurb). Add to `CAVEAT` **only** if the tool is not yet
+   validated for diagnostic use — that renders the amber development notice on
+   the card.
 3. **`bin/lib/requirements.py`** — declare `modules`, `binaries`, optional
    `asset_dirs` / `databases` / `os` / `platform_unavailable`. This is what
    `bdtools doctor` checks. A tool absent from here reports green while being

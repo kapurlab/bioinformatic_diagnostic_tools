@@ -5,8 +5,13 @@
 # TOOLS_ROOT/<tool>. Run as root when a card phase writes /var/www/ood/apps/sys.
 # Always --dry-run first.
 #
-#   install-server.sh <tool> [--site-conf PATH] [--with-card] [--with-dev] [--dry-run] [phase ...]
+#   install-server.sh <tool> [--site-conf PATH] [--with-card] [--with-dev] [--fresh|--rebuild] [--dry-run] [phase ...]
 #   install-server.sh --dashboard [--site-conf PATH] [--dry-run]
+#
+# --fresh sets the tool's env aside and builds from nothing (put back if the build
+# fails; removed once the new env passes its self-check) — doctor's repair for an
+# env holding a sibling tool's stale packages. --rebuild is additive: `conda env
+# update` from conda_setup/environment.yml after the tool's own installer ran.
 #
 # Phases: preflight toolchain app verify
 #   preflight  OOD core present? conda/node? cluster defined? sys-apps writable?
@@ -36,7 +41,7 @@ set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
 
 SITE_CONF="${REPO_DIR}/sites/site.conf"
-TOOL=""; PHASES=(); WITH_DEV=0; DASHBOARD=0; WITH_CARD=0
+TOOL=""; PHASES=(); WITH_DEV=0; DASHBOARD=0; WITH_CARD=0; FRESH=0; REBUILD=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --site-conf) SITE_CONF="$2"; shift 2;;
@@ -44,6 +49,8 @@ while [[ $# -gt 0 ]]; do
     --dashboard) DASHBOARD=1; shift;;   # install the umbrella's consolidated dashboard card
     --with-card) WITH_CARD=1; shift;;   # ALSO install the tool's dedicated per-tool card (sunset)
     --no-card)   WITH_CARD=0; shift;;   # accepted for old scripts; env-only is the default now
+    --fresh)     FRESH=1; shift;;       # set the env aside, build from nothing (common.sh:discard_env_for_fresh)
+    --rebuild)   REBUILD=1; shift;;     # additive env update from the spec after the tool's installer
     --dry-run)   DRY_RUN=1; export DRY_RUN; shift;;
     -h|--help)   sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
     -*)          die "unknown option: $1";;
@@ -244,6 +251,14 @@ phase_toolchain() {
   export BDTOOLS_DB_ROOT="${BDTOOLS_DB_ROOT:-${DB_ROOT:-${DATABASES_ROOT:-${SITE_ROOT}/databases}}}"
   export BDTOOLS_SHARED_PROJECTS_ROOT="${BDTOOLS_SHARED_PROJECTS_ROOT:-${SHARED_PROJECTS_ROOT:-${SITE_ROOT}/projects}}"
   info "site roots for the installer: DB ${BDTOOLS_DB_ROOT}  projects ${BDTOOLS_SHARED_PROJECTS_ROOT}  tools ${BDTOOLS_TOOLS_ROOT}"
+  # --fresh: the env goes aside FIRST, so the tool's installer (or env_from_spec)
+  # finds none and builds from nothing. It comes back by itself if anything below
+  # dies — the EXIT trap armed at the bottom of this script calls
+  # restore_env_from_fresh — and is removed only after the new env passes the
+  # same self-check install-local.sh applies. doctor's repair for stale sibling
+  # packages inside an env is exactly this flag; until 2026-09-02 a site install
+  # answered it with "unknown option" (ICAR-NIVEDI).
+  [[ ${FRESH} -eq 1 && ${DASHBOARD} -eq 0 ]] && discard_env_for_fresh
   # Build env + frontend via the tool's own no-sudo installer (shared env at <dir>/env).
   if [[ -x "${DIR}/deploy/install.sh" ]]; then
     local a=(); [[ ${DRY_RUN} -eq 1 ]] && a+=(--dry-run)
@@ -278,6 +293,34 @@ phase_toolchain() {
     # as on the deploy/install.sh path.
     if ! env_from_spec "${DIR}"; then
       warn "  (for vsnp_gui) use vsnp_gui/deploy/install_ood.sh, which builds the shared vsnp3 env."
+    fi
+  fi
+  # --rebuild: the tool installers disagree about an existing env (mlst's updates
+  # it from the spec, the others skip it), so a newly declared package reached
+  # some sites and not others. The spec is the same statement either way; apply
+  # it additively here, after whatever the installer did. Redundant on the
+  # no-installer path above, which already updated from the spec.
+  if [[ ${REBUILD} -eq 1 && -x "${DIR}/deploy/install.sh" && -f "${DIR}/conda_setup/environment.yml" ]]; then
+    env_from_spec "${DIR}" || true
+  fi
+  # A --fresh build is judged by the env it produced, not by its exit code: the
+  # set-aside env is discarded only once the new one imports what the tool needs.
+  if [[ ${FRESH} -eq 1 && -n "${FRESH_ASIDE:-}" && -d "${FRESH_ASIDE}" && ${DRY_RUN} -eq 0 ]]; then
+    local selfcheck_ok=1
+    if [[ -x "${DIR}/env/bin/python" ]]; then
+      "${PYBIN:-python3}" "${KT_BIN_DIR}/lib/check.py" --tool "${TOOL}" --dir "${DIR}" \
+          --python "${DIR}/env/bin/python" --scope env || selfcheck_ok=0
+    else
+      selfcheck_ok=0
+    fi
+    if [[ ${selfcheck_ok} -eq 1 ]]; then
+      rm -rf "${FRESH_ASIDE}" && ok "--fresh: new env passed its self-check; the old one is gone"
+      info "  Its package list is still recorded: bin/bdtools restore-env ${TOOL} --prev"
+      FRESH_ASIDE=""
+    else
+      warn "--fresh: keeping the previous env at ${FRESH_ASIDE} — the new one did not pass its self-check."
+      info "  Go back to it with:  rm -rf ${FRESH_ORIG} && mv ${FRESH_ASIDE} ${FRESH_ORIG}"
+      FRESH_ASIDE=""      # judged; the trap must not move it back over a working new env
     fi
   fi
 }
@@ -344,6 +387,10 @@ phase_verify() {
 echo "bdtools install --server  (tool: ${TOOL}; site: ${SITE_DISPLAY} / ${SITE_ROOT})"
 [[ ${DRY_RUN} -eq 1 ]] && warn "DRY RUN — nothing will be modified"
 echo "phases: ${PHASES[*]}"; echo
+
+# --fresh: if anything below dies after the env was set aside, put it back.
+_server_exit() { local rc=$?; [[ ${rc} -eq 0 ]] || restore_env_from_fresh; }
+trap _server_exit EXIT
 
 for ph in "${PHASES[@]}"; do
   case "${ph}" in

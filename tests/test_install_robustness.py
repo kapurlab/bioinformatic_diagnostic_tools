@@ -203,9 +203,8 @@ class FreshRebuildTests(unittest.TestCase):
           TOOL=faketool; FRESH=1; DRY_RUN=0
           snapshot_env() {{ :; }}
           tool_env_prefix() {{ printf '%s' "{envdir}"; }}
-          # the functions under test, lifted from install-local.sh
-          eval "$(sed -n '/^FRESH_ASIDE=""; FRESH_ORIG=""/,/^  FRESH_ASIDE=""$/p' \
-                    "{ROOT}/bin/install-local.sh"; echo '}}')"
+          # discard_env_for_fresh / restore_env_from_fresh live in common.sh (sourced
+          # by sh()) since 2026-09-02, when install-server.sh gained --fresh too.
           {body}
         ''')
 
@@ -277,6 +276,20 @@ class FreshRebuildTests(unittest.TestCase):
                                 "kraken_id_parse_gui", flag, "--dry-run"],
                                capture_output=True, text=True)
             self.assertNotIn("unknown option", r.stdout + r.stderr, flag)
+
+    def test_the_server_installer_accepts_fresh_and_rebuild(self):
+        # doctor's repair for an env carrying a sibling tool's stale packages is
+        # `install <tool> --fresh`; on a site install the wrapper forwarded it and
+        # install-server.sh answered "unknown option" (ICAR-NIVEDI, 2026-09-02).
+        # The dry-run may stop later for a missing site tree; the flag itself must
+        # be understood.
+        for flag in ("--fresh", "--rebuild"):
+            r = subprocess.run([str(ROOT / "bin/install-server.sh"), "kraken_id_parse_gui", flag,
+                                "--dry-run", "--site-conf", str(ROOT / "tests/site.conf")],
+                               capture_output=True, text=True)
+            self.assertNotIn("unknown option", r.stdout + r.stderr, flag)
+        h = subprocess.run([str(ROOT / "bin/install-server.sh"), "--help"], capture_output=True, text=True)
+        self.assertIn("--fresh", h.stdout); self.assertIn("--rebuild", h.stdout)
 
     def test_with_card_is_known_and_server_only(self):
         # install-server.sh accepted --with-card all along; the wrapper called it an

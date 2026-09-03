@@ -1287,70 +1287,8 @@ build_vsnp_local() {
 
 # --fresh — start this tool's env over from nothing.
 #
-# The single command to hand someone whose env is wrong in a way no update can
-# repair: a mixed-architecture prefix, a python swapped out from under the pip
-# layer, a half-linked transaction, a package set nobody can account for. Those
-# all share one property — something is PRESENT that should not be — and every
-# other mode here is additive. `--rebuild` is `conda env update`, which by
-# design cannot remove anything; enforce_package_pins moves versions but not
-# platforms. Up to now the answer was a two-part recipe (`rm -rf <env> &&
-# bdtools install <tool>`) that nobody should be asked to type: get the path
-# wrong and you delete the wrong env, and if the build then fails you are left
-# with nothing at all. That is also why plain `install` refuses to touch an env
-# that already exists.
-#
-# So this does not delete anything. It snapshots the package set, MOVES the
-# prefix aside on the same filesystem — instant, and reversible — and builds from
-# nothing. A conda env is not relocatable, but the copy is never run from its new
-# path; it is only ever moved BACK, restoring the original prefix byte for byte.
-# A failed build puts it back automatically. A build that passes its self-check
-# removes it, and the snapshot stays behind either way, so `bdtools restore-env`
-# can still name every package that was there.
-#
-# On Apple Silicon this is also the only way to fix a platform mistake: the
-# subdir is decided when an env is created (ensure_conda_subdir), and with the
-# old prefix gone, rule 2 gets to make that decision again from scratch.
-FRESH_ASIDE=""; FRESH_ORIG=""
-discard_env_for_fresh() {
-  [[ ${FRESH} -eq 1 ]] || return 0
-  local envdir; envdir="$(tool_env_prefix "${TOOL}" 2>/dev/null || true)"
-  if [[ -z "${envdir}" || ! -d "${envdir}" ]]; then
-    ok "--fresh: ${TOOL} has no env here yet — building a new one"
-    return 0
-  fi
-  # Resolved through tool_env_python, so this is the env the tool actually LAUNCHES
-  # with, which on a shared install can be one somebody else owns. Not ours to move.
-  [[ -w "$(dirname "${envdir}")" && -w "${envdir}" ]]     || die "--fresh: ${envdir} is not yours to replace (no write permission).
-       That is the env ${TOOL} runs from. Ask whoever owns it, or install your own copy."
-  log "--fresh: replacing ${envdir}"
-  snapshot_env "${TOOL}" "${envdir}"
-  local aside="${envdir}.bdtools-old-$(date +%Y%m%d%H%M%S)"
-  if [[ "${DRY_RUN:-0}" -eq 1 ]]; then
-    echo "  [dry-run] mv ${envdir} ${aside}"
-    echo "  [dry-run] build a new env at ${envdir}, then remove ${aside}"
-    return 0
-  fi
-  mv "${envdir}" "${aside}" \
-    || die "--fresh: could not move ${envdir} aside. Is the tool still running? Stop it and retry."
-  FRESH_ORIG="${envdir}"; FRESH_ASIDE="${aside}"
-  ok "--fresh: old env set aside — it goes back automatically if this build fails"
-}
-
-# Put it back. Called from the build's EXIT trap, so it covers `die` too.
-restore_env_from_fresh() {
-  [[ -n "${FRESH_ASIDE}" && -d "${FRESH_ASIDE}" ]] || return 0
-  rm -rf "${FRESH_ORIG}" 2>/dev/null || true
-  if mv "${FRESH_ASIDE}" "${FRESH_ORIG}"; then
-    warn "--fresh: build failed — the previous env has been put back at ${FRESH_ORIG}"
-    info "  It is exactly what it was, so the tool should run as it did before."
-  else
-    warn "--fresh: build failed AND the old env could not be moved back."
-    info "  It is intact at ${FRESH_ASIDE} — restore it with:"
-    info "      mv ${FRESH_ASIDE} ${FRESH_ORIG}"
-  fi
-  FRESH_ASIDE=""
-}
-
+# --fresh: discard_env_for_fresh / restore_env_from_fresh moved to lib/common.sh
+# (2026-09-02) so install-server.sh can offer the same rebuild. Semantics unchanged.
 build() {
   discard_env_for_fresh
   ensure_conda_subdir

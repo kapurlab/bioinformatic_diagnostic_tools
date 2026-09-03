@@ -597,17 +597,21 @@ addEventListener('storage',e=>{{if(e.key===THEME_KEY)applyTheme(preferredTheme()
  :root{{--bg:#ece8e1;--card:#fffdfa;--soft:#e4dfd7;--hair:#dcd6cd;--line:#cfc8be;--ink:#26242a;--ink2:#4a474f;--muted:#64606a;
    --accent:#6d3a5a;--accent-hover:#5c2f4c;--accent2:#3f6b48;--button-ink:#fff;--disabled-bg:#dcd6ce;--disabled-ink:#5f5a55;
    --success-bg:#dfeadf;--success-ink:#2f5c3a;--dev-bg:#f6eedf;--dev-ink:#6b4a1a;--err-ink:#a13c2e;
-   --shadow:0 1px 2px rgba(38,36,42,.08),0 14px 34px -14px rgba(38,36,42,.38)}}
+   --shadow:0 1px 2px rgba(38,36,42,.08),0 14px 34px -14px rgba(38,36,42,.38);
+   --title-stroke:.4px rgba(38,36,42,.55);--title-shadow:0 1px 0 rgba(255,255,255,.85),0 2px 5px rgba(38,36,42,.22);
+   --head-stroke:.25px rgba(38,36,42,.45);--head-shadow:0 1px 0 rgba(255,255,255,.7),0 1px 3px rgba(38,36,42,.14)}}
  html[data-theme="dark"]{{--bg:#161412;--card:#2a2725;--soft:#363230;--hair:#3a3633;--line:#4a4541;--ink:#ece7e1;--ink2:#cbc4bc;--muted:#a59d94;
    --accent:#8b4f78;--accent-hover:#9c5c88;--accent2:#3f7a4b;--button-ink:#fff;--disabled-bg:#3b3633;--disabled-ink:#aaa299;
    --success-bg:#233327;--success-ink:#a7d3ae;--dev-bg:#332c22;--dev-ink:#e3c68e;--err-ink:#f0a09b;
-   --shadow:0 1px 2px rgba(0,0,0,.4),0 16px 40px -16px rgba(0,0,0,.75)}}
+   --shadow:0 1px 2px rgba(0,0,0,.4),0 16px 40px -16px rgba(0,0,0,.75);
+   --title-stroke:.4px rgba(255,255,255,.22);--title-shadow:0 1px 0 rgba(0,0,0,.7),0 2px 8px rgba(0,0,0,.6);
+   --head-stroke:.25px rgba(255,255,255,.16);--head-shadow:0 1px 0 rgba(0,0,0,.6),0 1px 3px rgba(0,0,0,.5)}}
  *{{box-sizing:border-box}}html{{background:var(--bg)}}
  body{{margin:0;background:var(--bg);color:var(--ink);font:14.5px/1.5 -apple-system,"SF Pro Text","Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;-webkit-font-smoothing:antialiased}}
  .wrap{{max-width:1180px;margin:0 auto;padding:0 28px}}
  header{{padding:34px 0 2px}}
- h1{{margin:0;font-size:30px;font-weight:700;letter-spacing:-.022em;line-height:1.15;display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}}
- h1 .tag{{font:600 12px/1 ui-monospace,"SF Mono",Menlo,Consolas,monospace;letter-spacing:.02em;color:var(--muted);background:var(--soft);border:1px solid var(--hair);border-radius:999px;padding:5px 9px;position:relative;top:-3px}}
+ h1{{margin:0;font-size:34px;font-weight:700;letter-spacing:-.022em;line-height:1.15;display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;text-shadow:var(--title-shadow);-webkit-text-stroke:var(--title-stroke);paint-order:stroke fill}}
+ h1 .tag{{font:600 12px/1 ui-monospace,"SF Mono",Menlo,Consolas,monospace;letter-spacing:.02em;color:var(--muted);background:var(--soft);border:1px solid var(--hair);border-radius:999px;padding:5px 9px;position:relative;top:-3px;text-shadow:none;-webkit-text-stroke:0}}
  header::after{{content:"";display:block;width:56px;height:3px;border-radius:2px;background:var(--accent);margin-top:14px}}
  .footbar{{display:flex;align-items:baseline;justify-content:space-between;gap:20px;flex-wrap:wrap;margin:28px 0 0;padding-top:16px;border-top:1px solid var(--hair)}}
  .themerow{{display:flex;justify-content:flex-end;margin:14px 0 44px}}
@@ -616,7 +620,7 @@ addEventListener('storage',e=>{{if(e.key===THEME_KEY)applyTheme(preferredTheme()
  @media (max-width:759px){{.grid{{grid-template-columns:1fr}}.wrap{{padding:0 18px}}}}
  .card{{background:var(--card);border:1px solid var(--hair);border-radius:14px;padding:18px 20px 18px 22px;box-shadow:var(--shadow);
    display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:20px;row-gap:0;align-content:start}}
- .blurb{{grid-column:1;font-size:19px;line-height:1.28;font-weight:600;letter-spacing:-.012em;text-wrap:balance}}
+ .blurb{{grid-column:1;font-size:19px;line-height:1.28;font-weight:600;letter-spacing:-.012em;text-wrap:balance;text-shadow:var(--head-shadow);-webkit-text-stroke:var(--head-stroke);paint-order:stroke fill}}
  .name{{grid-column:1;margin-top:5px;font-size:13.5px;font-weight:500;color:var(--ink2)}}
  .name .qual{{color:var(--muted);font-weight:400}}.name .qual::before{{content:"·";margin:0 6px;opacity:.6}}
  .row{{grid-column:2;grid-row:1/span 2;align-self:start;display:flex;align-items:center;gap:10px}}

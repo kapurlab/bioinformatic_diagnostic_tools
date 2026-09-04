@@ -291,6 +291,24 @@ class FreshRebuildTests(unittest.TestCase):
         h = subprocess.run([str(ROOT / "bin/install-server.sh"), "--help"], capture_output=True, text=True)
         self.assertIn("--fresh", h.stdout); self.assertIn("--rebuild", h.stdout)
 
+    def test_database_destinations_follow_the_site_root(self):
+        # install-server.sh derives the tool installers' own override variables
+        # from this site's DB root. ICAR-NIVEDI, 2026-09-04: irma's installer
+        # defaulted GENOFLU_DB_DEST to /srv/kapurlab/... and a --fresh rebuild
+        # would have recreated the tree the site had just removed. The lines are
+        # extracted from the script itself so the test cannot drift from it.
+        script = (ROOT / "bin/install-server.sh").read_text(encoding="utf-8")
+        lines = [l for l in script.splitlines()
+                 if l.strip().startswith("export AMRFINDER_DB_DEST=") or l.strip().startswith("export GENOFLU_DB_DEST=")]
+        self.assertEqual(len(lines), 2, lines)
+        body = "\n".join(lines)
+        r = subprocess.run(["bash", "-c", f'BDTOOLS_DB_ROOT=/site/databases\n{body}\necho "$AMRFINDER_DB_DEST $GENOFLU_DB_DEST"'],
+                           capture_output=True, text=True)
+        self.assertEqual(r.stdout.strip(), "/site/databases/amrfinderplus /site/databases/genoflu", r.stderr)
+        r = subprocess.run(["bash", "-c", f'BDTOOLS_DB_ROOT=/site/databases\nGENOFLU_DB_DEST=/elsewhere/genoflu\n{body}\necho "$GENOFLU_DB_DEST"'],
+                           capture_output=True, text=True)
+        self.assertEqual(r.stdout.strip(), "/elsewhere/genoflu", "an operator's explicit value must win")
+
     def test_with_card_is_known_and_server_only(self):
         # install-server.sh accepted --with-card all along; the wrapper called it an
         # unknown option, so a site could not re-render its per-tool cards through

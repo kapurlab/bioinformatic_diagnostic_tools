@@ -250,7 +250,20 @@ phase_toolchain() {
   export BDTOOLS_TOOLS_ROOT="${BDTOOLS_TOOLS_ROOT:-${TOOLS_ROOT}}"
   export BDTOOLS_DB_ROOT="${BDTOOLS_DB_ROOT:-${DB_ROOT:-${DATABASES_ROOT:-${SITE_ROOT}/databases}}}"
   export BDTOOLS_SHARED_PROJECTS_ROOT="${BDTOOLS_SHARED_PROJECTS_ROOT:-${SHARED_PROJECTS_ROOT:-${SITE_ROOT}/projects}}"
+  # The tool installers that stage a database each take their OWN override
+  # variable — AMRFINDER_DB_DEST (amr_plus_gui), GENOFLU_DB_DEST (irma_gui,
+  # genoflu_gui) — and default it to a literal under /srv/kapurlab until they
+  # learn to read BDTOOLS_DB_ROOT. Derive those from the site's root here, so a
+  # `--fresh` rebuild on any other site stages under that site's databases
+  # instead of recreating another site's tree: ICAR-NIVEDI, 2026-09-04, irma's
+  # dry-run showed `mkdir -p /srv/kapurlab/databases/genoflu` on a box that had
+  # just removed that tree. No path literal enters here — only the tools' own
+  # variable names and this deployment's root. An operator's explicit value
+  # still wins.
+  export AMRFINDER_DB_DEST="${AMRFINDER_DB_DEST:-${BDTOOLS_DB_ROOT}/amrfinderplus}"
+  export GENOFLU_DB_DEST="${GENOFLU_DB_DEST:-${BDTOOLS_DB_ROOT}/genoflu}"
   info "site roots for the installer: DB ${BDTOOLS_DB_ROOT}  projects ${BDTOOLS_SHARED_PROJECTS_ROOT}  tools ${BDTOOLS_TOOLS_ROOT}"
+  info "  database destinations handed to the tool installer: AMRFINDER_DB_DEST=${AMRFINDER_DB_DEST}  GENOFLU_DB_DEST=${GENOFLU_DB_DEST}"
   # --fresh: the env goes aside FIRST, so the tool's installer (or env_from_spec)
   # finds none and builds from nothing. It comes back by itself if anything below
   # dies — the EXIT trap armed at the bottom of this script calls

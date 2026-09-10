@@ -49,15 +49,48 @@ this** — jump to [Installing on Open OnDemand](#installing-on-open-ondemand-hp
 > A lab can share one install via a group path. More:
 > [docs/INSTALL_LOCAL.md](docs/INSTALL_LOCAL.md#where-things-live).
 
+Get the suite:
+
 ```bash
 git clone https://github.com/kapurlab/bioinformatic_diagnostic_tools.git
 cd bioinformatic_diagnostic_tools
-# HPC/cluster? first set large-storage BDTOOLS_HOME (home quotas are too small — see note above)
-bin/bdtools list                 # what's in the suite
-bin/bdtools install all          # same as: install --local all   (Linux / macOS / WSL2)
-# If prompted to install databases, pick the best location and say yes (see "Reference databases" below).
-bin/bdtools dashboard            # landing page: pick a GUI -> opens at http://127.0.0.1:8080/
-bin/bdtools test all             # validate against known samples (PASS/FAIL/SKIP)
+```
+
+**On an HPC / cluster, set `BDTOOLS_HOME` to large storage now**, before you
+install — see the note above. See what's in the suite:
+
+```bash
+bin/bdtools list
+```
+
+Install everything (`install all` is the same as `install --local all`, on
+Linux / macOS / WSL2). This is the long step. If it asks about reference
+databases, pick the best location and say yes — see
+[Reference databases](#-reference-databases) below:
+
+```bash
+bin/bdtools install all
+```
+
+`install all` finishes with a readiness check of its own. Run the doctor again
+any time you change something or a tool misbehaves — it checks every tool and
+prints the exact fix under each ✗:
+
+```bash
+bin/bdtools doctor
+```
+
+Validate against known samples (PASS / FAIL / SKIP):
+
+```bash
+bin/bdtools test all
+```
+
+The installer already opened the dashboard for you. This is how you re-open it
+later — it **keeps running until you close it**, so leave it for last:
+
+```bash
+bin/bdtools dashboard
 ```
 
 > ✅ **When it finishes**, the installer prints where your tools live and opens

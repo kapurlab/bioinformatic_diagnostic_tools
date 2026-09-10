@@ -267,7 +267,7 @@ tools:
   # unpacked into the checkout, so its version travels with the tool release.
   - name: ksnp_gui
     repo: https://github.com/kapurlab/ksnp_gui.git
-    version: v0.5.10
+    version: v0.5.11
     updates: install
     ood_apps: [ksnp_gui]
     dev_apps: [ksnp_gui_dev]

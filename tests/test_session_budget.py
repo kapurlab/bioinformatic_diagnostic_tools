@@ -106,3 +106,47 @@ class SessionBudgetTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CondaBaseTests(unittest.TestCase):
+    """Named conda envs are invisible to a session that cannot find a conda base.
+
+    Several tools install a NAMED env instead of <checkout>/env, and resolve()
+    finds those only by probing conda bases. A batch job routinely has no conda
+    on PATH, so the probe comes up empty and every one of those tools reports
+    "not installed" while its env sits there fully built. Observed on Roar
+    Collab: 2 of 9 tools listed as installed; 8 of 9 once CONDA_BASE was set.
+    """
+
+    def block(self):
+        text = TEMPLATE.read_text(encoding="utf-8")
+        start = text.index("# ---- the conda base")
+        end = text.index("# ---- find a python", start)
+        return text[start:end]
+
+    def run_block(self, env, workdir):
+        e = {"PATH": os.environ.get("PATH", "")}
+        e.update(env)
+        r = subprocess.run(
+            ["bash", "-c", self.block() + '\nprintf "[%s]\\n" "${CONDA_BASE-UNSET}"'],
+            capture_output=True, text=True, env=e, cwd=str(workdir))
+        assert r.returncode == 0, r.stderr
+        return r.stdout.strip().splitlines()[-1]
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.wd = Path(self.tmp.name)
+        self.addCleanup(self.tmp.cleanup)
+
+    def test_an_exported_base_wins(self):
+        real = self.wd / "conda"
+        real.mkdir()
+        self.assertEqual(self.run_block({"CONDA_BASE": str(real)}, self.wd), f"[{real}]")
+
+    def test_a_base_that_is_not_here_is_dropped_not_passed_on(self):
+        """The baked value is another machine's layout once the card moves."""
+        self.assertEqual(
+            self.run_block({"CONDA_BASE": "/nonexistent/miniconda3"}, self.wd), "[UNSET]")
+
+    def test_unset_stays_unset(self):
+        self.assertEqual(self.run_block({}, self.wd), "[UNSET]")

@@ -97,6 +97,24 @@ export BDTOOLS_SESSION_CORES="${BDTOOLS_SESSION_CORES:-0}"
 export BDTOOLS_SESSION_MEM_GB="${BDTOOLS_SESSION_MEM_GB:-0}"
 echo "  session budget: ${BDTOOLS_SESSION_CORES} cores, ${BDTOOLS_SESSION_MEM_GB} GB (tools cap their threads to this)"
 
+# ---- the conda base this deployment's named envs live under ----
+# Not every tool builds <checkout>/env: several install a NAMED conda env, and
+# those are found by probing conda bases. A batch job routinely has no conda on
+# PATH, so the probe finds no base and every one of those tools is reported "not
+# installed" while its env sits there fully built — the dashboard listing a suite
+# as half-absent with nothing wrong but the search path.
+#
+# install-sandbox.sh rewrites the default below to the base the install actually
+# used. An exported CONDA_BASE still wins, and a path that is not present here is
+# dropped rather than passed on as another machine's layout.
+CONDA_BASE="${CONDA_BASE:-}"
+if [ -n "${CONDA_BASE}" ] && [ -d "${CONDA_BASE}" ]; then
+  export CONDA_BASE
+  echo "  conda base: ${CONDA_BASE}"
+else
+  unset CONDA_BASE
+fi
+
 # ---- find a python with the dashboard's deps (starlette + httpx + uvicorn) ----
 # These live in every tool's conda env; pick the first that imports them.
 # Candidates are built from what this machine actually has: the site tools root
@@ -114,7 +132,7 @@ fi
 # here and the session died with "no python with starlette+httpx+uvicorn found"
 # while every tool it lists had one.
 CANDS+=( "${BD_CHECKOUTS}"/*/env/bin/python )
-for base in "${HOME}/miniforge3" "${HOME}/miniconda3" "${HOME}/mambaforge" "${HOME}/anaconda3"; do
+for base in ${CONDA_BASE:+"${CONDA_BASE}"} "${HOME}/miniforge3" "${HOME}/miniconda3" "${HOME}/mambaforge" "${HOME}/anaconda3"; do
   CANDS+=( "${base}"/envs/*/bin/python "${base}/bin/python" )
 done
 for cand in "${CANDS[@]}"; do

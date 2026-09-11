@@ -58,6 +58,11 @@ done
 #                 $HOME/bioinformatic_diagnostic_tools. A sandbox user clones the
 #                 umbrella wherever they like, so bake in the checkout this
 #                 script is running from rather than requiring one exact path.
+#   CONDA_BASE    the conda base holding this deployment's NAMED envs. Several
+#                 tools install a named env rather than <checkout>/env, and those
+#                 are found only by probing conda bases — which a batch job with
+#                 no conda on PATH cannot do. Unbaked, those tools all report
+#                 "not installed" with their envs fully built.
 #   BDTOOLS_HOME  where tool envs were built. The session script falls back to
 #                 ~/.local/share/bdtools, but a site that sets BDTOOLS_HOME (a
 #                 group tree, a --prefix install) builds its envs elsewhere — and
@@ -98,6 +103,12 @@ install_dashboard_sandbox() {
        A card left pointing at another site's cluster id fails at Launch, not now."
   fi
 
+  # The base whose envs/ holds the named envs. An explicit CONDA_BASE wins;
+  # otherwise ask common.sh, which knows how this machine's conda was found.
+  local _cbase="${CONDA_BASE:-}"
+  [[ -n "${_cbase}" ]] || _cbase="$(conda_base_dir 2>/dev/null || true)"
+  [[ -n "${_cbase}" && -d "${_cbase}" ]] || _cbase=""
+
   log "rendering dashboard card -> ${dst} (cluster: ${CLUSTER})"
 
   # The destination must never resolve back into a checkout of this suite. The
@@ -137,6 +148,7 @@ install_dashboard_sandbox() {
       sed -e "s|^cluster: .*|cluster: \"${CLUSTER}\"|" \
           -e "s|\${BDTOOLS_REPO:-\${HOME}/bioinformatic_diagnostic_tools}|\${BDTOOLS_REPO:-${REPO_DIR}}|g" \
           -e "s|\${BDTOOLS_HOME:-\${XDG_DATA_HOME:-\${HOME}/.local/share}/bdtools}|\${BDTOOLS_HOME:-${BDTOOLS_HOME}}|g" \
+          ${_cbase:+-e "s|\${CONDA_BASE:-}|\${CONDA_BASE:-${_cbase}}|g"} \
           "${f}" > "${out}"
       [[ -x "${f}" ]] && chmod +x "${out}"
     done < <(find "${src}" -type f)
@@ -160,6 +172,15 @@ install_dashboard_sandbox() {
       warn "could not bake the checkout path into script.sh.erb — the session will"
       warn "  look for the umbrella at \$HOME/bioinformatic_diagnostic_tools."
       warn "  Fix: export BDTOOLS_REPO=${REPO_DIR} in the session, or move the checkout."
+    fi
+    if [[ -n "${_cbase}" ]]; then
+      grep -q "CONDA_BASE:-${_cbase}" "${dst}/template/script.sh.erb" \
+        && ok "named envs searched under: ${_cbase}/envs" \
+        || warn "could not bake CONDA_BASE — tools with a NAMED conda env will show
+  as 'not installed' in the session even though they are built."
+    else
+      warn "no conda base found; tools with a NAMED conda env (not <checkout>/env)"
+      warn "  will show as 'not installed' in the session. Re-run with CONDA_BASE set."
     fi
     if grep -q "BDTOOLS_HOME:-${BDTOOLS_HOME}" "${dst}/template/script.sh.erb"; then
       ok "tool envs searched under: ${BDTOOLS_HOME}/checkouts"

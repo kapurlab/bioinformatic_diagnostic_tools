@@ -760,6 +760,20 @@ bin/bdtools install --sandbox all --dry-run
 bin/bdtools install --sandbox all
 ```
 
+Then register the card you actually want to launch — the consolidated
+dashboard, the same one Path A installs site-wide:
+
+```bash
+bin/bdtools install --sandbox --dashboard --cluster <your-cluster-id>
+```
+
+One session for the whole suite, authenticated, with every tool on the node it
+already allocated. The per-tool cards the previous command linked still work and
+are described below, but they are one scheduler job each and have no
+application-level authentication — prefer the dashboard, and read
+[Limitations](#limitations-and-who-can-access-your-sandbox-session) before you
+rely on the per-tool ones.
+
 `all` installs the whole suite, one tool at a time. A tool that fails does not
 abort the rest — read the summary at the end for any `install failed:` lines.
 
@@ -784,6 +798,9 @@ which the installer delegates to. That script also applies the vsnp3 patches and
 registers references, so vSNP is the best-supported sandbox tool.
 
 ### The one edit you must make per card — after the install, not before
+
+This applies to the **per-tool** cards only. The dashboard route above takes
+`--cluster` on the command line and writes the id for you, outside the checkout.
 
 Every sandbox card ships with a placeholder cluster:
 
@@ -876,12 +893,37 @@ for serving a group.
    `--refs-from` takes any rsync source, local or `user@host:/path`. Run it
    without the flag and it prints the directory to copy references into.
 
-4. **One scheduler job per tool.** Sandbox cards are per-tool, so opening three
-   tools queues three jobs. There is no sandbox variant of the consolidated
-   dashboard card. You can still test the dashboard from a personal checkout: its
-   session script falls back to `$HOME/bioinformatic_diagnostic_tools`, so clone
-   the umbrella at exactly that path and symlink
-   `ood/apps/bdtools_dashboard` into `~/ondemand/dev/`.
+4. **One scheduler job per tool — unless you install the dashboard.** The
+   per-tool sandbox cards are one job each, so opening three tools queues three
+   jobs, and none of them is authenticated (see 1 above). The consolidated
+   dashboard installs per-user too, and is the better rehearsal for Path A
+   because it is the card Path A actually installs:
+
+   ```bash
+   bin/bdtools install --sandbox --dashboard --cluster <your-cluster-id>
+   ```
+
+   That renders the card into `~/ondemand/dev/bdtools_dashboard` with your
+   cluster id in place and this checkout's path baked in, so the umbrella can
+   live wherever you cloned it. `--cluster` is detected automatically when the
+   host defines exactly one cluster; pass it explicitly otherwise — the
+   installer refuses to guess, because a wrong id fails at **Launch**, not at
+   install time.
+
+   Unlike the per-tool cards, this one is a **copy** rather than a symlink into
+   the checkout, so `bdtools update` cannot revert your cluster edit — there is
+   no `sed` to re-apply afterwards. Re-run the command to pick up a new release;
+   it replaces the card wholesale, so a file dropped by a newer release does not
+   linger in yours.
+
+   > **Upgrading from the old instructions?** Earlier revisions of this guide had
+   > you symlink `~/ondemand/dev/bdtools_dashboard` at `ood/apps/bdtools_dashboard`
+   > inside the checkout. The installer detects that link and replaces it with a
+   > rendered copy; it will not write through it into your checkout. Nothing to
+   > undo by hand.
+
+   It still needs a Python with `starlette`, `httpx` and `uvicorn`, which any
+   tool's environment supplies — so install at least one tool first.
 
 5. **Only you can use it.** Sandbox apps appear under *your* Develop menu only.
    Making bdtools available to colleagues means Path A.
@@ -917,6 +959,30 @@ BDTOOLS_TOOLSDIR=$TOOLS_ROOT bin/bdtools status
 
 Set `BDTOOLS_TOOLSDIR` every time. Without it these commands report your personal
 checkouts, and a badly out-of-date server install looks current.
+
+### Updating a sandbox install (Path B)
+
+Sandbox checkouts *are* bdtools-owned, so `bdtools update` manages them — the
+refusal above applies only to server trees:
+
+```bash
+cd <your umbrella checkout>
+git pull                     # the umbrella itself
+bin/bdtools update all       # tool checkouts and their environments
+bin/bdtools install --sandbox --dashboard --cluster <your-cluster-id>
+```
+
+**The last line is not optional.** The dashboard card is a copy, which is what
+stops `bdtools update` from reverting your cluster id — and it is equally what
+stops the card from updating itself. Skip it and you keep launching the previous
+release's session script against a checkout that has moved on. Re-rendering also
+drops any file the new release removed.
+
+The per-tool cards have the opposite problem: they are symlinks into the
+checkouts, so the force-checkout *does* reach them and discards the `cluster:`
+edit. Re-apply the `sed` from
+[The one edit you must make per card](#the-one-edit-you-must-make-per-card--after-the-install-not-before)
+after every update.
 
 ---
 

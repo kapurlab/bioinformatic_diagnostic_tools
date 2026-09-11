@@ -134,12 +134,22 @@ This costs the admin team nothing and de-risks the sys-app install.
 git clone https://github.com/kapurlab/bioinformatic_diagnostic_tools.git
 cd bioinformatic_diagnostic_tools
 bin/bdtools install --sandbox <tool> --dry-run
+bin/bdtools install --sandbox <tool>
+bin/bdtools install --sandbox --dashboard --cluster <your-cluster-id>
 ```
 
-That builds under `$HOME` and links a card into `~/ondemand/dev/`, visible under
-**Develop → My Sandbox Apps** — no system changes, running on the real scheduler
-under real site auth. Once one session launches cleanly there and we've settled
-the partition/account fields, promoting to `/var/www/ood/apps/sys/` is a copy.
+That builds under `$HOME` and renders the **same consolidated card** the sys-app
+install publishes into `~/ondemand/dev/`, visible under **Develop → My Sandbox
+Apps** — no system changes, running on the real scheduler under real site auth.
+The acceptance test below is then testing the card you will actually promote; a
+per-tool sandbox card alone cannot exercise it, since the dashboard is what
+enforces the authentication and proxies each tool.
+
+The tool install comes first because the dashboard needs a Python with
+`starlette`, `httpx` and `uvicorn`, which a tool environment supplies. Once one
+session launches cleanly, promoting to `/var/www/ood/apps/sys/` is a copy.
+
+`<your-cluster-id>` is a filename minus `.yml` in `/etc/ood/config/clusters.d`.
 
 ## Acceptance test
 

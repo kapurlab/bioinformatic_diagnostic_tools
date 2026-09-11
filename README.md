@@ -425,19 +425,23 @@ system-wide, no sysadmin needed.
 git clone https://github.com/kapurlab/bioinformatic_diagnostic_tools.git
 cd bioinformatic_diagnostic_tools
 bin/bdtools install --sandbox all        # or a single tool, e.g. install --sandbox mlst_gui
+bin/bdtools install --sandbox --dashboard --cluster <your-cluster-id>
 ```
 
-Then open your OOD portal → **Develop → My Sandbox Apps**, and launch a tool card.
+Then open your OOD portal → **Develop → My Sandbox Apps**, and launch
+**Diagnostic Tools Dashboard**.
 
 Two things to know before you rely on this:
 
 - **The Develop menu usually has to be switched on for you** — on a stock OOD site
   that is a one-time admin action, not something you can do yourself. If you do not
   see the menu, ask your admin.
-- **A sandbox tool session is not private to you.** Per-tool cards listen on all
-  interfaces with no password, so any authenticated OOD user at your site who
-  learns the host and port can use your running session. Fine for trying things
-  out; use the site-wide install below for real specimen data.
+- **Launch the dashboard, not the per-tool cards.** The second command above
+  registers the same consolidated card the site-wide install publishes: one
+  session for the whole suite, authenticated, tools bound to loopback. The
+  per-tool cards the first command links are one scheduler job each and listen on
+  all interfaces with no password — any authenticated OOD user at your site who
+  learns the host and port can use that session.
 
 Full runbook, including both points: [docs/INSTALL_HPC_OOD.md](docs/INSTALL_HPC_OOD.md).
 

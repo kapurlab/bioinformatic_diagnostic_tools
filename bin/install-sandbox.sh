@@ -8,6 +8,13 @@
 #
 #   install-sandbox.sh <tool> [--conda-base DIR] [--prefix DIR]
 #                             [--no-link] [--dry-run]
+#   install-sandbox.sh --dashboard [--cluster ID] [--dry-run]
+#
+# --dashboard renders the CONSOLIDATED card into ~/ondemand/dev/ — the same one
+# front door the server path installs: one session for the whole suite, every
+# tool on the node it already allocated, behind one authenticated proxy. Prefer
+# it. The per-tool cards below predate it, start a scheduler job each, and have
+# no application-level authentication (docs/INSTALL_HPC_OOD.md, "Limitations").
 #
 # Strategy:
 #   * If the tool ships its own deploy/setup-sandbox.sh, delegate to it (it
@@ -20,19 +27,169 @@
 set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
 
-TOOL=""; CONDA_BASE_OPT=""; DO_LINK=1
+TOOL=""; CONDA_BASE_OPT=""; DO_LINK=1; DASHBOARD=0; CLUSTER=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --conda-base) CONDA_BASE_OPT="$2"; export CONDA_BASE="$2"; shift 2;;
     --prefix)     export BDTOOLS_HOME="$2"; shift 2;;
     --no-link)    DO_LINK=0; shift;;
+    --dashboard)  DASHBOARD=1; shift;;
+    --cluster)    CLUSTER="$2"; shift 2;;
     --dry-run)    DRY_RUN=1; export DRY_RUN; shift;;
-    -h|--help)    sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
+    -h|--help)    sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
     -*)           die "unknown option: $1";;
     *)            TOOL="$1"; shift;;
   esac
 done
-[[ -n "${TOOL}" ]] || die "name a tool (see: bdtools list)"
+
+# --------------------------------------------------------------------------
+# --dashboard: the consolidated card, per-user.
+# --------------------------------------------------------------------------
+# Path A renders this same card with install-server.sh, which rewrites the
+# reference site's literals from sites/site.conf. A sandbox install has neither
+# root nor a site.conf, so the two values that must not survive at their
+# reference defaults are rewritten here instead:
+#
+#   cluster:      form.yml ships the reference site's id. Nothing rewrites it on
+#                 this path, so the card would submit to a cluster this site has
+#                 never heard of — and OOD reports that as a form error with no
+#                 hint that the id came from another institution.
+#   BDTOOLS_REPO  the session script's per-user fallback is
+#                 $HOME/bioinformatic_diagnostic_tools. A sandbox user clones the
+#                 umbrella wherever they like, so bake in the checkout this
+#                 script is running from rather than requiring one exact path.
+#   BDTOOLS_HOME  where tool envs were built. The session script falls back to
+#                 ~/.local/share/bdtools, but a site that sets BDTOOLS_HOME (a
+#                 group tree, a --prefix install) builds its envs elsewhere — and
+#                 a batch job does not reliably inherit a variable set in a login
+#                 profile. Unbaked, the session finds no python and exits, while
+#                 every tool it lists has one.
+#
+# Rendered as a COPY, never a symlink. The per-tool path below symlinks into the
+# checkout, which puts the cluster edit inside a git tree that `bdtools update`
+# force-checks-out — docs/INSTALL_HPC_OOD.md has to tell users to re-apply it by
+# hand after every update. A copy outside the checkout cannot be reverted that way.
+detect_cluster() {
+  local d=/etc/ood/config/clusters.d f n=0 last=""
+  [[ -d "${d}" ]] || return 1
+  for f in "${d}"/*.yml; do
+    [[ -e "${f}" ]] || continue
+    n=$((n + 1)); last="$(basename "${f}" .yml)"
+  done
+  [[ ${n} -eq 1 ]] || return 1     # two or more: guessing would be a coin flip
+  printf '%s' "${last}"
+}
+
+install_dashboard_sandbox() {
+  local src="${REPO_DIR}/ood/apps/bdtools_dashboard"
+  local dst="${HOME}/ondemand/dev/bdtools_dashboard"
+  [[ -d "${src}" ]] || die "no dashboard card at ${src} (is this the umbrella checkout?)"
+
+  if [[ -z "${CLUSTER}" ]]; then
+    CLUSTER="$(detect_cluster || true)"
+  fi
+  if [[ -z "${CLUSTER}" ]]; then
+    local avail=""
+    [[ -d /etc/ood/config/clusters.d ]] && \
+      avail="$(find /etc/ood/config/clusters.d -maxdepth 1 -name '*.yml' -exec basename {} .yml \; 2>/dev/null | sort | tr '\n' ' ')"
+    die "cannot tell which cluster to submit to — pass --cluster <id>.
+       The id is a filename (minus .yml) in /etc/ood/config/clusters.d on the OOD
+       web node: ${avail:-<not readable from this host; check the OOD portal or ask your admin>}
+       A card left pointing at another site's cluster id fails at Launch, not now."
+  fi
+
+  log "rendering dashboard card -> ${dst} (cluster: ${CLUSTER})"
+
+  # The destination must never resolve back into a checkout of this suite. The
+  # sandbox route this command replaces was a documented manual symlink at
+  # exactly this path, pointing at ood/apps/bdtools_dashboard — and rendering
+  # "into" that symlink followed it into the checkout, where `sed "${f}" > "${out}"`
+  # with f and out the SAME FILE truncated every card file to zero bytes before
+  # sed could read it. Anyone upgrading from those instructions would have had
+  # the card destroyed by the command meant to install it.
+  if [[ -L "${dst}" ]]; then
+    warn "replacing a symlinked card (the old manual sandbox route) with a rendered copy"
+    run rm -f "${dst}"
+  fi
+  if [[ -d "${dst}" ]]; then
+    local _dst_real _src_real
+    _dst_real="$(cd "${dst}" && pwd -P)"; _src_real="$(cd "${src}" && pwd -P)"
+    [[ "${_dst_real}" != "${_src_real}" ]] \
+      || die "refusing to render the card onto its own source (${_src_real})"
+    # Only ever replace something that is recognisably this card.
+    [[ -f "${dst}/manifest.yml" ]] \
+      || die "${dst} exists and is not a bdtools card — move it aside, then re-run."
+  fi
+
+  # Stage, then swap: an in-place render leaves behind any file a newer release
+  # has removed, and a card half-written is still a card OOD will let someone
+  # launch.
+  local stage="${dst}.new.$$"
+  if [[ ${DRY_RUN} -eq 1 ]]; then
+    echo "  [dry-run] render $(find "${src}" -type f | wc -l | tr -d ' ') file(s) ${src} -> ${dst}"
+  else
+    rm -rf "${stage}"
+    mkdir -p "${stage}"
+    local f rel out
+    while IFS= read -r f; do
+      rel="${f#"${src}"/}"; out="${stage}/${rel}"
+      mkdir -p "$(dirname "${out}")"
+      sed -e "s|^cluster: .*|cluster: \"${CLUSTER}\"|" \
+          -e "s|\${BDTOOLS_REPO:-\${HOME}/bioinformatic_diagnostic_tools}|\${BDTOOLS_REPO:-${REPO_DIR}}|g" \
+          -e "s|\${BDTOOLS_HOME:-\${XDG_DATA_HOME:-\${HOME}/.local/share}/bdtools}|\${BDTOOLS_HOME:-${BDTOOLS_HOME}}|g" \
+          "${f}" > "${out}"
+      [[ -x "${f}" ]] && chmod +x "${out}"
+    done < <(find "${src}" -type f)
+    rm -rf "${dst}"
+    mv "${stage}" "${dst}"
+    ok "card rendered as a copy outside the checkout (an update cannot revert it)"
+  fi
+
+  # Verify what we WROTE, not what we intended: both rewrites are silent no-ops
+  # if the upstream text ever moves, and a card that still names another site's
+  # cluster looks perfectly fine until someone clicks Launch.
+  if [[ ${DRY_RUN} -eq 0 ]]; then
+    local got
+    got="$(sed -n 's/^cluster: *"\{0,1\}\([^"]*\)"\{0,1\}.*/\1/p' "${dst}/form.yml" | head -1)"
+    [[ "${got}" == "${CLUSTER}" ]] \
+      || die "cluster rewrite did not take (form.yml says '${got}') — card left at ${dst}"
+    ok "cluster: ${got}"
+    if grep -q "BDTOOLS_REPO:-${REPO_DIR}" "${dst}/template/script.sh.erb"; then
+      ok "umbrella baked in: ${REPO_DIR}"
+    else
+      warn "could not bake the checkout path into script.sh.erb — the session will"
+      warn "  look for the umbrella at \$HOME/bioinformatic_diagnostic_tools."
+      warn "  Fix: export BDTOOLS_REPO=${REPO_DIR} in the session, or move the checkout."
+    fi
+    if grep -q "BDTOOLS_HOME:-${BDTOOLS_HOME}" "${dst}/template/script.sh.erb"; then
+      ok "tool envs searched under: ${BDTOOLS_HOME}/checkouts"
+    else
+      warn "could not bake BDTOOLS_HOME into script.sh.erb — the session will look for"
+      warn "  tool envs under \$HOME/.local/share/bdtools/checkouts, not ${BDTOOLS_HOME}."
+    fi
+    "${PYBIN:-python3}" "${KT_BIN_DIR}/lib/check_cards.py" "${dst}" \
+      || warn "the rendered card did not pass check_cards (above) — fix before launching"
+  fi
+
+  echo
+  log "Next steps"
+  cat <<EOF
+  - The dashboard needs a python with starlette+httpx+uvicorn; any tool's env
+    supplies it:  bdtools install --sandbox <tool>
+  - In OOD: Develop -> My Sandbox Apps -> Diagnostic Tools Dashboard -> Launch.
+  - No Develop menu? Enabling it is an admin action — see docs/INSTALL_HPC_OOD.md
+    ("Do you have permission?").
+EOF
+}
+
+if [[ ${DASHBOARD} -eq 1 ]]; then
+  [[ -z "${TOOL}" ]] || die "--dashboard installs the one consolidated card; drop the tool name
+       (to build a tool's environment as well: bdtools install --sandbox ${TOOL})"
+  install_dashboard_sandbox
+  exit 0
+fi
+
+[[ -n "${TOOL}" ]] || die "name a tool (see: bdtools list), or pass --dashboard"
 manifest_has "${TOOL}" || die "unknown tool: ${TOOL}"
 
 ensure_checkout "${TOOL}"

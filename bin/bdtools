@@ -105,7 +105,7 @@ cmd_status() {
 }
 
 cmd_install() {
-  local mode="local"; local raw=() passthru=() with_dev=0 with_card=0 no_dashboard=0 dashboard=0 site_conf=""
+  local mode="local"; local raw=() passthru=() with_dev=0 with_card=0 no_dashboard=0 dashboard=0 site_conf="" cluster=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --local)   mode="local";   shift;;
@@ -117,7 +117,8 @@ cmd_install() {
       --with-dev)  with_dev=1; shift;;
       --with-card) with_card=1; shift;;   # server: ALSO render the tool's dedicated per-tool card (sunset; see docs)
       --no-card)   passthru+=(--no-card); shift;;   # server: build a tool's env but skip its per-tool card
-      --dashboard) dashboard=1; shift;;             # server: install the consolidated dashboard card
+      --dashboard) dashboard=1; shift;;             # server/sandbox: install the consolidated dashboard card
+      --cluster)   cluster="$2"; shift 2;;          # sandbox --dashboard: this site's clusters.d id
       --no-dashboard) no_dashboard=1; shift;;   # local: don't auto-open the dashboard at the end
       # Env-shape flags, handled by install-local.sh. They were rejected here as
       # unknown options while the dashboard's own help text told people to run
@@ -139,6 +140,9 @@ Options:
   --prefix DIR       install root instead of ~/.local/share/bdtools
   --no-card          --server: build the environment, register no per-tool card
   --dashboard        --server: register the single consolidated dashboard card
+                     site-wide; --sandbox: render it into your own ~/ondemand/dev
+  --cluster ID       --sandbox --dashboard: this site's clusters.d id. Detected
+                     automatically when the host defines exactly one.
   --with-dev         --server: also register developer branch-picker cards
   --with-card        --server: also (re)render the tool's dedicated per-tool card
                      (sunset in favour of --dashboard; the `app` phase does the
@@ -158,6 +162,7 @@ Options:
   bdtools install --sandbox all              # per-user OOD apps
   bdtools install all --server --no-card     # build envs site-wide, no cards
   bdtools install --server --dashboard       # register the one OOD card
+  bdtools install --sandbox --dashboard      # the same card, just for you
   bdtools install kraken_id_parse_gui --fresh   # rebuild one tool's env from scratch
 
 Open OnDemand deployments: see docs/INSTALL_HPC_OOD.md.
@@ -168,11 +173,34 @@ EOF
     esac
   done
   # --dashboard installs the single umbrella-owned card (no tool positional).
+  # Both OOD modes can register it: --server renders it site-wide for everyone,
+  # --sandbox renders it into the caller's own ~/ondemand/dev. The sandbox route
+  # existed only as a manual symlink documented in INSTALL_HPC_OOD.md, which left
+  # the one card users are meant to launch as the one card the CLI could not
+  # install — and rehearsing Path A meant rehearsing per-tool cards instead.
   if [[ ${dashboard} -eq 1 ]]; then
-    [[ "${mode}" == "server" ]] || die "--dashboard only applies to --server installs"
     local dargs=(); [[ ${DRY_RUN:-0} -eq 1 ]] && dargs+=(--dry-run)
-    [[ -n "${site_conf}" ]] && dargs+=(--site-conf "${site_conf}")
-    exec "${KT_BIN_DIR}/install-server.sh" --dashboard ${dargs[@]+"${dargs[@]}"}
+    # The card is the whole request, so a tool name here means the caller wanted
+    # something else as well. Saying so beats silently dropping it: the wrapper
+    # does not forward positionals to either installer, so
+    # `install --sandbox --dashboard mlst_gui` looked like it had built mlst_gui
+    # and had not.
+    if [[ ${#raw[@]} -gt 0 ]]; then
+      die "--dashboard installs the one consolidated card and takes no tool name.
+       Build the tool's environment separately:
+         bdtools install --${mode} ${raw[*]}"
+    fi
+    case "${mode}" in
+      server)
+        [[ -n "${site_conf}" ]] && dargs+=(--site-conf "${site_conf}")
+        [[ -n "${cluster}" ]] && die "--cluster applies to --sandbox --dashboard;
+       a --server install takes the cluster from CLUSTER_NAME in sites/site.conf."
+        exec "${KT_BIN_DIR}/install-server.sh" --dashboard ${dargs[@]+"${dargs[@]}"};;
+      sandbox)
+        [[ -n "${cluster}" ]] && dargs+=(--cluster "${cluster}")
+        exec "${KT_BIN_DIR}/install-sandbox.sh" --dashboard ${dargs[@]+"${dargs[@]}"};;
+      *) die "--dashboard applies to --server and --sandbox installs (not --local)";;
+    esac
   fi
   # --with-dev is a server-only opt-in (developer branch-picker cards).
   if [[ ${with_dev} -eq 1 ]]; then

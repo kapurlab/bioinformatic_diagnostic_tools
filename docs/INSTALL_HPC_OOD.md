@@ -928,6 +928,15 @@ for serving a group.
 5. **Only you can use it.** Sandbox apps appear under *your* Develop menu only.
    Making bdtools available to colleagues means Path A.
 
+6. **Removing a sandbox card needs a web-server restart.** The OOD dashboard
+   caches the app list in your PUN, and it reads each entry's git remote by
+   `chdir`-ing into it. Delete a card directory while the PUN is live and *My
+   Sandbox Apps* answers **Internal Server Error** —
+   `Errno::ENOENT ... @ dir_chdir0 - /var/www/ood/apps/dev/<user>/gateway/<card>`
+   — even though your `~/ondemand/dev` is perfectly fine. Nothing is broken on
+   disk; the process is holding a stale listing. After removing a card, click
+   **`</>` → Restart Web Server** (or visit `/nginx/stop` once), then reload.
+
 ---
 
 ## Updating an existing deployment

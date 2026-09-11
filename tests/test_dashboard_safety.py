@@ -315,9 +315,15 @@ class StateFileTests(unittest.TestCase):
             installed_env = bdtools_home / "checkouts/mlst_gui/env"
             (installed_env / "bin").mkdir(parents=True)
             (installed_env / "bin/python").touch()
+            # HOME too: resolve() consults ~/.config/<tool>/sandbox.env, which
+            # `install --sandbox mlst_gui` writes. Without this the test reads the
+            # developer's own sandbox install and resolves that checkout instead
+            # of the fixture — passing only on a machine where the tool is not
+            # installed, which is the one place the resolution matters least.
             with mock.patch.dict(os.environ, {
                 "BDTOOLS_TOOLSDIR": str(source_root),
                 "BDTOOLS_HOME": str(bdtools_home),
+                "HOME": str(root / "fake-home"),
             }, clear=False):
                 with mock.patch.object(TL, "_conda_bases", return_value=[]):
                     plan = TL.resolve("mlst_gui", 8124)

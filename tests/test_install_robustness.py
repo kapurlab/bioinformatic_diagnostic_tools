@@ -18,6 +18,7 @@ import sys
 import tempfile
 import textwrap
 import unittest
+from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -1846,6 +1847,19 @@ class BlastUpdaterResolutionTests(unittest.TestCase):
     stub programs, reached through the env-prefix record a build leaves behind,
     and the download is only ever inspected in --dry-run.
     """
+
+    def setUp(self):
+        # resolve() consults ~/.config/<tool>/sandbox.env, which
+        # `bdtools install --sandbox <tool>` writes. Without an isolated HOME
+        # these tests resolve the developer's OWN installs instead of the
+        # fixtures below — so they pass only on a machine where the suite is not
+        # installed, which is the one place their subject does not matter.
+        self._home_tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._home_tmp.cleanup)
+        _p = mock.patch.dict(os.environ, {"HOME": self._home_tmp.name}, clear=False)
+        _p.start()
+        self.addCleanup(_p.stop)
+
 
     SETUP = ROOT / "bin/setup-databases.sh"
     # A PATH with no update_blastdb.pl on it — the (base) shell of the report.

@@ -150,3 +150,41 @@ class CondaBaseTests(unittest.TestCase):
 
     def test_unset_stays_unset(self):
         self.assertEqual(self.run_block({}, self.wd), "[UNSET]")
+
+
+class BudgetReachesVsnp3Tests(unittest.TestCase):
+    """Exporting the budget is not enough — vsnp3 reads a different name.
+
+    vsnp3 sizes its pool as min(cpu_count()/1.2, VSNP3_MAX_CPUS or 32), and
+    cpu_count() reports the machine rather than the cgroup. Inside an 8-core
+    allocation on a 64-core node that is 32 worker processes, each holding its
+    share of the VCF dataframes. A 1951-VCF step2 in a 32 GB session was
+    SIGKILLed with no traceback (Roar Collab, 2026-09-11) — which reads as the
+    tool doing nothing, not as running out of memory.
+    """
+
+    def setUp(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "tl_budget", ROOT / "bin/lib/tool_launch.py")
+        self.TL = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.TL)
+
+    def _env_for(self, tool, cores):
+        import unittest.mock as mock
+        with mock.patch.dict(os.environ, {"BDTOOLS_SESSION_CORES": cores}, clear=False):
+            return self.TL.resolve(tool, 0)["env"]
+
+    def test_budget_becomes_vsnp3_max_cpus(self):
+        self.assertEqual(self._env_for("vsnp_gui", "8").get("VSNP3_MAX_CPUS"), "8")
+
+    def test_no_budget_leaves_vsnp3_alone(self):
+        """0 means 'not declared'; vsnp3 keeps its own default rather than getting 0."""
+        self.assertIsNone(self._env_for("vsnp_gui", "0").get("VSNP3_MAX_CPUS"))
+
+    def test_an_explicit_export_still_wins(self):
+        import unittest.mock as mock
+        with mock.patch.dict(os.environ, {"BDTOOLS_SESSION_CORES": "8",
+                                          "VSNP3_MAX_CPUS": "2"}, clear=False):
+            self.assertEqual(
+                self.TL.resolve("vsnp_gui", 0)["env"].get("VSNP3_MAX_CPUS"), "2")

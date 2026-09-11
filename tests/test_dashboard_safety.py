@@ -305,6 +305,18 @@ class RestartPollerTests(unittest.TestCase):
 
 
 class StateFileTests(unittest.TestCase):
+    def setUp(self):
+        # resolve() consults ~/.config/<tool>/sandbox.env, which
+        # `bdtools install --sandbox <tool>` writes. Without an isolated HOME
+        # these tests resolve the developer's OWN installs instead of the
+        # fixtures below — so they pass only on a machine where the suite is not
+        # installed, which is the one place their subject does not matter.
+        self._home_tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._home_tmp.cleanup)
+        _p = mock.patch.dict(os.environ, {"HOME": self._home_tmp.name}, clear=False)
+        _p.start()
+        self.addCleanup(_p.stop)
+
     def test_source_override_reuses_installed_environment(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

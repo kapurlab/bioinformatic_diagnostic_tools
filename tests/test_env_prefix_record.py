@@ -39,6 +39,14 @@ class EnvPrefixRecord(unittest.TestCase):
     TOOL = "irma_gui"
 
     def setUp(self):
+        # See the note in tests/test_dashboard_safety.py: resolve() reads
+        # ~/.config/<tool>/sandbox.env, so an un-isolated HOME resolves the
+        # developer's own install rather than the fixture built below.
+        self._home_tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._home_tmp.cleanup)
+        _p = mock.patch.dict(os.environ, {"HOME": self._home_tmp.name}, clear=False)
+        _p.start()
+        self.addCleanup(_p.stop)
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         base = Path(self.tmp.name)
@@ -107,6 +115,14 @@ class ShellSideRecord(unittest.TestCase):
     above reads it. Two files, one convention — worth asserting they meet."""
 
     def setUp(self):
+        # See the note in tests/test_dashboard_safety.py: resolve() reads
+        # ~/.config/<tool>/sandbox.env, so an un-isolated HOME resolves the
+        # developer's own install rather than the fixture built below.
+        self._home_tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._home_tmp.cleanup)
+        _p = mock.patch.dict(os.environ, {"HOME": self._home_tmp.name}, clear=False)
+        _p.start()
+        self.addCleanup(_p.stop)
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.home = Path(self.tmp.name) / "bdtools"

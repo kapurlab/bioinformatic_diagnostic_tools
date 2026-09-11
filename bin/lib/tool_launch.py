@@ -610,6 +610,22 @@ def resolve(tool, port, host="127.0.0.1"):
             env.setdefault("VSNP_GUI_SHARED_PROJECTS_ROOT", "")
         elif env.get(site_paths.ENV_SITE_ROOT):
             env.setdefault("VSNP_GUI_SITE_ROOT", env[site_paths.ENV_SITE_ROOT])
+        # The session's core budget has to reach vsnp3 under the name IT reads.
+        # vsnp3 sizes its worker pool as
+        #     max(1, min(int(multiprocessing.cpu_count() / 1.2), VSNP3_MAX_CPUS or 32))
+        # and cpu_count() reports the MACHINE, not the cgroup — so inside an 8-core
+        # allocation on a 64-core node it starts 32 processes. Each one holds its
+        # share of the VCF dataframes, so the overshoot is paid in memory: a 1951-VCF
+        # step2 in a 32 GB session was SIGKILLed with no traceback, which reads as
+        # the tool silently doing nothing rather than as running out of memory.
+        # BDTOOLS_SESSION_CORES is already exported for exactly this purpose; vsnp3
+        # simply spells it differently, so translate rather than expecting every
+        # analysis package to learn our name.
+        _budget = env.get("BDTOOLS_SESSION_CORES", "").strip()
+        if _budget.isdigit() and int(_budget) > 0:
+            env.setdefault("VSNP3_MAX_CPUS", _budget)
+            env_overrides["VSNP3_MAX_CPUS"] = env["VSNP3_MAX_CPUS"]
+
         # Record the effective values (whatever won: caller's export or our default)
         # so the reproduce command carries them — the backend reads them once at start.
         for _k in ("VSNP_GUI_SITE_ROOT", "VSNP_GUI_SHARED_PROJECTS_ROOT"):

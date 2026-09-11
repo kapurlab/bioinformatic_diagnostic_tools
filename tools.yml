@@ -186,7 +186,7 @@ tools:
     env: genoflu_gui
     # GenoFLU's suite-wide pin. irma_gui also runs genoflu from THIS env
     # (BDTOOLS_SIBLING_ENV_GENOFLU_GUI) — bumping it moves both tools together.
-    packages: [bioconda::genoflu=1.07]
+    packages: [bioconda::genoflu=1.08]
 
   - name: mlst_gui
     repo: https://github.com/kapurlab/mlst_gui.git

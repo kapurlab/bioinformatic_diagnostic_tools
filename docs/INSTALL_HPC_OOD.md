@@ -573,13 +573,29 @@ This is the part that decides whether users see a working app.
 | `$VSNP_GUI_SITE_ROOT/tools/vsnp3` | the analysis environment |
 | `$VSNP_GUI_SITE_ROOT/projects` | shared projects root |
 
-The dashboard's session script exports it, and `install --server` rewrites the
-value from your `SITE_ROOT`. Nothing to do — but if you hand-copied the card
-instead of using the installer, confirm the export is correct:
+The dashboard's **launcher** sets it — not the session script, and not the card.
+`bin/lib/tool_launch.py` resolves the deployment's roots through `bin/lib/site_paths.py`
+and hands `VSNP_GUI_SITE_ROOT` to vSNP as it starts it, taking the value from the
+`SITE_ROOT` you declared in `sites/site.conf`. Nothing to do — but if you
+hand-copied the card instead of using the installer, or vSNP reports no
+references, check what the launcher will actually resolve. Run it as a **normal
+user**, not as root — the answer depends on whose account the session runs in:
 
 ```bash
-grep VSNP_GUI_SITE_ROOT $SYS_APPS_DIR/bdtools_dashboard/template/script.sh.erb
+REPO=$TOOLS_ROOT/bioinformatic_diagnostic_tools
+python3 $REPO/bin/lib/site_paths.py $REPO
 ```
+
+The `site_root` field in that JSON is the value vSNP will receive. `null` means
+no `SITE_ROOT` is readable from that account: confirm `$REPO/sites/site.conf`
+exists and is world-readable, because that is the copy an ordinary user's session
+reads. (`install --server` also records the same values under the *installing*
+account's `~/.local/share/bdtools/site.conf`, which other users cannot see — so a
+root-only check will look fine while every user session resolves nothing.)
+
+Do **not** grep the card's `template/script.sh.erb` for this variable. It is
+deliberately not there, so an empty result is an artifact of the check, not a
+finding.
 
 **vSNP also needs its references registered**, which is a separate step from
 staging them. The `vsnp3` environment reads a path file:

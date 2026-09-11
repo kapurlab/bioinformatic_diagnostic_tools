@@ -161,17 +161,45 @@ class BudgetReachesVsnp3Tests(unittest.TestCase):
     share of the VCF dataframes. A 1951-VCF step2 in a 32 GB session was
     SIGKILLed with no traceback (Roar Collab, 2026-09-11) — which reads as the
     tool doing nothing, not as running out of memory.
+
+    The checkout is fabricated rather than resolved from this machine: a test
+    that needs vsnp_gui actually installed passes only where the suite is
+    deployed and errors everywhere else, CI included.
     """
 
     def setUp(self):
         import importlib.util
+        from unittest import mock
         spec = importlib.util.spec_from_file_location(
             "tl_budget", ROOT / "bin/lib/tool_launch.py")
         self.TL = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(self.TL)
 
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        base = Path(self.tmp.name)
+        home = base / "bdtools"
+        checkout = home / "checkouts/vsnp_gui"
+        (checkout / "backend").mkdir(parents=True)
+        envbin = checkout / "env/bin"
+        envbin.mkdir(parents=True)
+        py = envbin / "python"
+        py.write_text("#!/bin/sh\nexit 0\n")
+        py.chmod(0o755)
+
+        self._patch = mock.patch.dict(os.environ, {
+            "BDTOOLS_HOME": str(home),
+            "HOME": str(base / "home"),   # keep ~/.config/<tool>/sandbox.env out
+        }, clear=False)
+        self._patch.start()
+        self.addCleanup(self._patch.stop)
+        # No conda probing: the fixture env is the only one that should be found.
+        cb = mock.patch.object(self.TL, "_conda_bases", return_value=[])
+        cb.start()
+        self.addCleanup(cb.stop)
+
     def _env_for(self, tool, cores):
-        import unittest.mock as mock
+        from unittest import mock
         with mock.patch.dict(os.environ, {"BDTOOLS_SESSION_CORES": cores}, clear=False):
             return self.TL.resolve(tool, 0)["env"]
 
@@ -183,7 +211,7 @@ class BudgetReachesVsnp3Tests(unittest.TestCase):
         self.assertIsNone(self._env_for("vsnp_gui", "0").get("VSNP3_MAX_CPUS"))
 
     def test_an_explicit_export_still_wins(self):
-        import unittest.mock as mock
+        from unittest import mock
         with mock.patch.dict(os.environ, {"BDTOOLS_SESSION_CORES": "8",
                                           "VSNP3_MAX_CPUS": "2"}, clear=False):
             self.assertEqual(

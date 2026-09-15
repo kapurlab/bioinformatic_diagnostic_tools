@@ -121,7 +121,7 @@ tools:
 
   - name: amr_plus_gui
     repo: https://github.com/kapurlab/amr_plus_gui.git
-    version: v0.3.15
+    version: v0.3.16
     updates: install
     ood_apps: [amr_plus_gui]
     dev_apps: [amr_plus_gui_dev]
@@ -164,7 +164,7 @@ tools:
 
   - name: irma_gui
     repo: https://github.com/kapurlab/irma_gui.git
-    version: v0.3.18
+    version: v0.3.19
     updates: install
     ood_apps: [irma_gui]
     dev_apps: [irma_gui_dev]
@@ -179,7 +179,7 @@ tools:
 
   - name: genoflu_gui
     repo: https://github.com/kapurlab/genoflu_gui.git
-    version: v0.3.12
+    version: v0.3.13
     updates: install
     ood_apps: [genoflu_gui]
     dev_apps: [genoflu_gui_dev]

@@ -17,6 +17,14 @@ if you want the source).
   Day-to-day use afterward is your normal (non-admin) account.
 - An internet connection. Hardware virtualization is normally already on; if the
   install later complains, see [Troubleshooting](#troubleshooting).
+- **x86-64 is the tested path.** WSL2 on an ARM Windows PC (Snapdragon X and
+  similar) gives you `linux-aarch64`, where most of the suite is fine — kraken2,
+  spades, blast, AMRFinderPlus, vsnp3 and snp-dists all have aarch64 builds. Two
+  packages do not: `blat` (so `irma_gui` cannot be installed) and `table2asn`
+  (so `ncbi_submit_gui` cannot). Unlike macOS there is no translation layer on
+  Linux, so there is no workaround for those two. Check your own machine with
+  `bin/bdtools rebuild-native --report`, which solves each tool's real spec and
+  names anything blocking.
 
 ## Step 1 — Install WSL2 (one time, as Administrator)
 

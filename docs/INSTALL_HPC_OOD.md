@@ -114,6 +114,7 @@ serves BAM/BAI to an embedded IGV viewer). **No WebSockets are used anywhere.**
 | Slurm | The card emits Slurm flags. Another scheduler needs the usual adapter change — see [Non-Slurm sites](#non-slurm-sites). |
 | `conda` with the **libmamba** solver | Used to build nine tool environments. A recent miniforge is fine. On a site where an admin pins the conda module, check what you have first — see [Which solver you have](#which-solver-you-have). |
 | A shared filesystem | Must be readable by all users **and mounted on the compute nodes**. |
+| CPU architecture | `linux-64` is the tested path and has builds for everything. `linux-aarch64` (Graviton, Ampere, ARM HPC) supports most of the suite — kraken2, spades, blast, AMRFinderPlus, vsnp3, snp-dists all have aarch64 builds — but `blat` and `table2asn` do not, so `irma_gui` and `ncbi_submit_gui` cannot be installed there, and Linux has no translation layer to work around it. Verify on the actual cluster before committing: `bin/bdtools rebuild-native --report` solves each tool's real spec and names anything blocking. |
 | Disk | ~21 GB for the nine tool environments + conda base; ~36 GB for reference databases. Budget 60 GB and you will not be tight. See [Reference databases](#reference-databases). |
 | Node.js ≥ 20.19 | **Optional.** Every tool ships a prebuilt frontend, and the installer uses it. Only needed if you want to rebuild frontends from source. |
 

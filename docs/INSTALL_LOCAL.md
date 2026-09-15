@@ -17,19 +17,53 @@ same backend that OOD proxies in production; only the front door differs.
 
 - **Linux** — works directly.
 - **macOS (Intel)** — works directly.
-- **macOS (Apple Silicon, M1/M2/M3…)** — bioconda has no native arm64 builds for
-  the pipeline toolchain (IRMA's `blat`, shovill/spades/mash/skesa), so a native
-  solve fails for `mlst_gui`, `amr_plus_gui`, and `irma_gui`. `bdtools install`
-  detects Apple Silicon and **builds the env as osx-64 under Rosetta 2**
-  automatically — you don't edit any `environment.yml`. One-time prerequisite:
-  `softwareupdate --install-rosetta --agree-to-license` (the installer tells you
-  if it's missing). `genoflu_gui` happens to resolve natively, but all four use
-  the Rosetta env for consistency. Force a native attempt with
-  `BDTOOLS_NATIVE_ARM=1` (expect solve failures). An env that already exists
-  keeps the platform it was built for — updates re-derive it from the env itself,
-  so an osx-64 env is never updated with an arm64 solve (that mixes
-  architectures in one prefix). To move a tool to a different platform, delete
-  its `env/` and reinstall.
+- **macOS (Apple Silicon, M1/M2/M3…)** — `bdtools install` **builds the env as
+  osx-64 under Rosetta 2** by default; you don't edit any `environment.yml`.
+  That default dates from a time when bioconda had no native arm64 builds for
+  the pipeline toolchain, and it is kept because it is what this suite's Mac
+  deployments are built and validated on. One-time prerequisite:
+  `softwareupdate --install-rosetta --agree-to-license`.
+
+  **Most tools no longer need it.** bioconda has published arm64 builds since,
+  and as of 2026-09 `vsnp_gui`, `amr_plus_gui`, `kraken_id_parse_gui` and
+  `genoflu_gui` all run natively. Ask your own machine rather than trusting that
+  list — it moves as bioconda publishes builds:
+
+  ```bash
+  bin/bdtools rebuild-native --report      # changes nothing
+  ```
+
+  It dry-run-solves each tool's real spec for this machine's native platform and
+  prints one line per tool, naming the package that blocks any that cannot move.
+  Today that is `blat` (irma_gui), `libxcrypt1`/`perl`/`spades` (mlst_gui),
+  `table2asn` (ncbi_submit_gui) and `nanoq` (mhc_gui) — those still need Rosetta.
+
+  It also reports a case a rebuild cannot fix: `ksnp_gui`'s env is already
+  arm64, but its kSNP4 payload is a hand-downloaded x86_64 binary, so the tool
+  needs Rosetta whatever its env is built for. A native env is not by itself a
+  Rosetta-free tool, and the report says which tools are in that position.
+
+  To move the ones that can:
+
+  ```bash
+  bin/bdtools rebuild-native --apply             # all of them
+  bin/bdtools rebuild-native vsnp_gui --apply    # or one
+  ```
+
+  Each rebuild sets the old env aside and puts it back if the build fails.
+
+  **If Rosetta is not installed**, `bdtools install` no longer stops: it builds
+  a native arm64 env and says so. A tool whose closure still has no arm64 build
+  fails the solve and names the package. This matters because macOS 27 ships
+  without Rosetta until it is installed by hand, and Apple has said the
+  translation layer is being wound down. `BDTOOLS_NATIVE_ARM=1` forces the
+  native path even when Rosetta is present.
+
+  An env that already exists keeps the platform it was built for — updates
+  re-derive it from the env itself, so an osx-64 env is never updated with an
+  arm64 solve (that mixes architectures in one prefix). `rebuild-native --apply`
+  is the supported way to move one; it works by discarding the old env first, so
+  the platform decision has nothing stale to read.
 - **`vsnp_gui` is heavier to install** — `bdtools install vsnp_gui` builds the
   bioconda `vsnp3` env (+ web layer + patches) and downloads the USDA-VS
   reference sets (~320 MB) into `~/.local/share/bdtools/vsnp3-refs/`. The

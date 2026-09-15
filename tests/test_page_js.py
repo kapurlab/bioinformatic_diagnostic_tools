@@ -205,8 +205,15 @@ class BannerRenderTests(unittest.TestCase):
                 self.assertIn("Installing rebuilds environments", html)
 
     def test_up_to_date_renders_without_buttons(self):
-        html = self.render(f"[{self.TOOL.replace('update_available:true',
-                                                 'update_available:false')}]")
+        # Computed before the f-string, not inside it: an expression spanning
+        # lines inside braces is PEP 701 syntax (Python 3.12+), and this suite
+        # supports 3.9 (common.sh:bd_python). On an HPC whose python3 is 3.9 the
+        # file could not even be PARSED, so `unittest discover` aborted
+        # collection and the whole suite went unrun — on exactly the platform
+        # these tests exist to protect.
+        tool = self.TOOL.replace("update_available:true",
+                                 "update_available:false")
+        html = self.render(f"[{tool}]")
         self.assertIn("Up to date", html)
         self.assertNotIn("Install tool updates", html)
 

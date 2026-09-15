@@ -74,6 +74,7 @@ bin/bdtools test <tool>
 | ``version `GLIBC_2.34' not found`` (any GLIBC/GLIBCXX/CXXABI version) | version GLIBC not found |
 | `symbol lookup error`, `undefined symbol` | symbol lookup error |
 | `Exec format error`, `Bad CPU type` | Exec format error |
+| `bad CPU type in executable` on EVERY tool at once, or cards saying "Needs setup" listing packages that are installed | every tool needs setup after a macOS upgrade |
 | `bad interpreter`, `/usr/bin/env: 'perl\r': No such file or directory` | bad interpreter (CRLF) |
 | `Permission denied` on a file that has `+x` | Permission denied on an executable |
 | `No such file or directory` on a file that is plainly there | No such file or directory on a file that exists |
@@ -95,6 +96,70 @@ bin/bdtools test <tool>
 | Windows browser can't reach a tool running in WSL | Windows browser cannot reach a WSL tool |
 
 On Windows/WSL, also read [WSL: the four rules](#wsl-the-four-rules).
+
+---
+
+### every tool needs setup after a macOS upgrade
+
+**What it means.** Rosetta 2 is gone, and the suite's Mac envs are osx-64. On
+Apple Silicon `bdtools install` builds osx-64 envs that run under Rosetta
+(see [INSTALL_LOCAL.md](INSTALL_LOCAL.md) platform notes), so when Rosetta is
+removed *every* binary in those envs stops starting at once:
+
+```
+bad CPU type in executable: ~/miniconda3/envs/amr_plus/bin/python
+```
+
+macOS 27 ships without Rosetta until it is installed by hand, so a major
+upgrade is the usual trigger. It is not a conda problem and nothing in the env
+is damaged.
+
+**The tell.** Several cards go "Needs setup" together, each listing packages
+that are installed and correct (`fastapi`, `uvicorn`, `pydantic`…), while any
+tool whose env happens to be arm64 stays green. Doctor names the real cause:
+
+```bash
+bin/bdtools doctor
+```
+
+```
+✗ this env cannot run on this machine: its python is macOS x86_64 and this
+  host is macOS arm64
+```
+
+**The fix — two real answers.** Reinstall the translation layer:
+
+```bash
+softwareupdate --install-rosetta --agree-to-license
+```
+
+Or stop depending on it. Most tools have native arm64 builds now; ask this
+machine which:
+
+```bash
+bin/bdtools rebuild-native --report
+```
+
+```bash
+bin/bdtools rebuild-native --apply
+```
+
+The report changes nothing and names the blocking package for any tool that
+cannot move yet; those still need Rosetta. Each rebuild sets the old env aside
+and puts it back if the build fails. Apple is winding Rosetta down, so the
+native rebuild is the answer with a future — but a tool blocked on a package
+with no arm64 build (today: `blat`, `libxcrypt1`, `table2asn`, `nanoq`) needs
+the translation layer until bioconda publishes one, and so does a tool whose
+hand-downloaded payload is x86_64 (`ksnp_gui`'s kSNP4), which no rebuild
+touches. The report names both cases separately.
+
+**Why the old message was wrong.** Before 2026-09 doctor ran its import probe
+through the env's python, and when that could not start it reported every
+module absent — the only thing the probe can say when it cannot run at all. The
+cards then offered a `pip install` that re-execs the same interpreter. Doctor
+now checks that the env's interpreter can execute on this host *before* probing
+anything, reports that as the single finding, and grades nothing it could not
+measure.
 
 ---
 

@@ -4,6 +4,12 @@ Use this when you control a fresh Linux box and there is **no Open OnDemand yet*
 You install bottom-up; only the top layers are "ours". Everything site-specific
 lives in one `site.conf`; repo files are never edited per-site.
 
+> **x86-64 is the tested path.** `linux-64` has builds for the whole suite. On
+> `linux-aarch64` most tools are fine, but `blat` and `table2asn` have no build,
+> so `irma_gui` and `ncbi_submit_gui` cannot be installed and Linux offers no
+> translation layer. Verify on the real hardware with `bin/bdtools
+> rebuild-native --report`.
+
 | Layer | What | Tool |
 |---|---|---|
 | 1. OS + storage | Ubuntu + an XFS `prjquota` data disk | manual |

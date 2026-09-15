@@ -35,8 +35,12 @@ this** — jump to [Installing on Open OnDemand](#installing-on-open-ondemand-hp
 >
 > **WSL2** is Linux — use the commands above as-is. On **macOS**, if you've never
 > used the Terminal, first run `xcode-select --install` (this also provides
-> `git`). **Apple Silicon Macs (M1/M2/M3…)** also need Rosetta 2 once:
-> `softwareupdate --install-rosetta --agree-to-license`.
+> `git`). On **Apple Silicon Macs (M1/M2/M3…)** the suite builds osx-64 envs by
+> default, which need Rosetta 2 once:
+> `softwareupdate --install-rosetta --agree-to-license`. Most tools now build
+> natively instead — `bin/bdtools rebuild-native --report` says which, on your
+> machine — and if Rosetta is absent (macOS 27 ships without it) the install
+> builds native rather than stopping.
 
 > 💽 **On an HPC / shared cluster?** Set **`BDTOOLS_HOME`** to large
 > **scratch/work/group** storage *before* `install all` — cluster home dirs are

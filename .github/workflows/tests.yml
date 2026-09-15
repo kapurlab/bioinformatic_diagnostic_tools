@@ -50,6 +50,26 @@ jobs:
                   bad.append(f"{p}: {e}")
           sys.exit("\n".join(bad) if bad else 0)
           PY
+      # The suite states a Python floor of 3.9 (bin/lib/common.sh:bd_python
+      # searches back to 3.7 and the comment says ">=3.9"), and HPC sites really
+      # do ship 3.9. Nothing enforced it: tests/test_page_js.py picked up a
+      # PEP 701 multi-line f-string expression, which is 3.12+ syntax, so on a
+      # 3.9 host the file could not be PARSED and `unittest discover` aborted
+      # collection — the entire suite went unrun on exactly the platform it
+      # exists to protect, and CI (3.12 only) saw nothing. Syntax alone is
+      # checked here; running the tests still needs the modern interpreter.
+      - name: python floor — every shipped module must parse on 3.9
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+      - name: compile against the floor
+        run: |
+          set -e
+          python3 --version
+          python3 -m compileall -q bin tests
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - name: unit tests
         # No -t .: tests/ has no __init__.py, and since 3.11 discover with an
         # explicit top_level_dir refuses a package-less start dir outright

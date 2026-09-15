@@ -774,6 +774,106 @@ def _host_can_run(target):
     return False
 
 
+def native_subdir():
+    """The conda subdir this machine runs natively, or "" when unmapped.
+
+    Derived by inverting _SUBDIR_TARGET at call time rather than caching a
+    module-level inverse: that map is defined further down this file, and a
+    module-level inverse here would be a NameError at import. common.sh's
+    host_conda_subdir answers the same question for the shell half of the
+    suite; the two must agree, and tests/test_rosetta_fallback.py asserts it.
+    """
+    return {v: k for k, v in _SUBDIR_TARGET.items()}.get(_host_target(), "")
+
+
+def env_python_unrunnable(env_py, tool=""):
+    """(label, fix, why) when this host cannot exec the env's OWN interpreter,
+    else None.
+
+    None also covers the osx-64-under-Rosetta case while Rosetta 2 is present:
+    that is the suite's own default on Apple Silicon (install-local.sh's
+    ensure_conda_subdir rule 2), and it runs.
+
+    WHY THIS GATE EXISTS. check_modules answers "which imports failed" by
+    running the env's python, and when that process cannot start it says so the
+    only way its contract allows — every module absent (see its docstring: we
+    genuinely cannot tell which import failed). run_checks then rendered that as
+    "python modules missing: fastapi, uvicorn, pydantic, ..." and offered a pip
+    install, which re-execs the same unrunnable interpreter and fails
+    identically. Live case (2026-09-15, macOS 27 on an M3 Max): the macOS
+    upgrade removed Rosetta 2, every osx-64 env in the suite stopped executing,
+    and five dashboard cards read "Needs setup before it can run" while listing
+    packages that were installed and correct. Not one printed remedy could work,
+    and the one fact that explained all five — "bad CPU type in executable" -
+    was discarded here.
+
+    This is the rule the timeout sentinel already encodes, applied to the other
+    way the probe can fail to run: a fact about the HOST is not a fact about the
+    packages, and a check that could not run must not grade what it never
+    probed.
+
+    Read from the interpreter's header rather than by exec'ing it: the answer is
+    wanted precisely when exec is what fails, and the header is the thing that
+    decides the outcome.
+    """
+    try:
+        real = os.path.realpath(env_py)
+    except OSError:
+        return None
+    target = _binary_target(real)
+    # None = a script, or nothing recognisable: portable, or not ours to judge.
+    if target is None or _host_can_run(target):
+        return None
+    bin_os, bin_arch = target
+    host_os, host_arch = _host_target()
+    pretty = {"linux": "Linux", "macos": "macOS"}
+    label = (f"this env cannot run on this machine: its python is "
+             f"{pretty.get(bin_os, bin_os)} {bin_arch} and this host is "
+             f"{pretty.get(host_os, host_os)} {host_arch}")
+    native = native_subdir()
+    rebuild = (f"bin/bdtools rebuild-native {tool}" if tool
+               else "bin/bdtools rebuild-native <tool>")
+
+    # Apple Silicon that lost Rosetta is the case with TWO real answers, and the
+    # order matters. Reinstalling Rosetta is the smaller change and is offered
+    # first while it still exists; the native rebuild is what survives Apple
+    # withdrawing it, which is why it is named here rather than left for the
+    # user to discover when the stopgap stops working.
+    if (host_os, host_arch) == ("macos", "arm64") and bin_arch == "x86_64":
+        why = ("cause: this env was built osx-64 to run under Rosetta 2 (the "
+               "suite's default on Apple Silicon — much of the bioinformatics "
+               "closure had no native arm64 build when it was created), and "
+               "Rosetta 2 is not installed on this machine. Nothing is missing "
+               "from the env and no package is broken: not one binary in it can "
+               "start, so the module probe could not run and NOTHING here was "
+               "graded. Rosetta is also being withdrawn by Apple, so the "
+               "durable answer is a native arm64 env — run `bin/bdtools "
+               "rebuild-native --report` to see which tools can take one today.")
+        fix = (f"softwareupdate --install-rosetta --agree-to-license   # or, to "
+               f"stop depending on Rosetta: {rebuild}")
+        return label, fix, why
+
+    # Every other mismatch has one answer: this env belongs to another machine.
+    # aarch64 Linux is called out because no translation layer exists there at
+    # all, so "install the translator" is not even a wrong answer — it is not an
+    # answer, and saying so stops the search.
+    if (host_os, host_arch) == ("linux", "arm64") and bin_arch == "x86_64":
+        why = ("cause: this env is x86_64 and this is ARM (aarch64) Linux, "
+               "which has no x86 translation layer — there is nothing to "
+               "install that would make these binaries run. The env has to be "
+               "rebuilt for this machine. Nothing was graded: the module probe "
+               "could not start the interpreter.")
+    else:
+        why = (f"cause: this env was built for {pretty.get(bin_os, bin_os)} "
+               f"{bin_arch} — another machine, or another platform of this one "
+               f"- so no binary in it can start here. An env's architecture is "
+               f"fixed when it is created; it is rebuilt, never converted. "
+               f"Nothing was graded: the module probe could not start the "
+               f"interpreter.")
+    fix = rebuild if native else f"bin/bdtools install {tool or '<tool>'} --fresh"
+    return label, fix, why
+
+
 def check_binary_format(name, env_bin, extra_dirs=()):
     """Can this host actually exec `name`? Returns (verdict, detail).
 
@@ -2173,6 +2273,24 @@ def run_checks(tool, env_py, scope, tool_dir=None, deep=False):
     env_bin = str(Path(env_py).parent)
     lines.append((OK, "environment present", None))
 
+    # An env whose own interpreter this host cannot exec is the END of the
+    # audit, not one finding among many. Every remaining check here runs
+    # something out of this prefix — the module probe, the loader smoke tests,
+    # the script-interpreter probes — so each would fail for the one reason
+    # already established, and each would report it as its own kind of damage.
+    # That is exactly what shipped: five cards listing installed packages as
+    # "missing" with pip remedies that re-exec the interpreter that cannot
+    # start. Report the one true cause, grade nothing that was never probed,
+    # and return.
+    unrunnable = env_python_unrunnable(env_py, tool)
+    if unrunnable:
+        label, fix, why = unrunnable
+        lines.append((BAD, label, fix))
+        lines.append((SKIP, why, None))
+        issues.append({"label": label, "fix": fix})
+        notes.append(why)
+        return "issues", lines, issues, notes
+
     failures = check_modules(env_py, spec.get("modules", []))
     probe_timed_out = failures is MODULE_PROBE_TIMED_OUT
     if probe_timed_out:
@@ -2300,17 +2418,59 @@ def run_checks(tool, env_py, scope, tool_dir=None, deep=False):
     # ...and for hand-downloaded payloads, that the binaries found above are the
     # right KIND of executable for this host. Only probes that resolve are judged,
     # so this stays quiet on a machine where the payload is simply absent.
-    fmt_bad = []
+    fmt_bad = []                      # (probe, detail, target)
     for probe in spec.get("binary_format_probes", []):
         verdict, detail = check_binary_format(probe, env_bin, found_assets)
         if verdict is False:
-            fmt_bad.append(detail)
+            _p = find_binary(probe, env_bin, found_assets)
+            fmt_bad.append((probe, detail, _binary_target(_p) if _p else None))
     if fmt_bad:
-        for detail in fmt_bad:
-            lines.append((BAD, detail, default_fix))
-        label = "wrong-OS binaries: " + ", ".join(
-            d.split(" ", 1)[0] for d in fmt_bad)
-        issues.append({"label": label, "fix": default_fix})
+        # WRONG OS and WRONG ARCHITECTURE are different faults, and only the
+        # first one the re-download remedy answers.
+        #
+        # This block used to label every failure "wrong-OS binaries" and offer
+        # `bdtools install <tool>`, which re-fetches the payload for this OS.
+        # That is right when a macOS host got the Linux archive. It is wrong for
+        # ksnp_gui on Apple Silicon without Rosetta (live, 2026-09-15): the OS
+        # is correct, the ARCHITECTURE is not, and upstream ships exactly one
+        # "kSNP4.1 Mac package" — x86_64 only. So the card said "wrong-OS" about
+        # macOS binaries on macOS, and offered a download that fetches the same
+        # bytes again. Same defect as the missing-modules misdiagnosis: a
+        # confident label over a remedy that cannot work.
+        host_os, host_arch = _host_target()
+        wrong_os = [b for b in fmt_bad if b[2] and b[2][0] != host_os]
+        wrong_arch = [b for b in fmt_bad if b not in wrong_os]
+        for _probe, detail, _t in fmt_bad:
+            lines.append((BAD, detail, default_fix if wrong_os else None))
+        if wrong_os:
+            # At least one payload is for another OS; re-downloading is the fix
+            # and it also re-fetches anything else that is wrong.
+            label = "wrong-OS binaries: " + ", ".join(b[0] for b in wrong_os)
+            issues.append({"label": label, "fix": default_fix})
+        if wrong_arch and not wrong_os:
+            names = ", ".join(b[0] for b in wrong_arch)
+            if (host_os, host_arch) == ("macos", "arm64"):
+                label = (f"Intel-only vendored binaries, and Rosetta 2 is not "
+                         f"installed: {names}")
+                fix = ("softwareupdate --install-rosetta --agree-to-license   "
+                       "# upstream ships this payload x86_64-only; no rebuild "
+                       "or re-download changes that")
+                why = (f"cause: these are hand-downloaded binaries, not conda "
+                       f"packages, and the only macOS build upstream publishes "
+                       f"is x86_64. Re-running the install fetches the same "
+                       f"bytes, and a native arm64 env does not help — this "
+                       f"tool needs the translation layer until upstream ships "
+                       f"an arm64 build.")
+            else:
+                label = f"wrong-architecture vendored binaries: {names}"
+                fix = default_fix
+                why = (f"cause: the payload is for another CPU architecture "
+                       f"than this {host_os} {host_arch} host, and there is no "
+                       f"translation layer here. Check whether upstream "
+                       f"publishes a build for this architecture at all.")
+            issues.append({"label": label, "fix": fix})
+            lines.append((SKIP, why, None))
+            notes.append(why)
     elif spec.get("binary_format_probes") and not real_missing:
         lines.append((OK, f"vendored binaries match this host "
                           f"({platform.system()}/{platform.machine()})", None))

@@ -65,6 +65,8 @@ fix_class() {
     *"conda install"*)          echo manual;;   # a conda transaction on a live env: small, but it CHANGES analysis software — propose it, never unattended. Checked before the pip case because a combined remedy (missing web layer AND a missing analysis package) contains both.
     *"conda update"*)           echo manual;;   # doctor's remedy for an installed-but-broken import (allel -> dask -> numpy): it MOVES a package version, so it is proposed like every other env change. Stated rather than left to the default so reordering these cases cannot silently automate it.
     *" -m pip install "*)       echo auto;;     # adds the web layer into the EXISTING env — no conda re-solve, no analysis version change
+    *"softwareupdate"*)         echo manual;;   # installs Rosetta 2: a macOS system change that accepts a licence. It reaches the plan as doctor's first remedy for an env this host cannot execute, and the default already classes it manual — stated anyway, because "unattended" must never come to include a system-wide install through a later reordering.
+    *"rebuild-native"*)         echo manual;;   # REPLACES a tool's env (for another platform, at that). Same rule as `bdtools install`, and it is the second half of that same Rosetta remedy.
     *"update-packages"*)        echo manual;;   # changes the analysis version
     *"bdtools update"*)         echo manual;;   # rebuilds the env
     *"bdtools install"*)        echo manual;;   # builds/rebuilds the env

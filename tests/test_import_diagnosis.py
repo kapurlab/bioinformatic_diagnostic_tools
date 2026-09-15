@@ -784,7 +784,17 @@ class ScriptInterpreterTests(unittest.TestCase):
         self._pkg(legacy, "perl", "osx-arm64")
         self._binary(legacy, "perl", self.X86)
         from unittest import mock
-        with mock.patch.object(CHECK, "check_modules", return_value={}):
+        # Host pinned to the platform this osx-64 fixture env is NATIVE on, for
+        # the same reason the two tests above pin theirs: the verdict must not
+        # depend on which CI runner executes it. Unpinned, the env's own python
+        # (x86_64 Mach-O) is unrunnable on an arm64-without-Rosetta Mac and on
+        # every Linux runner, and env_python_unrunnable then — correctly — ends
+        # the audit before any script interpreter is examined. That check is not
+        # this test's subject: a borrowed interpreter is only worth reporting in
+        # an env that can run at all, so give it one.
+        with mock.patch.object(CHECK, "_host_target",
+                               return_value=("macos", "x86_64")), \
+             mock.patch.object(CHECK, "check_modules", return_value={}):
             with mock.patch.object(
                     CHECK, "resolve_asset_dirs",
                     return_value=([str(legacy / "bin")], [])):

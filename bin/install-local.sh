@@ -1020,28 +1020,77 @@ ensure_conda_subdir() {
     fi
     # An env from another machine/arch cannot run here at all. Say so now, at
     # install time, instead of leaving "Bad CPU type"/missing-symbol errors to
-    # surface mid-analysis. osx-64 on Apple Silicon is the one expected mismatch
-    # (rule 2 — Rosetta runs it).
+    # surface mid-analysis.
+    #
+    # osx-64 on Apple Silicon is the one mismatch that may be fine — rule 2
+    # builds it on purpose and Rosetta 2 runs it. "May be": that exemption used
+    # to be unconditional, which made this check blind to the exact state it
+    # exists to catch. When Rosetta is absent (macOS 27 ships without it), an
+    # osx-64 env is as unrunnable as one from another machine, and an update
+    # would solve, download and link a few hundred osx-64 packages into an env
+    # that still cannot start — then fail in whatever post-install step first
+    # runs the env's python. Ask whether this host can actually execute it.
     host="$(host_conda_subdir)"
-    if [[ -n "${host}" && "${existing}" != "${host}" ]] \
-       && ! [[ "${host}" == "osx-arm64" && "${existing}" == "osx-64" ]]; then
-      warn "${envdir} was built for ${existing}, but this machine is ${host} — that env cannot run here."
-      info "  Rebuild it for this machine:  bin/bdtools install ${TOOL} --fresh"
+    if [[ -n "${host}" && "${existing}" != "${host}" ]]; then
+      if [[ "${host}" == "osx-arm64" && "${existing}" == "osx-64" ]] \
+         && /usr/bin/arch -x86_64 /usr/bin/true >/dev/null 2>&1; then
+        :                        # deliberate, and Rosetta is here to run it
+      elif [[ "${host}" == "osx-arm64" && "${existing}" == "osx-64" ]]; then
+        warn "${envdir} is osx-64 and Rosetta 2 is NOT installed — nothing in that env can run on this machine."
+        info "  This build will still solve and link osx-64 packages into it, and the"
+        info "  result will not start. Stop and pick one of these first:"
+        info "      softwareupdate --install-rosetta --agree-to-license   # keep the osx-64 env"
+        info "      bin/bdtools rebuild-native ${TOOL} --apply            # move it to osx-arm64"
+        info "  Which tools can move:  bin/bdtools rebuild-native --report"
+      else
+        warn "${envdir} was built for ${existing}, but this machine is ${host} — that env cannot run here."
+        info "  Rebuild it for this machine:  bin/bdtools rebuild-native ${TOOL} --apply"
+        info "  (or, to keep its platform:    bin/bdtools install ${TOOL} --fresh)"
+      fi
     fi
     return 0
   fi
   [[ "$(uname -s)" == "Darwin" && "$(uname -m)" == "arm64" ]] || return 0
   [[ -n "${CONDA_SUBDIR:-}" ]] && { info "CONDA_SUBDIR preset to ${CONDA_SUBDIR} — honoring it."; return 0; }
   [[ "${BDTOOLS_NATIVE_ARM:-0}" == "1" ]] && {
-    warn "BDTOOLS_NATIVE_ARM=1 — attempting a native osx-arm64 env; bioconda lacks arm64 builds for the assembler/blat toolchain, so expect a solve failure."
+    export CONDA_SUBDIR=osx-arm64
+    ok "BDTOOLS_NATIVE_ARM=1 — building a native osx-arm64 env (no Rosetta)."
+    info "  Most of the suite solves natively now; a tool whose closure still has"
+    info "  no arm64 build (irma -> blat, 2026-09) will fail the solve and name it."
+    info "  Check before building:  bin/bdtools rebuild-native --report"
     return 0; }
   if ! /usr/bin/arch -x86_64 /usr/bin/true >/dev/null 2>&1; then
-    die "Apple Silicon detected, but Rosetta 2 is not installed. These tools' bioinformatics dependencies have no native arm64 build, so the conda env must be x86-64 under Rosetta. Install it once with:
-    softwareupdate --install-rosetta --agree-to-license
-then re-run this install."
+    # Rosetta absent is no longer fatal. It used to be: this branch died with
+    # "install Rosetta", on the premise that the bioinformatics closure had no
+    # native arm64 build at all. That premise has expired. Measured 2026-09-15
+    # with `bdtools rebuild-native --report` on macOS 27 / M3: vsnp_gui,
+    # amr_plus_gui and kraken_id_parse_gui all solve for osx-arm64 — the last
+    # of those pulling the whole spades/blast/bwa/freebayes/vcflib/picard/krona
+    # toolchain natively — and genoflu_gui and ksnp_gui were native already.
+    # What still cannot move is named by its blocking package, not guessed:
+    # irma_gui (blat), mlst_gui (libxcrypt1, perl, spades), ncbi_submit_gui
+    # (table2asn), mhc_gui (nanoq).
+    #
+    # Dying here sent every Mac that lost Rosetta to a dead end, including the
+    # tools that could have been built natively on the spot — which is what a
+    # macOS 27 upgrade did to a working install that same day.
+    #
+    # So: build native, say so, and let the solver speak for the holdouts —
+    # a failed solve names the package with no arm64 build, which is the honest
+    # answer and stays correct as bioconda publishes more of them.
+    export CONDA_SUBDIR=osx-arm64
+    warn "Apple Silicon without Rosetta 2 — building a NATIVE osx-arm64 env instead."
+    info "  Rosetta 2 is not installed (macOS 27 ships without it, and Apple is"
+    info "  winding it down), so the suite's usual osx-64 env cannot run here."
+    info "  Most tools build natively. If this solve fails, it will name the"
+    info "  dependency that has no arm64 build; that tool needs Rosetta:"
+    info "      softwareupdate --install-rosetta --agree-to-license"
+    info "  See which tools can go native on this machine:"
+    info "      bin/bdtools rebuild-native --report"
+    return 0
   fi
   export CONDA_SUBDIR=osx-64
-  ok "Apple Silicon: building the conda env as osx-64 under Rosetta 2 (native arm64 bioconda builds are incomplete). Override with BDTOOLS_NATIVE_ARM=1."
+  ok "Apple Silicon: building the conda env as osx-64 under Rosetta 2 (kept as the default because it is what this suite's Mac deployments are built and validated on). Build native instead with BDTOOLS_NATIVE_ARM=1; see which tools can:  bin/bdtools rebuild-native --report"
 }
 
 # vsnp_gui is special: no environment.yml / deploy/install.sh. Its env is the

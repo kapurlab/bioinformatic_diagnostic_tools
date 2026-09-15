@@ -34,6 +34,12 @@
 #   bdtools fix     [tool|all]          run the repairs doctor recommends
 #                   [--apply]           (preview by default; data fetches only —
 #                                        env rebuilds are proposed, never run)
+#   bdtools rebuild-native [tool ...]   move envs off a translation layer
+#                   [--apply]           (Rosetta) onto this machine's native
+#                                       platform, where their dependencies have
+#                                       native builds. Reports by default, one
+#                                       line per tool, naming what blocks the
+#                                       rest.
 #   bdtools diagnose [tool ...]         dump EVERYTHING about how a tool
 #                                       resolves and runs, into one file to send
 #   bdtools lint    [tool ...]          (maintainer) flag dependency drift in repos
@@ -917,6 +923,8 @@ cmd_check_paths() { _need_python; "${PYBIN}" "${KT_BIN_DIR}/lib/config_hygiene.p
 
 cmd_fix() { "${KT_BIN_DIR}/fix.sh" "$@"; }
 
+cmd_rebuild_native() { "${KT_BIN_DIR}/rebuild-native.sh" "$@"; }
+
 cmd_doctor() { "${KT_BIN_DIR}/doctor.sh" "$@"; }
 
 cmd_diagnose() { "${KT_BIN_DIR}/diagnose.sh" "$@"; }
@@ -957,6 +965,7 @@ main() {
     doctor)             cmd_doctor "$@";;
     diagnose)           cmd_diagnose "$@";;
     fix)                cmd_fix "$@";;
+    rebuild-native)     cmd_rebuild_native "$@";;
     lint)               cmd_lint "$@";;
     test)               cmd_test "$@";;
     -h|--help|help)     usage;;

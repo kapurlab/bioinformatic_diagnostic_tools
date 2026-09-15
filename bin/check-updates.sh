@@ -165,8 +165,17 @@ apply_one() {
   # the force checkout below. Server deployments are pinned and validated by
   # install-server.sh instead.
   if [[ "${dir}" != "${BDTOOLS_HOME}/checkouts/${name}" ]]; then
+    # Say WHY this path is the one being refused. Without it the message names
+    # a directory and leaves the user to work out what made bdtools look there
+    # — and the sibling-checkout rule in particular is invisible until it
+    # bites. tool_dir_origin reads tool_dir's own conditions, in order.
+    _why="$(tool_dir_origin "${name}" || true)"
     die "refusing to update external checkout: ${dir}
-       'bdtools update' force-refreshes managed personal checkouts only.
+       ${_why:+Why bdtools resolved that path: ${_why}.
+       }'bdtools update' force-refreshes managed personal checkouts only, which
+       for this tool means:  ${BDTOOLS_HOME}/checkouts/${name}
+       To update the managed checkout instead, remove or move the tree above
+       (or unset what points at it) so it stops being this tool's directory.
        For a server deployment, reconcile the source with the tools.yml pin,
        review any site/licensing commits, then run:
        bin/bdtools install --server ${name} --site-conf <path> --dry-run"

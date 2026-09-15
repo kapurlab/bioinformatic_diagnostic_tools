@@ -65,6 +65,16 @@ class ToolDirResolution(unittest.TestCase):
         self.home = base / "bdhome"
         (self.home / "checkouts").mkdir(parents=True)
 
+    def sh_origin(self, tool, **env):
+        clean = {k: v for k, v in os.environ.items() if not k.startswith("BDTOOLS_")}
+        clean["BDTOOLS_HOME"] = str(self.home)
+        clean.update(env)
+        script = (f'source "{self.umbrella}/bin/lib/common.sh"; tool_dir_origin {tool}')
+        r = subprocess.run(["bash", "-c", script], capture_output=True, text=True,
+                           env=clean, cwd=str(self.umbrella))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return r.stdout.strip()
+
     def py_resolve(self, tool, **env):
         clean = {k: v for k, v in os.environ.items() if not k.startswith("BDTOOLS_")}
         clean["BDTOOLS_HOME"] = str(self.home)
@@ -208,6 +218,93 @@ class ToolDirResolution(unittest.TestCase):
             with self.subTest(tool=tool, env=sorted(env)):
                 self.assertEqual(self.py_resolve(tool, **env), self.sh_resolve(tool, **env))
 
+
+
+class ToolDirOriginTests(unittest.TestCase):
+    """The refusal has to say WHY that directory is the tool's.
+
+    "refusing to update external checkout: <path>" names what was refused and
+    not what made bdtools look there. The sibling rule is the one that hurts:
+    cloning a tool repo next to the umbrella — the obvious place to put it —
+    silently captures every command for that tool, and nothing connects the
+    refusal to the clone. Live 2026-09-15: three tool repos cloned into the
+    umbrella's parent for a one-off fix, and `update` then refused all three.
+
+    tool_dir_origin must read tool_dir's own conditions in tool_dir's own
+    order. An explanation that disagrees with the decision is worse than none,
+    because it sends people to look in the wrong place — so every case here
+    asserts the reason AGAINST the path actually resolved.
+    """
+
+    def setUp(self):
+        ToolDirResolution.setUp(self)
+
+    sh_origin = ToolDirResolution.sh_origin
+    sh_resolve = ToolDirResolution.sh_resolve
+
+    def test_the_managed_checkout_needs_no_explanation(self):
+        # Nothing unusual happened; an empty reason keeps the message quiet in
+        # the ordinary case rather than explaining the default to everyone.
+        self.assertEqual(self.sh_origin("genoflu_gui"), "")
+
+    def test_a_sibling_clone_is_named_as_the_cause(self):
+        why = self.sh_origin("irma_gui")
+        self.assertIn("BESIDE", why)
+        self.assertIn(str(self.tools), why,
+                      "the directory to remove has to appear in the reason")
+        self.assertIn("developer checkout", why)
+
+    def test_an_explicit_toolsdir_is_named_as_the_cause(self):
+        other = Path(self.tmp.name) / "explicit"
+        (other / "irma_gui").mkdir(parents=True)
+        why = self.sh_origin("irma_gui", BDTOOLS_TOOLSDIR=str(other))
+        self.assertIn("BDTOOLS_TOOLSDIR", why)
+        self.assertIn(str(other), why)
+
+    def test_a_configured_tools_root_is_named_as_the_cause(self):
+        conf = self.umbrella / "sites/site.conf"
+        conf.parent.mkdir(parents=True, exist_ok=True)
+        root = Path(self.tmp.name) / "srv/tools"
+        (root / "genoflu_gui/.git").mkdir(parents=True)
+        conf.write_text(f'TOOLS_ROOT="{root}"\n')
+        why = self.sh_origin("genoflu_gui")
+        self.assertIn("TOOLS_ROOT", why)
+        self.assertIn(str(root), why)
+
+    def test_the_reason_always_matches_the_path_that_was_chosen(self):
+        # The property that matters: whatever tool_dir picked, the reason names
+        # the rule that picked it. Checked across all four branches at once.
+        other = Path(self.tmp.name) / "explicit"
+        (other / "irma_gui").mkdir(parents=True)
+        cases = [
+            ("genoflu_gui", {}, str(self.home / "checkouts/genoflu_gui"), ""),
+            ("irma_gui", {}, str(self.shared_tool), "BESIDE"),
+            ("irma_gui", {"BDTOOLS_TOOLSDIR": str(other)},
+             str(other / "irma_gui"), "BDTOOLS_TOOLSDIR"),
+        ]
+        for tool, env, expect_dir, expect_in_why in cases:
+            with self.subTest(tool=tool, env=env):
+                self.assertEqual(self.sh_resolve(tool, **env), expect_dir)
+                why = self.sh_origin(tool, **env)
+                if expect_in_why:
+                    self.assertIn(expect_in_why, why)
+                else:
+                    self.assertEqual(why, "")
+
+
+class RefusalMessageTests(unittest.TestCase):
+    """check-updates.sh must actually USE the reason, and stay runnable."""
+
+    def test_the_refusal_quotes_the_reason_and_the_managed_path(self):
+        src = (ROOT / "bin/check-updates.sh").read_text()
+        self.assertIn("tool_dir_origin", src)
+        self.assertIn("Why bdtools resolved that path", src)
+        self.assertIn("${BDTOOLS_HOME}/checkouts/${name}", src)
+
+    def test_the_script_still_parses(self):
+        r = subprocess.run(["bash", "-n", str(ROOT / "bin/check-updates.sh")],
+                           capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
 
 if __name__ == "__main__":
     unittest.main()

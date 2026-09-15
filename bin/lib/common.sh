@@ -295,6 +295,36 @@ tool_dir() {
   fi
 }
 
+# WHY tool_dir chose what it chose, as a sentence — or empty for the ordinary
+# managed checkout. Deliberately a sibling of tool_dir and reading the SAME
+# conditions in the SAME order: an explanation that can disagree with the
+# decision is worse than none, because it sends people to look in the wrong
+# place.
+#
+# The message this feeds exists because "refusing to update external checkout:
+# <path>" says what was refused and not why that path became external, and the
+# sibling rule below is invisible until it bites: cloning a tool repo NEXT TO
+# the umbrella checkout silently makes it that tool's directory for every
+# bdtools command (live 2026-09-15 — three tool repos cloned into the umbrella's
+# parent for a one-off fix, and `update` then refused all three with nothing to
+# connect the refusal to the clones).
+tool_dir_origin() {   # NAME -> reason, or "" when this is the managed checkout
+  local name="$1"
+  local site_root; site_root="$(dirname "${REPO_DIR}")"
+  local conf_root; conf_root="$(site_tools_root)"
+  if [[ -n "${BDTOOLS_TOOLSDIR:-}" && -d "${BDTOOLS_TOOLSDIR}/${name}" ]]; then
+    printf 'BDTOOLS_TOOLSDIR is set to %s, and %s/%s exists' \
+           "${BDTOOLS_TOOLSDIR}" "${BDTOOLS_TOOLSDIR}" "${name}"
+  elif [[ -n "${conf_root}" && -d "${conf_root}/${name}/.git" ]]; then
+    printf "this site's site.conf sets TOOLS_ROOT=%s, and %s/%s is a git checkout" \
+           "${conf_root}" "${conf_root}" "${name}"
+  elif [[ -d "${site_root}/${name}/.git" ]]; then
+    printf 'a clone of %s sits BESIDE this umbrella checkout, in %s — a tool repo next to the umbrella is treated as a developer checkout and wins over the managed one' \
+           "${name}" "${site_root}"
+  fi
+  return 0
+}
+
 # Install this checkout's local ignore rules into .git/info/exclude.
 #
 # A conda env and a node_modules tree are built INSIDE a checkout, and neither

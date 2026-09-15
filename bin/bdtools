@@ -846,7 +846,12 @@ cmd_dashboard() {
   exit ${rc}
 }
 
-cmd_check_updates() { "${KT_BIN_DIR}/check-updates.sh" "${1:-all}"; }
+# "$@", not "${1:-all}": forwarding only the first argument meant a second tool
+# name was discarded HERE, before check-updates.sh could object to it — so
+# `bdtools check-updates a b` silently reported on `a` alone. The script defaults
+# to "all" on its own when given nothing, and now rejects a list rather than
+# quietly honouring the first entry.
+cmd_check_updates() { "${KT_BIN_DIR}/check-updates.sh" "$@"; }
 
 cmd_pull() { "${KT_BIN_DIR}/pull.sh" "$@"; }
 

@@ -51,6 +51,26 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 TARGET="${ARGS[0]:-all}"
+# One target, and say so rather than dropping the rest. This script is built
+# around a single TARGET ("all" fans out internally), so a second name was
+# collected into ARGS and silently ignored — `bdtools update irma_gui
+# genoflu_gui` updated irma_gui and left the user believing both had been
+# retried. Worse, the failure summary below PRINTED that exact two-tool form as
+# the retry command (2026-09-15), so the suite itself handed out an instruction
+# it would not carry out.
+if [[ ${#ARGS[@]} -gt 1 ]]; then
+  # The verb this was invoked as, so the suggestion is the command the user
+  # actually ran. (An earlier version built these lines with a single printf
+  # whose format had two specifiers; printf REUSES the format until its
+  # arguments run out, so the verb was consumed as a tool name on the second
+  # pass and it printed "bin/bdtools genoflu_gui". A loop cannot do that.)
+  _verb="check-updates"; [[ ${APPLY} -eq 1 ]] && _verb="update"
+  _lines=""
+  for _a in "${ARGS[@]}"; do _lines+="           bin/bdtools ${_verb} ${_a}"$'\n'; done
+  die "one tool at a time (or 'all'): got ${ARGS[*]}
+       Run them separately:
+${_lines}       or all of them:  bin/bdtools ${_verb} all"
+fi
 
 latest_tag() {  # repo-url -> highest version-sorted RELEASE tag, empty (no tags),
                 # or "?" when the remote cannot be reached (never aborts)
@@ -289,7 +309,10 @@ if [[ ${APPLY} -eq 1 ]]; then
     warn "FAILED to update: ${FAILED[*]}"
     info "  The real error is in the log above. These are recorded as unfinished, so"
     info "  re-running picks them up (no --force needed):"
-    info "      bin/bdtools update ${FAILED[*]}"
+    # One line per tool: `update` takes a single target, so listing several on
+    # one line printed a command that would have updated only the first.
+    # `doctor` genuinely accepts a list, so that one stays as it is.
+    for _f in "${FAILED[@]}"; do info "      bin/bdtools update ${_f}"; done
     info "  To see what an env is missing:  bin/bdtools doctor ${FAILED[*]}"
     exit 1
   fi

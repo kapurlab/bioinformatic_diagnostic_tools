@@ -2030,6 +2030,60 @@ class EnvFromSpecTests(unittest.TestCase):
         self.assertIn("[dry-run]", r.stdout); self.assertIn("env create -p", r.stdout)
         self.assertEqual(self.calls(), [])
 
+    # ---- platform pinning -------------------------------------------------
+    # This path had NO subdir pin until 2026-09, so `conda env update` on an
+    # existing prefix solved for the HOST. On Apple Silicon that updated an
+    # osx-64 env (the suite's own default there) with an osx-arm64 solve and
+    # mixed two architectures into one prefix — the failure env_conda_subdir's
+    # docstring describes, reachable through every server/OOD install because
+    # only install-local.sh had ever been given the rule.
+
+    def _meta(self, subdir, pkg="python"):
+        import json
+        d = self.tool / "env/conda-meta"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / f"{pkg}-1.0-h0_0.json").write_text(json.dumps(
+            {"name": pkg, "version": "1.0", "subdir": subdir}))
+
+    def test_an_update_solves_for_the_envs_platform_not_the_hosts(self):
+        write(self.tool / "conda_setup/environment.yml", "name: x\ndependencies: [python]\n")
+        write(self.tool / "env/bin/python", "#!/bin/sh\nexit 0\n", mode=0o755)
+        self._meta("osx-64")
+        r = sh(f'env_from_spec "{self.tool}"; echo "SUBDIR=${{CONDA_SUBDIR:-unset}}"',
+               env=self.env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("SUBDIR=osx-64", r.stdout,
+                      "the solver must be pinned to what the env was built for")
+        self.assertIn("pinned from the existing env", r.stdout)
+
+    def test_a_noarch_only_env_is_not_pinned_to_anything(self):
+        # Nothing recorded means nothing to honour — inventing a subdir here
+        # would be the same guess this pin exists to remove.
+        write(self.tool / "conda_setup/environment.yml", "name: x\ndependencies: [python]\n")
+        write(self.tool / "env/bin/python", "#!/bin/sh\nexit 0\n", mode=0o755)
+        self._meta("noarch", pkg="pyyaml")
+        r = sh(f'env_from_spec "{self.tool}"; echo "SUBDIR=${{CONDA_SUBDIR:-unset}}"',
+               env=self.env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("SUBDIR=unset", r.stdout)
+
+    def test_a_fresh_env_does_not_invent_a_platform(self):
+        # The policy for a NEW env on Apple Silicon lives in install-local.sh's
+        # ensure_conda_subdir. Restating it here would give the suite two
+        # answers that can drift, so this path must not set one.
+        write(self.tool / "conda_setup/environment.yml", "name: x\ndependencies: [python]\n")
+        r = sh(f'env_from_spec "{self.tool}"; echo "SUBDIR=${{CONDA_SUBDIR:-unset}}"',
+               env=self.env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("SUBDIR=unset", r.stdout)
+
+    def test_an_explicit_subdir_is_honoured_on_a_fresh_env(self):
+        write(self.tool / "conda_setup/environment.yml", "name: x\ndependencies: [python]\n")
+        r = sh(f'env_from_spec "{self.tool}"', env={**self.env, "CONDA_SUBDIR": "linux-64"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("no CONDA_SUBDIR set", r.stderr,
+                         "a caller that already decided must not be second-guessed")
+
 
 if __name__ == "__main__":
     unittest.main()

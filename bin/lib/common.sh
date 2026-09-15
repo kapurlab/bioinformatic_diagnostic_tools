@@ -766,6 +766,28 @@ restore_env_from_fresh() {
 # Dry-run aware via `run`; hooks hardened around the transaction for the same
 # reason install-server.sh hardens them around deploy/install.sh.
 # Returns 0 when the env is built or refreshed, 2 when there was no spec.
+# arch_prefix ENVDIR — the /usr/bin/arch pin that launches a binary from this
+# env on the slice the env was BUILT for, or empty when there is nothing to
+# assert. Read from conda-meta, never from `uname -m`: inside a translated
+# process uname -m reports x86_64, which is false exactly when the pin is most
+# needed (the 2026-08-22 dashboard failure).
+#
+# bin/install-local.sh, bin/bdtools, bin/test.sh and bin/setup-databases.sh each
+# carry their own copy, predating this one; tests/test_platform_guards.py holds
+# all of them to the same mapping. This is the copy the shared library itself
+# uses, so a new call site in common.sh does not have to add a sixth.
+arch_prefix() {
+  local envdir="${1:-}" sub
+  [[ "$(uname -s)" == "Darwin" ]] || return 0
+  [[ -x /usr/bin/arch ]] || return 0
+  sub="$(env_conda_subdir "${envdir}" 2>/dev/null || true)"
+  case "${sub}" in
+    osx-arm64) printf '%s' "/usr/bin/arch -arm64";;
+    osx-64)    printf '%s' "/usr/bin/arch -x86_64";;
+  esac
+  return 0
+}
+
 env_from_spec() {
   local dir="$1" spec conda
   spec="${dir}/conda_setup/environment.yml"
@@ -776,16 +798,51 @@ env_from_spec() {
   conda="$(detect_conda)" || die "conda/mamba not found — cannot build $(basename "${dir}")/env from ${spec}"
   harden_conda_hooks "${dir}/env"
   if [[ -x "${dir}/env/bin/python" ]]; then
+    # Solve for the platform this env was BUILT for — the rule install-local.sh
+    # states as ensure_conda_subdir rule 1, which this path never went through.
+    # `conda env update` on an existing prefix with no CONDA_SUBDIR solves for
+    # the HOST, so on Apple Silicon an osx-64 env (the suite's own default
+    # there) was updated with an osx-arm64 solve and ended up with packages from
+    # two architectures in one prefix — the precise failure env_conda_subdir's
+    # docstring describes, reachable through every server/OOD install because
+    # only the local installer was ever fixed. An env's architecture is fixed at
+    # creation; an update must never move it.
+    local _sub; _sub="$(env_conda_subdir "${dir}/env")"
+    if [[ -n "${_sub}" ]]; then
+      export CONDA_SUBDIR="${_sub}"
+      info "  platform: ${_sub} (pinned from the existing env, not the host)"
+    fi
     log "$(basename "${dir}"): env present — updating it from conda_setup/environment.yml (additive)"
     run "${conda}" env update -p "${dir}/env" -f "${spec}" || die "conda env update failed for ${dir}/env"
   else
+    # A FRESH env has no recorded platform to honour, and the policy for
+    # choosing one on Apple Silicon lives in install-local.sh's
+    # ensure_conda_subdir (osx-64 under Rosetta by default, native without it).
+    # Restating that policy here would give the suite two answers that can
+    # drift, so this path honours an explicit CONDA_SUBDIR and otherwise says
+    # what it is about to do rather than deciding silently.
+    if [[ -z "${CONDA_SUBDIR:-}" && "$(uname -s)" == "Darwin" && "$(uname -m)" == "arm64" ]]; then
+      warn "$(basename "${dir}"): building a fresh env on Apple Silicon with no CONDA_SUBDIR set — conda will solve for the host (osx-arm64)."
+      info "  That is correct for a native install. For the suite's usual osx-64-under-Rosetta"
+      info "  env, export CONDA_SUBDIR=osx-64 before this build, or install with"
+      info "  bin/bdtools install <tool>, which decides it (ensure_conda_subdir)."
+      info "  Which tools can run native here:  bin/bdtools rebuild-native --report"
+    fi
     log "$(basename "${dir}"): creating env from conda_setup/environment.yml (a solve can take several minutes)"
     run "${conda}" env create -p "${dir}/env" -f "${spec}" || die "conda env create failed for ${dir}/env"
   fi
   harden_conda_hooks "${dir}/env"
   if [[ -f "${dir}/backend/requirements.txt" ]]; then
     log "$(basename "${dir}"): pip install backend/requirements.txt"
-    run "${dir}/env/bin/python" -m pip install -r "${dir}/backend/requirements.txt" || die "pip install failed for ${dir}"
+    # Arch-pinned for the same reason generic_build pins its pip step: pip keys
+    # wheel selection — and sdist compilation — off the RUNNING interpreter's
+    # architecture, so a universal env python started from a translated ancestor
+    # quietly fills the env with wrong-arch extension modules. conda-meta stays
+    # clean, so the arch audit cannot see that damage.
+    local _pipp _pipa=()
+    _pipp="$(arch_prefix "${dir}/env")"
+    [[ -n "${_pipp}" ]] && read -ra _pipa <<< "${_pipp}"
+    run ${_pipa[@]+"${_pipa[@]}"} "${dir}/env/bin/python" -m pip install -r "${dir}/backend/requirements.txt" || die "pip install failed for ${dir}"
   fi
   return 0
 }

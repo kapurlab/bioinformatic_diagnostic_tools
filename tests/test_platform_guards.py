@@ -48,6 +48,11 @@ PIN_FUNCS = [
     (ROOT / "bin/test.sh", "arch_prefix"),
     (ROOT / "bin/setup-databases.sh", "arch_prefix"),
     (ROOT / "bin/bdtools", "arch_prefix"),
+    # The shared library's own copy, used by env_from_spec — the server/OOD env
+    # path, which had no arch pin at all until 2026-09. Held to the same mapping
+    # as every other spawn site, for the same reason they are held to each
+    # other's: a pin that disagrees is worse than no pin, because it is trusted.
+    (ROOT / "bin/lib/common.sh", "arch_prefix"),
     (ROOT / "tests/lib/fetch.sh", "_sra_arch_prefix"),
 ]
 

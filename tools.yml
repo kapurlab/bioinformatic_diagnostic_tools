@@ -164,7 +164,7 @@ tools:
 
   - name: irma_gui
     repo: https://github.com/kapurlab/irma_gui.git
-    version: v0.3.19
+    version: v0.3.20
     updates: install
     ood_apps: [irma_gui]
     dev_apps: [irma_gui_dev]

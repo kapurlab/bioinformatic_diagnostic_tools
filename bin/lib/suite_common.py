@@ -498,22 +498,23 @@ def check_bdtools_update():
     }
 
 
-def _pin_only_manifest_drift():
-    """True when tools.yml differs from HEAD ONLY in pin values.
+# What bdtools itself writes into tools.yml after moving something: a tool's
+# `version:` pin (check-updates.sh apply_one -> manifest_set), the suite's own
+# version, and a tool's analysis-package pins (`packages:`, update-packages.sh
+# _bump_pin). Any other changed line in a tools.yml diff is an edit of the user's.
+_MANIFEST_BOOKKEEPING = re.compile(
+    r"^[+-]\s*(?:(?:version|suite_version):\s*\S+|packages:\s*\[[^\]]*\])\s*$"
+)
 
-    `bdtools update <tool>` records the version it moved to by rewriting
-    `version:` in tools.yml (check-updates.sh apply_one -> manifest_set). tools.yml
-    is git-tracked, so updating any tool dirties the umbrella checkout — and the
-    umbrella's own self-update is `git pull --ff-only`, which refuses a dirty tree.
-    The result was a standing deadlock: update your tools and you can no longer
-    update bdtools until you manually `git restore tools.yml`. It recurred on every
-    release, on every platform.
 
-    Those pin lines are *derived* state — `bdtools update` wrote them and can write
-    them again, and the manifest coming from origin is the release of record. So
-    pin-only drift is safe to drop for the pull. Anything else (a comment, a repo
-    URL, a new tool, an edit to another file) still refuses, which is the point of
-    the original check.
+def _manifest_drift():
+    """What separates tools.yml from HEAD: (kind, lines).
+
+    kind is "bookkeeping" when every changed line is one bdtools writes itself
+    (_MANIFEST_BOOKKEEPING), "mode" when the diff is only a file-mode change
+    (a chmod, nothing in the text), "edit" for anything else, and "unreadable"
+    when the diff could not be taken. lines are the real +/- lines of
+    `git diff -- tools.yml`, without the furniture, for the log.
     """
     try:
         diff = subprocess.run(
@@ -521,20 +522,44 @@ def _pin_only_manifest_drift():
             capture_output=True, text=True, check=True, timeout=30,
         ).stdout
     except (OSError, subprocess.SubprocessError):
-        return False
-    if not diff.strip():
-        return False
+        return "unreadable", []
+    raw = diff.splitlines()
     changed = [
-        ln for ln in diff.splitlines()
+        ln for ln in raw
         # Skip diff furniture; keep only real +/- content lines.
         if ln[:1] in "+-" and not ln.startswith(("+++", "---"))
     ]
-    if not changed:
-        return False
-    return all(
-        re.match(r"^[+-]\s*(version|suite_version):\s*\S+\s*$", ln)
-        for ln in changed
-    )
+    if changed:
+        return ("bookkeeping" if all(_MANIFEST_BOOKKEEPING.match(ln) for ln in changed)
+                else "edit"), changed
+    if any(re.match(r"^(old|new) mode \d+$", ln) for ln in raw):
+        return "mode", []
+    return "edit", []
+
+
+def _pin_only_manifest_drift():
+    """True when tools.yml differs from HEAD ONLY in what bdtools writes there.
+
+    `bdtools update <tool>` records the version it moved to by rewriting
+    `version:` in tools.yml (check-updates.sh apply_one -> manifest_set), and
+    `bdtools update-packages <tool>` records the package versions it installed
+    by rewriting that tool's `packages:` line (update-packages.sh _bump_pin).
+    tools.yml is git-tracked, so either dirties the umbrella checkout — and the
+    umbrella's own self-update is `git pull --ff-only`, which refuses a dirty
+    tree. The result was a standing deadlock: update your tools and you can no
+    longer update bdtools until you manually `git restore tools.yml`. It
+    recurred on every release, on every platform — and once more on the Ames
+    HPC (2026-09-25) after a kraken2 package update, because this check then
+    knew only the `version:` lines.
+
+    Those pin lines are *derived* state — bdtools wrote them and can write them
+    again, restoring the file changes nothing that is installed, and the
+    manifest coming from origin is the release of record. So pin-only drift is
+    safe to drop for the pull. Anything else (a comment, a repo URL, a new
+    tool, an `updates:` flip, an edit to another file) still refuses, which is
+    the point of the original check.
+    """
+    return _manifest_drift()[0] == "bookkeeping"
 
 
 def _dirty_paths(porcelain):
@@ -580,10 +605,10 @@ def suite_update_command(log):
     Never merge an update into a locally edited suite checkout. A clean tree makes
     the exact scope of `pull --ff-only` reviewable and reproducible.
 
-    The one exception is tools.yml pin drift that `bdtools update` wrote itself —
-    see _pin_only_manifest_drift. Refusing on that turned "update your tools" into
-    "you can no longer update bdtools", which is not a safety property, just a
-    deadlock.
+    The one exception is tools.yml pin drift that `bdtools update` or
+    `bdtools update-packages` wrote itself — see _pin_only_manifest_drift.
+    Refusing on that turned "update your tools" into "you can no longer update
+    bdtools", which is not a safety property, just a deadlock.
 
     Shared by BOTH dashboards. It lived only in UpdateManager, so the legacy
     stdlib dashboard would happily `git pull --ff-only` over a dirty checkout —
@@ -650,21 +675,46 @@ def suite_update_command(log):
     # Only tools.yml is dirty, and only in pin values -> restore it and carry on.
     blocking_paths = _dirty_paths("\n".join(blocking_lines))
     if blocking_lines and blocking_paths == {"tools.yml"}:
-        if _pin_only_manifest_drift():
+        kind, changed = _manifest_drift()
+        if kind == "bookkeeping":
             log("tools.yml differs from HEAD only in version pins — that is "
-                "`bdtools update`'s own bookkeeping, not an edit of yours.")
+                "`bdtools update` / `update-packages`' own bookkeeping, not an "
+                "edit of yours:")
+            for ln in changed[:20]:
+                log(f"  {ln}")
             log("Restoring it so the pull can proceed; the manifest from origin "
-                "is authoritative, and re-running a tool update re-applies any "
-                "newer tags.")
-            try:
-                subprocess.run(
-                    ["git", "-C", REPO_DIR, "checkout", "--", "tools.yml"],
-                    capture_output=True, text=True, check=True, timeout=30,
-                )
-                blocking_lines = []
-            except (OSError, subprocess.SubprocessError) as exc:
-                log(f"ERROR: could not restore tools.yml: {exc}")
-                return None
+                "is authoritative, nothing installed changes, and re-running a "
+                "tool or package update re-applies any newer version.")
+        elif kind == "mode":
+            log("tools.yml's text matches HEAD; only its file mode differs (a "
+                "chmod). Restoring the mode so the pull can proceed.")
+        else:
+            # Say what is different. The log used to stop at "M tools.yml", and
+            # finding out took a terminal — which on a shared site checkout git
+            # refused as well ("dubious ownership"), so the user could not even
+            # see what was blocking them.
+            log("ERROR: bdtools checkout has local changes; refusing to pull.")
+            if changed:
+                log("tools.yml differs from the committed copy in more than "
+                    "version pins:")
+                for ln in changed[:20]:
+                    log(f"  {ln}")
+            else:
+                log("tools.yml is reported modified, but `git diff` shows no "
+                    "text change (line endings, a filter, or a stale index?).")
+            log("Keep the change by committing it (or ask for it on main), or "
+                "set it aside and run this update again:")
+            log(f"    git -C {REPO_DIR} stash push -m 'tools.yml local edit' -- tools.yml")
+            return None
+        try:
+            subprocess.run(
+                ["git", "-C", REPO_DIR, "checkout", "--", "tools.yml"],
+                capture_output=True, text=True, check=True, timeout=30,
+            )
+            blocking_lines = []
+        except (OSError, subprocess.SubprocessError) as exc:
+            log(f"ERROR: could not restore tools.yml: {exc}")
+            return None
 
     if blocking_lines:
         log("ERROR: bdtools checkout has local changes; refusing to pull.")

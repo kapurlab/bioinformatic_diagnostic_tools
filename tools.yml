@@ -218,7 +218,7 @@ tools:
     # kraken2's suite-wide pin. amr_plus_gui also runs kraken2 from THIS env
     # (BDTOOLS_SIBLING_ENV_KRAKEN_ID_PARSE_GUI) — bumping it moves both tools
     # together.
-    packages: [bioconda::kraken2=2.17.1, bioconda::krakentools=1.2.1]
+    packages: [bioconda::kraken2=2.17.2, bioconda::krakentools=1.2.1]
     # dask is a scikit-allel dependency, not analysis software. Floored because
     # 2023.3.0 cannot import under numpy 2: see the paragraph above. Raise the
     # floor, never pin it exactly — any newer dask is fine.

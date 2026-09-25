@@ -869,6 +869,83 @@ class StateFileTests(unittest.TestCase):
             self.assertIsNone(SC.suite_update_command(lines.append))
         self.assertTrue(any("refusing to pull" in line for line in lines))
 
+    # --- tools.yml drift: what the self-update drops and what it refuses ------
+
+    @staticmethod
+    def _git_double(porcelain, diff):
+        """A subprocess.run stand-in answering the guard's three git calls, and
+        the list of the calls it saw."""
+        calls = []
+
+        def run(args, **_kw):
+            calls.append(list(args))
+            verb = args[3] if list(args[:3]) == ["git", "-C", SC.REPO_DIR] else ""
+            if verb == "status":
+                return SimpleNamespace(stdout=porcelain, returncode=0)
+            if verb == "diff":
+                return SimpleNamespace(stdout=diff, returncode=0)
+            return SimpleNamespace(stdout="", returncode=0)
+        return run, calls
+
+    def _guard(self, porcelain, diff):
+        run, calls = self._git_double(porcelain, diff)
+        lines = []
+        with mock.patch.object(SC.subprocess, "run", side_effect=run):
+            cmd = SC.suite_update_command(lines.append)
+        restored = ["git", "-C", SC.REPO_DIR, "checkout", "--", "tools.yml"] in calls
+        return cmd, lines, restored
+
+    def test_suite_self_update_drops_package_pin_bookkeeping(self):
+        """`bdtools update-packages` rewrites a tool's packages: line, which is
+        bdtools' own note of what it installed — the Ames HPC could not update
+        bdtools after a kraken2 2.17.1 -> 2.17.2 package update because the
+        guard knew only version: lines."""
+        diff = ("diff --git a/tools.yml b/tools.yml\n--- a/tools.yml\n+++ b/tools.yml\n"
+                "@@ -221 +221 @@\n"
+                "-    packages: [bioconda::kraken2=2.17.1, bioconda::krakentools=1.2.1]\n"
+                "+    packages: [bioconda::kraken2=2.17.2, bioconda::krakentools=1.2.1]\n")
+        cmd, lines, restored = self._guard(" M tools.yml\n", diff)
+        self.assertEqual(cmd, ["git", "-C", SC.REPO_DIR, "pull", "--ff-only"])
+        self.assertTrue(restored, "tools.yml is restored before the pull")
+        self.assertTrue(any("kraken2=2.17.2" in ln for ln in lines),
+                        "the dropped line is shown in the log")
+        self.assertFalse(any("refusing to pull" in ln for ln in lines))
+
+    def test_suite_self_update_drops_version_pin_bookkeeping(self):
+        diff = ("diff --git a/tools.yml b/tools.yml\n--- a/tools.yml\n+++ b/tools.yml\n"
+                "@@ -114 +114 @@\n-    version: v0.4.107\n+    version: v0.4.108\n")
+        cmd, lines, restored = self._guard(" M tools.yml\n", diff)
+        self.assertEqual(cmd, ["git", "-C", SC.REPO_DIR, "pull", "--ff-only"])
+        self.assertTrue(restored)
+
+    def test_suite_self_update_restores_a_mode_only_change(self):
+        diff = "diff --git a/tools.yml b/tools.yml\nold mode 100644\nnew mode 100755\n"
+        cmd, lines, restored = self._guard(" M tools.yml\n", diff)
+        self.assertEqual(cmd, ["git", "-C", SC.REPO_DIR, "pull", "--ff-only"])
+        self.assertTrue(restored)
+        self.assertTrue(any("file mode" in ln for ln in lines))
+
+    def test_suite_self_update_refuses_other_manifest_edits_and_shows_them(self):
+        """An updates: flip (or any other edit) still refuses — and the log now
+        shows the lines, plus the stash command that sets them aside, instead of
+        stopping at 'M tools.yml'."""
+        diff = ("diff --git a/tools.yml b/tools.yml\n--- a/tools.yml\n+++ b/tools.yml\n"
+                "@@ -213 +213 @@\n-    updates: report\n+    updates: install\n")
+        cmd, lines, restored = self._guard(" M tools.yml\n", diff)
+        self.assertIsNone(cmd)
+        self.assertFalse(restored, "a real edit is never discarded")
+        self.assertTrue(any("refusing to pull" in ln for ln in lines))
+        self.assertTrue(any("+    updates: install" in ln for ln in lines))
+        self.assertTrue(any("stash push" in ln for ln in lines))
+
+    def test_suite_self_update_refuses_mixed_pin_and_edit(self):
+        diff = ("diff --git a/tools.yml b/tools.yml\n--- a/tools.yml\n+++ b/tools.yml\n"
+                "@@ -114 +114 @@\n-    version: v0.4.107\n+    version: v0.4.108\n"
+                "@@ -120 +120 @@\n-    env: vsnp3\n+    env: vsnp3_site\n")
+        cmd, lines, restored = self._guard(" M tools.yml\n", diff)
+        self.assertIsNone(cmd)
+        self.assertFalse(restored)
+
 
 class HostGuardTests(unittest.TestCase):
     """DNS-rebinding guard: a local dashboard answers only to loopback names.

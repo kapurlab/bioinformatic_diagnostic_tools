@@ -112,6 +112,37 @@ class DashboardSafetyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(results, [("t/mlst_gui/", None)] * 12)
         self.assertEqual(suite.starting, {})
 
+    async def test_proxy_names_a_tool_that_is_not_listening_yet(self):
+        """A launched tool whose server is still importing — the seconds after
+        an update's relaunch — used to surface as a bare "Internal Server
+        Error" from the proxy. It is a wait, and the answer says so."""
+        import httpx
+        suite = self.make_suite()
+        suite.running["vsnp_gui"] = {"port": 12345, "proc": FakeProcess(), "log": None}
+
+        class Refusing:
+            def build_request(self, *args, **kwargs):
+                return object()
+
+            async def send(self, *args, **kwargs):
+                raise httpx.ConnectError("connection refused")
+
+        request = SimpleNamespace(
+            path_params={"tool": "vsnp_gui", "path": ""}, method="GET",
+            headers={"accept": "text/html"}, url=SimpleNamespace(query="view=igv"),
+            stream=lambda: None)
+        previous = APP.SUITE, APP.CLIENT
+        APP.SUITE, APP.CLIENT = suite, Refusing()
+        try:
+            resp = await APP.proxy(request)
+        finally:
+            APP.SUITE, APP.CLIENT = previous
+        self.assertEqual(resp.status_code, 503)
+        self.assertEqual(resp.headers.get("retry-after"), "3")
+        text = resp.body.decode()
+        self.assertIn("vsnp_gui", text)
+        self.assertIn("starting", text)
+
     async def test_active_job_blocks_quiesce_and_resets_gate(self):
         suite = self.make_suite()
         suite.running["mlst_gui"] = {

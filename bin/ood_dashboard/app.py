@@ -924,7 +924,22 @@ async def proxy(request):
 
     upstream = CLIENT.build_request(request.method, url, headers=req_headers,
                                     content=request.stream(), timeout=timeout)
-    resp = await CLIENT.send(upstream, stream=True)
+    try:
+        resp = await CLIENT.send(upstream, stream=True)
+    except httpx.ConnectError:
+        # The process is alive (port_of said so) but nothing is listening yet:
+        # the seconds after a launch or an update's relaunch, when uvicorn is
+        # still importing. This used to escape as a bare "Internal Server
+        # Error", which reads as broken; it is a wait, and says so.
+        return PlainTextResponse(
+            f"{tool} is starting on this node (port {port}) and is not answering yet. "
+            "Reload in a few seconds.",
+            status_code=503, headers={"Retry-After": "3"})
+    except httpx.TimeoutException as exc:
+        return PlainTextResponse(
+            f"{tool} did not answer in time ({type(exc).__name__}). "
+            "It may be busy; reload to try again.",
+            status_code=504)
 
     prefix = f"/t/{tool}"
     out_headers = {}

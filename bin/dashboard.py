@@ -1581,11 +1581,12 @@ async function shutdownDash(){
   if(!confirm(
     "Shut the dashboard completely down?\\n\\n"+
     "This stops every idle tool server AND the dashboard itself — the "+
-    "“./bdtools dashboard” command in your terminal will exit. Use this when "+
+    "“bin/bdtools dashboard” command in your terminal will exit. Use this when "+
     "you are done working. If an analysis is running, shutdown is safely blocked "+
     "until it finishes or you stop it in that tool.\\n\\n"+
-    "A web page cannot start it back up, so to reopen it you'll go to a terminal and run:\\n"+
-    "    ./bdtools dashboard")) return;
+    "A web page cannot start it back up, so to reopen it you'll go to a terminal, open the "+
+    "bioinformatic_diagnostic_tools folder, and run:\\n"+
+    "    bin/bdtools dashboard")) return;
   try{
     const r=await controlFetch('./api/shutdown',{method:'POST'});
     if(!r.ok){
@@ -1596,7 +1597,8 @@ async function shutdownDash(){
   }catch(e){ alert(String(e)); return; }
   overlay('Dashboard shut down',
     'Everything has stopped. You can close this tab.<br><br>'+
-    'To start it again, run <code>./bdtools dashboard</code> in a terminal.','⏻');
+    'To start it again, open a terminal in the bioinformatic_diagnostic_tools folder and run '+
+    '<code>bin/bdtools dashboard</code>.','⏻');
 }
 async function restartDash(){
   if(!confirm(
@@ -1646,7 +1648,7 @@ async function restartDash(){
       overlay('The dashboard has not come back',
         'It stopped, but nothing is answering on this address — the relaunch did not '+
         'succeed. Go to the terminal (or Console log) where you started it: it prints '+
-        'why. Then start it again with <code>./bdtools dashboard</code>.'); return;
+        'why. Then start it again with <code>bin/bdtools dashboard</code>.'); return;
     }
     setTimeout(ping,1000);
   };

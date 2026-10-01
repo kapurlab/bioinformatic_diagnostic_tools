@@ -1,11 +1,11 @@
 # 🎓 Training — a hands-on walkthrough of the Kapur Lab diagnostic tools
 
 <!-- html-copy-note:start -->
-> 📄 **Want a copy you can hand to someone?** [`TRAINING.html`](TRAINING.html) is this same guide as a
-> **standalone HTML file** — one self-contained document, no network and nothing to install. Save it and
-> open it in any browser, email it, or drop it on a shared drive. (GitHub displays `.html` as source
-> rather than rendering it, so download the file rather than clicking through to it.) Regenerate it after
-> editing this guide with `docs/build_training_html.py`.
+> 📄 **Want a copy you can hand to someone?** [`TRAINING.html`](https://kapurlab.github.io/bioinformatic_diagnostic_tools/TRAINING.html) is this same guide as a
+> **standalone HTML file** — one self-contained document, no network and nothing to install. The link
+> opens it in your browser. To keep a copy (to email it, or put it on a shared drive), open
+> [docs/TRAINING.html](https://github.com/kapurlab/bioinformatic_diagnostic_tools/blob/main/docs/TRAINING.html) on GitHub and click **⬇ Download raw file**.
+> Regenerate it after editing this guide with `docs/build_training_html.py`.
 <!-- html-copy-note:end -->
 
 This guide teaches you to run every tool in the suite from start to finish, using
@@ -16,8 +16,8 @@ web dashboard.
 Work through it top to bottom the first time. After that, each **module** stands
 on its own, so you can jump to the tool you need.
 
-📊 **Slides:** [vSNP3 — the whole process](vsnp3_orientation_slides.html) covers Modules 4–5 at a glance.
-For hands-on practice in the vSNP3 GUI, [vSNP3 GUI training: find where two outbreaks came from](vsnp3_gui_training.html)
+📊 **Slides:** [vSNP3 — the whole process](https://kapurlab.github.io/bioinformatic_diagnostic_tools/vsnp3_orientation_slides.html) covers Modules 4–5 at a glance.
+For hands-on practice in the vSNP3 GUI, [vSNP3 GUI training: find where two outbreaks came from](https://kapurlab.github.io/bioinformatic_diagnostic_tools/vsnp3_gui_training.html)
 is a step-by-step guide (an SOP), from the first install to reading the tree.
 
 **What you will learn**
@@ -541,19 +541,20 @@ you're seeing its nearest relative.
 
 ## Module 4 — vSNP3: the two-step SNP workflow (introduction)
 
-> 🖥 **Slides first?** [**vSNP3 — the whole process**](vsnp3_orientation_slides.html) is a twelve-slide
+> 🖥 **Slides first?** [**vSNP3 — the whole process**](https://kapurlab.github.io/bioinformatic_diagnostic_tools/vsnp3_orientation_slides.html) is a twelve-slide
 > walkthrough of everything in Modules 4 and 5: what the two steps do, how the reference-type database is
 > organised, how defining SNPs split large sets into groups, and how a SNP call is validated in the reads.
-> It is one self-contained file — save it from `docs/` and open it in any browser; hover the underlined
-> phrases to see the matching bdtools screen, and use **Print / PDF** if you want a paper copy.
+> The link opens the slides in your browser. Hover the underlined phrases to see the matching bdtools
+> screen, and use **Print / PDF** if you want a paper copy.
 
-> 🧭 **Then practise in the GUI.** [**vSNP3 GUI training: find where two outbreaks came from**](vsnp3_gui_training.html)
+> 🧭 **Then practise in the GUI.** [**vSNP3 GUI training: find where two outbreaks came from**](https://kapurlab.github.io/bioinformatic_diagnostic_tools/vsnp3_gui_training.html)
 > is a step-by-step guide (an SOP) for the vSNP3 GUI, written in short, plain sentences. It starts with the
 > first install (macOS, Linux or Windows: a switch picks your computer), then shows how to start the tools
 > again later, then runs 26 public *M. bovis* samples through Step 1 and Step 2. Every step shows what to
 > click and what you should see, and the SRA numbers and sample names have Copy buttons. The places and
-> outbreaks in it are made up for training. Like the slides above, it is one self-contained file: GitHub
-> shows `.html` files as source, so download it and open it in a browser.
+> outbreaks in it are made up for training. The link opens it in your browser. It is one self-contained
+> file, so a copy also works with no internet: open [docs/vsnp3_gui_training.html](https://github.com/kapurlab/bioinformatic_diagnostic_tools/blob/main/docs/vsnp3_gui_training.html)
+> on GitHub and click **⬇ Download raw file**, then open the downloaded file.
 
 **What it does.** vSNP3 (USDA) is the suite's high-resolution SNP tool for
 bacteria and viruses. It answers *"how closely related are these isolates?"* —

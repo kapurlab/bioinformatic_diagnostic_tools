@@ -30,6 +30,10 @@ except ModuleNotFoundError as exc:
              f'pip install "markdown-it-py[linkify]" mdit-py-plugins')
 
 REPO = "https://github.com/kapurlab/bioinformatic_diagnostic_tools"
+# GitHub Pages serves main's docs/ folder as web pages. github.com shows an
+# .html file only as source (and one over about 1 MB not at all), so links to
+# the HTML pages (this guide, the slides, the GUI training) go to Pages.
+PAGES = "https://kapurlab.github.io/bioinformatic_diagnostic_tools"
 HERE = Path(__file__).resolve().parent
 SRC = HERE / "TRAINING.md"
 OUT = HERE / "TRAINING.html"
@@ -57,10 +61,13 @@ if m:
 md = MarkdownIt("gfm-like").use(anchors_plugin, max_level=3, slug_func=gh_slug, permalink=False)
 body = md.render(md_text)
 
-# a standalone file must not depend on repo-relative paths (docs, slides, PDFs)
+# a standalone file must not depend on repo-relative paths (docs, slides, PDFs):
+# an HTML page links to its GitHub Pages copy, Markdown and PDFs to github.com
 body = body.replace('href="../README.md#', f'href="{REPO}/blob/main/README.md#')
 body = re.sub(r'href="(?!https?:|#|mailto:)([^"]*?\.(?:md|html|pdf))(#[^"]*)?"',
-              lambda mm: f'href="{REPO}/blob/main/docs/{mm.group(1)}{mm.group(2) or ""}"', body)
+              lambda mm: (f'href="{PAGES}/{mm.group(1)}{mm.group(2) or ""}"'
+                          if mm.group(1).endswith(".html") else
+                          f'href="{REPO}/blob/main/docs/{mm.group(1)}{mm.group(2) or ""}"'), body)
 # wide content scrolls in its own box
 body = body.replace("<table>", '<div class="tablewrap"><table>').replace("</table>", "</table></div>")
 

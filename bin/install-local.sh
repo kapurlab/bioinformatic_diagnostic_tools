@@ -1158,11 +1158,16 @@ build_vsnp_local() {
   #    generic_build's pip step and for the same reason: pip keys wheel
   #    selection off the RUNNING interpreter's architecture, so a translated
   #    ancestor poisons the pip layer invisibly to conda records.
+  #    httpx is for the DASHBOARD, not the GUI: the single-port proxy runs from
+  #    the first tool env that has starlette + httpx + uvicorn. Every other
+  #    tool's env carries httpx transitively; this one did not, so a vSNP-only
+  #    install fell back to the legacy multi-port dashboard — which has no
+  #    session key, leaving it reachable by other accounts on a shared host.
   local _vpip_archp _vpip_arch=()
   _vpip_archp="$(arch_prefix "${ENVP}")"
   [[ -n "${_vpip_archp}" ]] && read -ra _vpip_arch <<< "${_vpip_archp}"
   [[ -x "${ENVP}/bin/pip" ]] && run ${_vpip_arch[@]+"${_vpip_arch[@]}"} "${ENVP}/bin/pip" install --upgrade \
-      fastapi uvicorn pydantic python-multipart aiofiles
+      fastapi uvicorn pydantic python-multipart aiofiles httpx
   # 3. Kapur Lab vsnp3 patches (idempotent; safe on the packaged version)
   [[ -x "${DIR}/deploy/vsnp3-patches/apply.sh" ]] && \
     { run "${DIR}/deploy/vsnp3-patches/apply.sh" "${ENVP}" || warn "vsnp3 patch step reported an issue (continuing)"; }

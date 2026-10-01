@@ -34,6 +34,13 @@ while a hand-off path is missing — which is how an install whose Kraken GUI ra
 from a named conda env passed every check and still had no working Kraken
 hand-off in vSNP Step 1.
 
+`optional_siblings` maps a sibling the tool DEGRADES without to what stops
+working, the same contract as an `optional` database: no env for it is a note,
+not a finding. vSNP's Kraken hand-off is the case — a clean-up offered on a
+low-mapping sample, not part of the analysis — and grading it as a fault put a
+"needs setup" badge on every vSNP-only install, telling a first-time user that a
+tool which runs fine could not run until they installed a second one.
+
 Database `kind`:
   dir           a directory that must exist and be non-empty
   dir_marker    a directory that must contain every name in `markers` (kraken2's
@@ -111,6 +118,10 @@ REQUIREMENTS = {
         "modules": _WEB,
         "binaries": ["vsnp3_step1.py", "vsnp3_step2.py", "snp-dists", "bcftools", "samtools"],
         "sibling_tools": ["kraken_id_parse_gui"],   # Step 1's "Run Kraken" hand-off
+        "optional_siblings": {
+            "kraken_id_parse_gui": "the Step 1 Results \"Run Kraken\" read clean-up is "
+                                   "unavailable until it is installed",
+        },
         "fix": "bin/bdtools install vsnp_gui --fresh   # rebuilds the vsnp3 env from scratch",
         "databases": [
             {"label": "vSNP reference options", "config_key": "vsnp3_reference_options_root",

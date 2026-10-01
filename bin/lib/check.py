@@ -2704,8 +2704,18 @@ def run_checks(tool, env_py, scope, tool_dir=None, deep=False):
     # kraken_id_parse_gui ran from a named conda env passed every per-tool
     # check while vsnp_gui's Kraken hand-off, probing <checkout>/env, found
     # nothing. Ask the launcher's resolver, so the two can never disagree.
+    optional_sibs = spec.get("optional_siblings", {})
     for sib in spec.get("sibling_tools", []):
         sib_env, sib_dir = sibling_handoff(sib)
+        if not sib_env and sib in optional_sibs:
+            # A hand-off the tool degrades without (see optional_siblings in
+            # requirements.py): say what is unavailable and how to get it, and
+            # leave the tool graded on what it actually needs to run.
+            fix = f"bin/bdtools install {sib}"
+            msg = f"optional {sib} not installed — {optional_sibs[sib]}"
+            lines.append((SKIP, msg, fix))
+            notes.append(f"{msg}; remedy: {fix}")
+            continue
         if not sib_env:
             fix = f"bin/bdtools install {sib}"
             label = (f"sibling {sib}: no runnable environment — "

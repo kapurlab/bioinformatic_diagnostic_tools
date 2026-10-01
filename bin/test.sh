@@ -82,9 +82,36 @@ arch_prefix() {
 }
 
 # Resolve the tool's env python + its bin dir (so the pipeline's CLI deps — mlst,
-# shovill, kraken2, ... — are found). Mirrors install-local.sh:resolve_python.
-resolve_env_bin() {  # tool dir -> echoes "<python>|<bindir>" or empty
-  local dir="$1" envname="$2"
+# shovill, kraken2, ... — are found).
+#
+# Asked of tool_launch.resolve first: the resolver the dashboard launches through
+# and doctor grades (check.py). A golden run in a different env than the GUI's
+# certifies a run nobody performs. vsnp_gui on a site install is the case that
+# bit: its GUI runs the shared vsnp3 env beside the checkout (<tools root>/vsnp3),
+# while the probe below — <dir>/env, then a conda env NAMED vsnp3 — found the
+# operator's personal ~/miniforge3/envs/vsnp3, an older vsnp3 release, and
+# reported PASS for it. The resolver's answer is used only when it is about this
+# same checkout; otherwise, or when it has none, the probe below still decides.
+# _SCANNING_SIBLINGS makes resolve() a plain env lookup: no sibling map, and no
+# sweep of the user's tool config (a launch-time repair, not a test's business).
+resolve_env_bin() {  # tool, tool dir, manifest env name -> echoes "<python>|<bindir>" or empty
+  local tool="$1" dir="$2" envname="$3" resolved
+  resolved="$("${PYBIN}" - "${KT_BIN_DIR}/lib" "${tool}" "${dir}" 2>/dev/null <<'PY' || true
+import os, sys
+sys.path.insert(0, sys.argv[1])
+try:
+    import tool_launch
+    tool_launch._SCANNING_SIBLINGS = True
+    plan = tool_launch.resolve(sys.argv[2], 0)
+except Exception:
+    sys.exit(0)
+env = plan.get("env_dir") or ""
+same = os.path.realpath(plan.get("dir") or "") == os.path.realpath(sys.argv[3])
+if same and env not in ("", "(base)") and os.path.isfile(os.path.join(env, "bin", "python")):
+    print(env)
+PY
+)"
+  if [[ -n "${resolved}" ]]; then echo "${resolved}/bin/python|${resolved}/bin"; return 0; fi
   if [[ -x "${dir}/env/bin/python" ]]; then echo "${dir}/env/bin/python|${dir}/env/bin"; return 0; fi
   local conda; conda="$(detect_conda 2>/dev/null || true)"
   if [[ -n "${conda}" && -n "${envname}" ]] \
@@ -144,9 +171,11 @@ run_one() {  # tool -> prints a status; sets RC_FAIL on FAIL
 
   local envname pybin py envbin
   envname="$(manifest_get "${tool}" env)"
-  pybin="$(resolve_env_bin "${dir}" "${envname}")"
+  pybin="$(resolve_env_bin "${tool}" "${dir}" "${envname}")"
   [[ -n "${pybin}" ]] || { echo "SKIP  ${tool}: no usable env (looked for ${dir}/env and conda '${envname}')"; return 0; }
   py="${pybin%%|*}"; envbin="${pybin##*|}"
+  # Named in the output: which env a PASS certifies is the result's other half.
+  info "  env: ${envbin%/bin}"
 
   # 1. fetch sample
   local work="${WORKDIR}/${tool}" inputs_dir="${WORKDIR}/${tool}/inputs" primary="" inputs_list=""

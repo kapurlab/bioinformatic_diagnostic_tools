@@ -306,5 +306,84 @@ class RefusalMessageTests(unittest.TestCase):
                            capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stderr)
 
+
+class GoldenTestEnvResolution(unittest.TestCase):
+    """`bdtools test` must certify the env the GUI runs, not one found by name.
+
+    The 2026-10 finding: on a site install vsnp_gui's GUI runs the shared vsnp3
+    env beside its checkout, but test.sh's own probe (<dir>/env, then a conda env
+    NAMED vsnp3) picked the operator's personal vsnp3 — an older release — so its
+    PASS said nothing about what users run. test.sh now asks tool_launch.resolve,
+    the resolver doctor and the dashboard use, and falls back to the probe only
+    when that has no answer about the same checkout.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.base = Path(self.tmp.name)
+        self.tools = self.base / "site/tools"
+        self.gui = self.tools / "vsnp_gui"
+        (self.gui / "backend").mkdir(parents=True)
+        self.shared = self.tools / "vsnp3"
+        self.personal = self.base / "personal-base/envs/vsnp3"
+        for env in (self.shared, self.personal):
+            self.make_env(env)
+        self.home = self.base / "bdhome"
+        (self.home / "checkouts").mkdir(parents=True)
+        # A conda that knows only the personal named env: the probe's one way to
+        # find a vsnp3, standing in for the operator's own miniforge.
+        self.conda = self.base / "fake-conda"
+        self.conda.write_text('#!/bin/sh\n'
+                              'case "$1" in\n'
+                              f'  env) echo "vsnp3   {self.personal}" ;;\n'
+                              f'  run) echo "{self.personal}" ;;\n'
+                              'esac\n')
+        self.conda.chmod(0o755)
+
+    @staticmethod
+    def make_env(env):
+        (env / "bin").mkdir(parents=True)
+        (env / "bin/python").write_text("#!/bin/sh\n")
+        (env / "bin/python").chmod(0o755)
+
+    def pick(self, tool, tool_dir, envname):
+        func = subprocess.run(["sed", "-n", "/^resolve_env_bin()/,/^}/p",
+                               str(ROOT / "bin/test.sh")],
+                              capture_output=True, text=True).stdout
+        self.assertIn("resolve_env_bin()", func)
+        clean = {k: v for k, v in os.environ.items()
+                 if not k.startswith(("BDTOOLS_", "CONDA"))}
+        clean.update(BDTOOLS_HOME=str(self.home), BDTOOLS_TOOLSDIR=str(self.tools),
+                     HOME=str(self.base / "home"))
+        script = (f'source "{ROOT}/bin/lib/common.sh"\n'
+                  f'detect_conda() {{ echo "{self.conda}"; }}\n'
+                  f'{func}\n'
+                  f'resolve_env_bin {tool} "{tool_dir}" {envname}\n')
+        r = subprocess.run(["bash", "-c", script], capture_output=True, text=True,
+                           env=clean)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return r.stdout.strip()
+
+    def test_the_gui_env_is_certified_not_a_same_named_one(self):
+        self.assertEqual(self.pick("vsnp_gui", self.gui, "vsnp3"),
+                         f"{self.shared}/bin/python|{self.shared}/bin")
+
+    def test_an_answer_about_another_checkout_is_not_used(self):
+        """The resolver speaks for the checkout IT resolves. Handed a different
+        one, test.sh's own probe decides, starting with that checkout's env."""
+        other = self.base / "elsewhere/vsnp_gui"
+        self.make_env(other / "env")
+        self.assertEqual(self.pick("vsnp_gui", other, "vsnp3"),
+                         f"{other}/env/bin/python|{other}/env/bin")
+
+    def test_run_one_hands_the_resolver_the_tool_name(self):
+        src = (ROOT / "bin/test.sh").read_text(encoding="utf-8")
+        self.assertIn('resolve_env_bin "${tool}" "${dir}" "${envname}"', src)
+        r = subprocess.run(["bash", "-n", str(ROOT / "bin/test.sh")],
+                           capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

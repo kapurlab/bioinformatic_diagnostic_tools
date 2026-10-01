@@ -930,21 +930,13 @@ for the light contract a tool repo must satisfy to be drivable from here.
 
 ## 🎓 Training
 
-New to the suite, or onboarding students? **[docs/TRAINING.md](docs/TRAINING.md)**
-is a hands-on, step-by-step walkthrough of every tool using real public data you
-can copy-paste straight into each GUI — assemble an influenza genome (IRMA) and
-genotype it (GenoFLU), screen a sample for what is actually in it and extract one
-taxon's reads (Kraken ID-Parse), run the two-step vSNP3 SNP workflow on TB
-isolates and build a whole-*M. tuberculosis*-complex phylogeny, profile resistance
-genes (AMRFinderPlus), assign a sequence type (MLST), and build a reference-free
-SNP tree (kSNP). No command-line experience required; each module explains how to
-run the tool **and how to interpret its output**.
-
-For vSNP3 there is also a step-by-step guide (an SOP) that opens in your browser:
-**[vSNP3 GUI training](https://kapurlab.github.io/bioinformatic_diagnostic_tools/vsnp3_gui_training.html)**. It goes from the first
-install to reading the tree, with a screenshot of each step. It is one file,
-[docs/vsnp3_gui_training.html](docs/vsnp3_gui_training.html), so a downloaded copy
-(**⬇ Download raw file** on that page) also works with no internet.
+- **All tools — [docs/TRAINING.md](docs/TRAINING.md).** The main training for the
+  whole suite: one hands-on module per tool (IRMA, GenoFLU, Kraken ID-Parse, vSNP3,
+  AMRFinderPlus, MLST, kSNP), using real public data. Start here. No command-line
+  experience needed.
+- **vSNP3 only — [vSNP3 GUI training](https://kapurlab.github.io/bioinformatic_diagnostic_tools/vsnp3_gui_training.html).**
+  A step-by-step guide for the vSNP3 GUI, from the first install to reading the
+  tree, with a screenshot for every step. It opens in your browser.
 
 ## 🪟 On Windows? Set up WSL2 first
 

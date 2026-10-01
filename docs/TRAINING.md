@@ -3,8 +3,7 @@
 <!-- html-copy-note:start -->
 > 📄 **Want a copy you can hand to someone?** [`TRAINING.html`](https://kapurlab.github.io/bioinformatic_diagnostic_tools/TRAINING.html) is this same guide as a
 > **standalone HTML file** — one self-contained document, no network and nothing to install. The link
-> opens it in your browser. To keep a copy (to email it, or put it on a shared drive), open
-> [docs/TRAINING.html](https://github.com/kapurlab/bioinformatic_diagnostic_tools/blob/main/docs/TRAINING.html) on GitHub and click **⬇ Download raw file**.
+> opens it in your browser: share the link, or save the page from your browser to keep a copy.
 > Regenerate it after editing this guide with `docs/build_training_html.py`.
 <!-- html-copy-note:end -->
 
@@ -552,9 +551,7 @@ you're seeing its nearest relative.
 > first install (macOS, Linux or Windows: a switch picks your computer), then shows how to start the tools
 > again later, then runs 26 public *M. bovis* samples through Step 1 and Step 2. Every step shows what to
 > click and what you should see, and the SRA numbers and sample names have Copy buttons. The places and
-> outbreaks in it are made up for training. The link opens it in your browser. It is one self-contained
-> file, so a copy also works with no internet: open [docs/vsnp3_gui_training.html](https://github.com/kapurlab/bioinformatic_diagnostic_tools/blob/main/docs/vsnp3_gui_training.html)
-> on GitHub and click **⬇ Download raw file**, then open the downloaded file.
+> outbreaks in it are made up for training. The link opens it in your browser.
 
 **What it does.** vSNP3 (USDA) is the suite's high-resolution SNP tool for
 bacteria and viruses. It answers *"how closely related are these isolates?"* —

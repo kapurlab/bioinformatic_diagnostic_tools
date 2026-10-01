@@ -940,6 +940,10 @@ genes (AMRFinderPlus), assign a sequence type (MLST), and build a reference-free
 SNP tree (kSNP). No command-line experience required; each module explains how to
 run the tool **and how to interpret its output**.
 
+For vSNP3 there is also a step-by-step guide (an SOP) to download and open in a
+browser: **[docs/vsnp3_gui_training.html](docs/vsnp3_gui_training.html)**. It
+goes from the first install to reading the tree, with a screenshot of each step.
+
 ## 🪟 On Windows? Set up WSL2 first
 
 These tools run on Linux/macOS. On Windows you run them inside **WSL2** (a real

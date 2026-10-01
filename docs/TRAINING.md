@@ -17,6 +17,8 @@ Work through it top to bottom the first time. After that, each **module** stands
 on its own, so you can jump to the tool you need.
 
 📊 **Slides:** [vSNP3 — the whole process](vsnp3_orientation_slides.html) covers Modules 4–5 at a glance.
+For hands-on practice in the vSNP3 GUI, [vSNP3 GUI training: find where two outbreaks came from](vsnp3_gui_training.html)
+is a step-by-step guide (an SOP), from the first install to reading the tree.
 
 **What you will learn**
 
@@ -544,6 +546,14 @@ you're seeing its nearest relative.
 > organised, how defining SNPs split large sets into groups, and how a SNP call is validated in the reads.
 > It is one self-contained file — save it from `docs/` and open it in any browser; hover the underlined
 > phrases to see the matching bdtools screen, and use **Print / PDF** if you want a paper copy.
+
+> 🧭 **Then practise in the GUI.** [**vSNP3 GUI training: find where two outbreaks came from**](vsnp3_gui_training.html)
+> is a step-by-step guide (an SOP) for the vSNP3 GUI, written in short, plain sentences. It starts with the
+> first install (macOS, Linux or Windows: a switch picks your computer), then shows how to start the tools
+> again later, then runs 26 public *M. bovis* samples through Step 1 and Step 2. Every step shows what to
+> click and what you should see, and the SRA numbers and sample names have Copy buttons. The places and
+> outbreaks in it are made up for training. Like the slides above, it is one self-contained file: GitHub
+> shows `.html` files as source, so download it and open it in a browser.
 
 **What it does.** vSNP3 (USDA) is the suite's high-resolution SNP tool for
 bacteria and viruses. It answers *"how closely related are these isolates?"* —

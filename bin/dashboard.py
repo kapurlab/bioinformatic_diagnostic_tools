@@ -1517,8 +1517,10 @@ async function applyUpdates(target,btn){
     let j; try{ j=JSON.parse(raw); }
     catch(e){ j={started:false, error:'HTTP '+r.status+' — '+raw.slice(0,300)}; }
     if(!j.started){
-      runTitle('Update not started');
-      if(log) log.textContent += describeBlock(j)+'\\n';
+      // Replace "Starting…", do not append to it: a panel that still opens with
+      // "Starting…" ten minutes after a refusal reads as a hang (Ames, 2026-10-02).
+      runTitle('Update not started — nothing is running and nothing was changed');
+      if(log) log.textContent = describeBlock(j)+'\\n';
       document.querySelectorAll('.updates button').forEach(b=>b.disabled=false);
       return;
     }
@@ -1583,11 +1585,20 @@ async function loadInfo(){
 function describeBlock(j){
   let msg=(j&&j.error)||'operation blocked';
   const active=(j&&j.active)||[], errors=(j&&j.errors)||[];
+  // Each job with what to do about it: a queued job has not started and only
+  // needs cancelling; a running one is someone's analysis — wait, or stop it
+  // in the tool if it is not wanted. The status word alone did not say which.
+  const advice = s => s==='queued'
+    ? 'queued, not yet running — Cancel it in the tool, or wait for it'
+    : s==='running'
+      ? 'running — let it finish, or Stop it in the tool if it is not wanted'
+      : s;
   if(active.length) msg+='\\n\\nActive analyses:\\n'+active.map(x=>
-    '• '+x.tool+' — '+(x.name||x.id||'job')+' ('+x.status+')').join('\\n');
+    '• '+x.tool+' — '+(x.name||x.id||'job')+' ('+advice(x.status)+')').join('\\n');
   if(errors.length) msg+='\\n\\nCould not verify:\\n'+errors.map(x=>
     '• '+x.tool+' — '+x.error).join('\\n');
-  msg+='\\n\\nWait for active jobs to finish (or stop them in the tool), then try again.';
+  msg+='\\n\\nThis is deliberate: the suite never updates or restarts a tool while one of its analyses is active. '
+     + 'Nothing was changed. Once no analysis is active, click the button again.';
   return msg;
 }
 function overlay(title,msg,doneGlyph){

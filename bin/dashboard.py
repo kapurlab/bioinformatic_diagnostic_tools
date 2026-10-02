@@ -1357,7 +1357,7 @@ function renderUpdates(d){
     return;
   }
   box.className='updates avail';
-  // THREE kinds of update, and the order they are run in matters — so they are laid
+  // FOUR kinds of update, and the order they are run in matters — so they are laid
   // out left to right in that order and numbered.
   //
   //   1 bdtools  — this checkout: the CLI, the manifest, the install scripts, this
@@ -1368,8 +1368,13 @@ function renderUpdates(d){
   //   2 tools    — each GUI's own release: move the checkout to its newest tag and
   //                rebuild its environment.
   //   3 packages — the conda analysis software INSIDE a tool's environment (vsnp3,
-  //                AMRFinderPlus, kraken2 …). Last, because a bdtools pull can
-  //                change the pins these work from.
+  //                AMRFinderPlus, kraken2 …). After the code, because a bdtools
+  //                pull can change the pins these work from.
+  //   4 envs     — packages a tool's own environment.yml declares that its
+  //                environment lacks: a release added them, and neither sync
+  //                (code only) nor the pinned packages above installs them.
+  //                The installer's additive --rebuild, after the code has moved:
+  //                the site form refuses a checkout that is off its pin.
   // Which verb the tool button will actually run here (api/updates update_mode).
   // A SITE deployment (an umbrella with its tool checkouts as siblings) is moved by
   // `bdtools sync` — code only. `bdtools update` force-refreshes and rebuilds, and
@@ -1382,7 +1387,7 @@ function renderUpdates(d){
     { key: 'suite',   items: avail.filter(i=>i.kind==='suite' || i.name==='bdtools'),
       label: 'Update bdtools', target: 'bdtools', count: false,
       what: 'the suite, manifest, install scripts and this dashboard (git pull)' },
-    { key: 'tool',    items: avail.filter(i=>i.kind!=='suite' && i.kind!=='package' && i.name!=='bdtools'),
+    { key: 'tool',    items: avail.filter(i=>i.kind!=='suite' && i.kind!=='package' && i.kind!=='env' && i.name!=='bdtools'),
       label: syncMode ? 'Deploy tool updates' : 'Install tool updates', target: 'all', count: true,
       what: syncMode
         ? "each GUI's own release, into this site's shared checkouts — code only (bdtools sync)"
@@ -1390,6 +1395,9 @@ function renderUpdates(d){
     { key: 'package', items: avail.filter(i=>i.kind==='package'),
       label: 'Update conda packages', target: 'packages:all', count: true,
       what: "the conda analysis software inside a tool's environment (vsnp3, AMRFinderPlus, kraken2 …)" },
+    { key: 'env',     items: avail.filter(i=>i.kind==='env'),
+      label: 'Update tool environments', target: 'env:all', count: true,
+      what: "packages a tool's own environment.yml declares that its environment lacks — added with everything already installed left as it is (bdtools complete-env)" },
   ].filter(g=>g.items.length);
   // Numbered 1..N over the groups PRESENT, so left-to-right always reads as the
   // run order with no gaps when only some kinds have updates.
@@ -1407,6 +1415,11 @@ function renderUpdates(d){
   // it belongs to and WHAT is moving (app release vs conda package).
   const li = groups.map((g,idx)=>{
     const rows = g.items.map(i=>{
+      if(g.key==='env'){
+        // Not a version moving but a gap: what the spec declares and the env lacks.
+        return `<li><b>${esc(i.label)}</b> <span class="ukind">environment</span>: missing <b>${esc(i.latest)}</b>`
+          + ` — declared in its conda_setup/environment.yml, not installed</li>`;
+      }
       const kind = g.key==='package' ? ' <span class="ukind">conda package</span>'
                  : g.key==='tool'    ? ' <span class="ukind">app release</span>' : '';
       return `<li><b>${esc(i.label)}</b>${kind}: ${esc(i.installed)} → <b>${esc(i.latest)}</b></li>`;
@@ -1427,8 +1440,11 @@ function renderUpdates(d){
         ? (syncMode
             ? `<br>This is a <b>site deployment</b>, so tool updates move the shared `
               + `checkouts' code only (<code>bdtools sync</code>) — no environment `
-              + `rebuild. A release that also changes environments or OOD cards `
-              + `needs <code>bdtools install --server &lt;tool&gt;</code> in a terminal. `
+              + `rebuild. When a release adds packages to a tool's environment.yml, `
+              + `<b>Update tool environments</b> appears here and adds just those, `
+              + `moving nothing already installed (<code>bdtools complete-env &lt;tool&gt;</code>). `
+              + `A release that changes OOD cards still needs `
+              + `<code>bdtools install --server &lt;tool&gt; --with-card</code> in a terminal. `
               + `Idle tool servers are stopped first. `
             : `<br>Installing rebuilds environments and can take a few minutes; idle tool `
               + `servers are stopped first. `)
@@ -1482,11 +1498,16 @@ async function checkUpdates(force){
   pollUpdates();
 }
 async function applyUpdates(target,btn){
-  if(!confirm(target==='bdtools'
+  const ask = target==='bdtools'
       ? 'Update bdtools (the suite + this dashboard) now?'
-      : updateModeG==='sync'
-        ? "Deploy tool updates now? This moves this site's shared checkouts to their latest code (no environment rebuild)."
-        : 'Install tool updates now? This rebuilds environments and may take several minutes.')) return;
+      : target.startsWith('env:')
+        ? "Update tool environments now? This adds the packages each tool's environment.yml declares but its environment lacks, with everything already installed left exactly as it is — or nothing at all, with the reason. Each environment is snapshotted first. The solve may take a few minutes."
+        : target.startsWith('packages:')
+          ? 'Update conda packages now? This installs the newest release of the pinned analysis software into the tool environments; it may take several minutes.'
+          : updateModeG==='sync'
+            ? "Deploy tool updates now? This moves this site's shared checkouts to their latest code (no environment rebuild)."
+            : 'Install tool updates now? This rebuilds environments and may take several minutes.';
+  if(!confirm(ask)) return;
   document.querySelectorAll('.updates button').forEach(b=>b.disabled=true);
   runPanel();
   const log=document.getElementById('ulog'); if(log){ log.textContent='Starting…\\n'; }
@@ -1809,8 +1830,8 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/apply-updates":
             target = (parse_qs(parsed.query).get("target") or ["all"])[0]
             names = {t["name"] for t in SUITE.tools}
-            valid = ({"all", "bdtools", "packages:all"} | names
-                     | {f"packages:{n}" for n in names})
+            valid = ({"all", "bdtools", "packages:all", "env:all"} | names
+                     | {f"packages:{n}" for n in names} | {f"env:{n}" for n in names})
             if target not in valid:
                 self._send(400, json.dumps({"error": f"unknown update target: {target}"}))
                 return

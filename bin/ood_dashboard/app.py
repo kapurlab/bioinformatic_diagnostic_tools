@@ -832,8 +832,8 @@ async def api_restart(request):
 # ----- updates + readiness (local mode only) -----
 def _valid_targets():
     tools = {t["name"] for t in SUITE.tools}
-    return ({"all", "bdtools", "packages:all"} | tools
-            | {f"packages:{t}" for t in tools})
+    return ({"all", "bdtools", "packages:all", "env:all"} | tools
+            | {f"packages:{t}" for t in tools} | {f"env:{t}" for t in tools})
 
 
 async def api_updates(request):

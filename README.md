@@ -550,6 +550,18 @@ bin/bdtools update <tool|all>      # move to the newest tag + rebuild
 #    any tool tag, so step 2 cannot see it:
 bin/bdtools versions               # what you are running, per tool
 bin/bdtools update-packages <tool> # move its packages to the newest release
+
+# 4. The packages a tool's own conda_setup/environment.yml has gained since its
+#    env was built. A release can add one (kraken_id_parse_gui gained plotly in
+#    2026-09), and neither step 2 on a site (`sync` moves code only) nor step 3
+#    (the pinned analysis packages) installs it — the code then imports what the
+#    env does not have. complete-env adds the missing declared packages and ONLY
+#    those, with every package already installed frozen: the env gains exactly
+#    them, or is left exactly as it was (with the solver's reason). Snapshotted
+#    first (bin/bdtools restore-env <tool> puts it back), self-checked after.
+bin/bdtools complete-env <tool|all> [--dry-run]
+#    The fuller operations stay deliberate: `install <tool> --rebuild` re-solves
+#    the whole spec additively (other packages may move); `--fresh` starts over.
 ```
 
 **Updating a tool is opt-in, per tool.** `tools.yml` carries `updates: install`
@@ -583,8 +595,10 @@ The dashboard does all three for you: every installed card shows the versions in
 use (`vSNP3 v0.4.36 · vsnp3 3.35`), and when something newer exists the banner
 offers them as separate numbered buttons, laid out left to right in the order to
 run them — **1 Update bdtools** → **2 Install tool updates** → **3 Update conda
-packages**. They are different acts with different risk, so they are never the same
-button. Each listed item names the tool it belongs to and what is moving, e.g.
+packages** → **4 Update tool environments**. They are different acts with different
+risk, so they are never the same button. The fourth appears only when a tool's
+environment lacks a package its environment.yml declares, and runs `complete-env`
+above — the environment is never moved past what the spec names. Each listed item names the tool it belongs to and what is moving, e.g.
 `vSNP3 — vsnp3 [conda package]: 3.35 → 3.36` versus `vSNP3 [app release]: v0.4.36 →
 v0.4.37`. Restart the dashboard after each step to load the new code.
 

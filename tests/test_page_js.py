@@ -148,6 +148,9 @@ class BannerRenderTests(unittest.TestCase):
             "update_available:true,kind:'tool'}")
     PKG = ("{name:'vsnp_gui:vsnp3',label:'vSNP3 — vsnp3',installed:'3.35',"
            "latest:'3.36',update_available:true,kind:'package'}")
+    ENV = ("{name:'kraken_id_parse_gui:env',label:'Kraken ID Parse — environment',"
+           "installed:'1 declared package missing',latest:'plotly',missing:['plotly'],"
+           "update_available:true,kind:'env'}")
 
     def test_all_three_kinds_render_in_run_order(self):
         html = self.render(f"[{self.SUITE},{self.TOOL},{self.PKG}]")
@@ -156,6 +159,25 @@ class BannerRenderTests(unittest.TestCase):
         self.assertEqual(buttons[0], "Update bdtools")
         self.assertTrue(buttons[1].startswith("Install tool updates"))
         self.assertTrue(buttons[2].startswith("Update conda packages"))
+
+    def test_an_environment_behind_its_spec_is_the_fourth_step(self):
+        """The 2026-10-02 gap: a release declared plotly, sync moved the code,
+        nothing installed the package, and the banner said up to date. The env
+        item is its own numbered step, after the code and package steps, naming
+        the package and where it is declared — never folded into the tool
+        group, whose verb (sync/update) would not install it."""
+        html = self.render(f"[{self.SUITE},{self.TOOL},{self.PKG},{self.ENV}]")
+        labels = re.findall(r"<button[^>]*>(?:<span[^>]*>\d</span>)?([^<]*)", html)
+        buttons = [l for l in labels if l.strip()]
+        self.assertTrue(buttons[3].startswith("Update tool environments (1)"), buttons)
+        self.assertIn('<span class="ustep">4</span>', html)
+        self.assertIn("Kraken ID Parse — environment", html)
+        self.assertIn("missing <b>plotly</b>", html)
+        self.assertIn("environment.yml", html)
+        alone = self.render(f"[{self.ENV}]")
+        self.assertIn("Update tool environments", alone)
+        self.assertNotIn("Install tool updates", alone)
+        self.assertIn('<span class="ustep">1</span>', alone)
 
     def test_each_kind_alone_renders_and_is_numbered_1(self):
         for name, item in (("suite", self.SUITE), ("tool", self.TOOL),

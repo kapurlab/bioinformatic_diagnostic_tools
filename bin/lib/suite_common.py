@@ -433,15 +433,150 @@ def package_update_records():
     return recs
 
 
+# ----- a tool's environment against its own spec ----------------------------
+# `bdtools sync` moves a site's code and nothing else, and `bdtools update` only
+# rebuilds the managed checkouts it owns, so a release that adds a package to a
+# tool's conda_setup/environment.yml reaches the CODE on every deployment and the
+# ENVIRONMENT on none of them until someone runs `install --rebuild` by hand.
+# The live case (2026-10-02, Ames HPC): kraken_id_parse_gui's spec gained
+# `plotly <6` in September; the env predated it; a Full identification ran its
+# hour of Kraken2, SPAdes, BLAST and alignment and died at the report with
+# "No module named 'plotly'". The dashboard said "✓ Up to date" throughout,
+# because every check it made compared versions, and the versions were right.
+#
+# These read the spec the tool ships against the env the tool actually launches
+# from (packages.env_dir_for asks tool_launch.resolve, so a sandbox override, a
+# shared sibling env or a symlinked site env each count as what they are) and
+# offer the difference as a fourth kind of update. The remedy is the installer's
+# own additive `--rebuild` (`conda env update` from the spec: nothing removed,
+# the env snapshotted first), in the form that owns the tree — `install <tool>`
+# for a managed checkout, `install --server <tool>` for a site deployment.
+
+def env_spec_declared(spec_path):
+    """Conda package names a tool's environment.yml declares (lib/env_spec.py)."""
+    import env_spec
+    return [name for name, _spec in env_spec.read_spec(spec_path)["declared"]]
+
+
+def env_spec_drift(name, spec_path=None, env_dir=None):
+    """What `name`'s spec declares that its env lacks, by package name — or None
+    when the question does not apply (no spec, no env, no conda-meta). The
+    reader and the resolution are lib/env_spec.py's, shared with
+    `bdtools complete-env`, so the banner and the command agree."""
+    import env_spec
+    d = env_spec.drift(name, spec_path=spec_path, env_dir=env_dir)
+    if d is None:
+        return None
+    return {"spec": d["spec"], "env_dir": d["env_dir"], "channels": d["channels"],
+            "declared": [x["name"] for x in d["declared"]],
+            "missing": [x["name"] for x in d["missing"]],
+            "missing_specs": [x["spec"] for x in d["missing"]]}
+
+
+def env_update_records(names=None):
+    """Environment-behind-its-spec items in the banner's record shape.
+
+    One record per tool whose environment lacks a package its spec declares; a
+    complete environment contributes nothing, so a quiet banner stays quiet.
+    `kind: "env"` groups them under their own numbered button (target `env:all`),
+    after the code steps — a release is what adds a package to a spec, and the
+    site form of the remedy refuses a checkout that is not yet at its pin.
+    """
+    recs = []
+    for name in (list(names) if names is not None else list_tools()):
+        # One tool's trouble must never blank the banner for the rest: an
+        # exception here would otherwise propagate into the whole update check
+        # and report every repo as unreachable.
+        try:
+            drift = env_spec_drift(name)
+            if not drift or not drift["missing"]:
+                continue
+            missing = drift["missing"]
+            report_only = not tool_is_updatable(name)
+            # What this machine has already shown it cannot add without moving
+            # installed packages is named, not offered again (env_spec.blocked).
+            try:
+                import env_spec
+                held = env_spec.blocked(name, missing)
+            except Exception:
+                held = None
+        except Exception:
+            continue
+        n = len(missing)
+        recs.append({
+            "name": f"{name}:env",
+            "label": f"{pretty(name)} — environment",
+            "tool_label": pretty(name),
+            "installed": f"{n} declared package{'s' if n != 1 else ''} missing",
+            "latest": ", ".join(missing),
+            "missing": missing,
+            "env_dir": drift["env_dir"],
+            "update_available": not report_only and held is None,
+            "newer_exists": True,
+            "report_only": report_only,
+            "held": held is not None,
+            "held_reason": (held or {}).get("reason", ""),
+            "held_fix": f"bin/bdtools install {name} --rebuild" if held else "",
+            "kind": "env",
+            "tool": name,
+        })
+    return recs
+
+
+def env_update_commands(target, log=None):
+    """The command(s) that bring tool environments up to their specs.
+
+    `bdtools complete-env <tool>` (bin/complete-env.sh): the missing declared
+    packages, and only those, installed with every package already present
+    frozen — the env either gains exactly them (plus dependencies it did not
+    have) or is left exactly as it was, with the solver's reason. Snapshotted
+    first, self-checked after. The same command for a managed checkout and a
+    site deployment: it resolves the env the way a launch does and never moves
+    a checkout, so neither installer's force-checkout nor a full re-solve of the
+    spec is involved — those stay deliberate terminal acts (install --rebuild,
+    install --fresh). `all` covers the tools whose environments are actually
+    behind, report-only tools noted and skipped as `update all` skips them; a
+    named tool is completed whether or not the check found a gap.
+    """
+    log = log or (lambda _msg: None)
+    todo = []
+    if target == "all":
+        for name in list_tools():
+            drift = env_spec_drift(name)
+            if not drift or not drift["missing"]:
+                continue
+            if tool_is_updatable(name):
+                todo.append((name, drift["missing"]))
+            else:
+                log(f"{name}: environment left as it is — the tool is report-only in tools.yml.")
+    else:
+        drift = env_spec_drift(target)
+        todo.append((target, (drift or {}).get("missing", [])))
+    cmds = []
+    for name, missing in todo:
+        cmd = [BDTOOLS, "complete-env", name]
+        log("$ " + " ".join(["bdtools"] + cmd[1:]))
+        what = ", ".join(missing) if missing else "whatever the spec declares and the env lacks"
+        log(f"{pretty(name)}: adding what conda_setup/environment.yml declares and the "
+            f"environment lacks ({what}), with every package already installed left "
+            f"exactly as it is — or nothing at all, with the reason. The environment is "
+            f"snapshotted first (bdtools restore-env {name} puts it back) and "
+            f"self-checked after. The solve can take a few minutes…")
+        cmds.append(cmd)
+    if not cmds:
+        log("Nothing to run: every environment here has what its spec declares.")
+    return cmds
+
+
 def update_scope(target, running):
     """Which tool names an update target touches, and the label for the cards.
 
-    "packages:<tool>" changes the conda env a running tool server is executing
-    from, so that server must be stopped exactly like a tool update stops it —
-    treating the target as an unknown tool name (which is what a naive
-    `{target}` does) would leave it running against a half-swapped env.
+    "packages:<tool>" and "env:<tool>" change the conda env a running tool
+    server is executing from, so that server must be stopped exactly like a tool
+    update stops it — treating the target as an unknown tool name (which is what
+    a naive `{target}` does) would leave it running against a half-swapped env.
     """
-    if target.startswith("packages:"):
+    if target.startswith("packages:") or target.startswith("env:"):
         scope = target.split(":", 1)[1]
     else:
         scope = target
@@ -776,6 +911,11 @@ class UpdateManager:
             # used to be invisible here: the tool checks compare git tags, and a
             # tool tag does not move when the science underneath it does.
             items.extend(package_update_records())
+            # Environments behind their own spec: a release that declares a new
+            # package moves no tag and no pin, so neither check above can see
+            # it — the dashboard said "up to date" over an env that could not
+            # import what the new code imports.
+            items.extend(env_update_records())
             cache = {"checked": True, "items": items,
                      "any": any(i["update_available"] for i in items),
                      # Which verb the tool button will actually run here, so the
@@ -850,6 +990,12 @@ class UpdateManager:
             self._log(f"$ bdtools update-packages {scope}")
             self._log("Installing into the tool's conda env — the solve can take "
                       "several minutes…")
+        elif target.startswith("env:"):
+            # "env:<tool>" or "env:all" — add what a tool's environment.yml
+            # declares that its environment lacks (the installer's additive
+            # --rebuild). Its own act: sync never touches an env, and update
+            # touches only the managed checkouts it owns.
+            cmds = env_update_commands(target.split(":", 1)[1], self._log)
         else:
             cmds = tool_update_commands(target, self._log)
             if not cmds:

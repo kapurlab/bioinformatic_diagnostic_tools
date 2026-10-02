@@ -134,6 +134,18 @@ class UpdateDispatch(unittest.TestCase):
             self.assertEqual(self.verbs(sc.tool_update_commands("all")),
                              [("update", "all")])
 
+    def test_an_environment_completion_never_runs_an_installer(self):
+        """Step 4 of the banner. A site checkout and a managed one get the same
+        narrow command — complete-env resolves the env as a launch does and
+        moves no checkout, so `update`'s force checkout and `install`'s whole-
+        spec re-solve are both out of the dashboard's reach here."""
+        self.make_site_checkouts("vsnp_gui")
+        with self.suite() as sc:
+            self.assertEqual(self.verbs(sc.env_update_commands("vsnp_gui")),
+                             [("complete-env", "vsnp_gui")])
+            self.assertEqual(self.verbs(sc.env_update_commands("irma_gui")),
+                             [("complete-env", "irma_gui")])
+
     def test_a_mixed_tree_uses_the_right_verb_per_tool(self):
         """One tool deployed to the site tree, one only as a personal checkout."""
         self.make_site_checkouts("vsnp_gui")

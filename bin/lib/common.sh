@@ -857,7 +857,12 @@ env_from_spec() {
       info "  platform: ${_sub} (pinned from the existing env, not the host)"
     fi
     log "$(basename "${dir}"): env present — updating it from conda_setup/environment.yml (additive)"
-    run "${conda}" env update -p "${dir}/env" -f "${spec}" || die "conda env update failed for ${dir}/env"
+    # Recorded first, so `bdtools restore-env` can put the env back exactly if
+    # the update leaves it worse — the promise install-local.sh makes before
+    # every env change (_conda_step), kept on this path too.
+    snapshot_env "${TOOL:-$(basename "${dir}")}" "${dir}/env"
+    run "${conda}" env update -p "${dir}/env" -f "${spec}" \
+      || { restore_env_hint "${TOOL:-$(basename "${dir}")}"; die "conda env update failed for ${dir}/env"; }
   else
     # A FRESH env has no recorded platform to honour, and the policy for
     # choosing one on Apple Silicon lives in install-local.sh's

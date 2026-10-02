@@ -2005,7 +2005,10 @@ class EnvFromSpecTests(unittest.TestCase):
         write(self.tool / "env/bin/python", "#!/bin/sh\nexit 0\n", mode=0o755)
         r = sh(f'env_from_spec "{self.tool}"', env=self.env)
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(self.calls(), [f"env update -p {self.tool}/env -f {self.tool}/conda_setup/environment.yml"])
+        # Snapshotted first (common.sh:snapshot_env — `bdtools restore-env` can then
+        # put it back exactly), then updated in place. Never recreated.
+        self.assertEqual(self.calls(), [f"list --explicit -p {self.tool}/env",
+                                        f"env update -p {self.tool}/env -f {self.tool}/conda_setup/environment.yml"])
 
     def test_pip_requirements_follow_the_env(self):
         write(self.tool / "conda_setup/environment.yml", "name: x\ndependencies: [python]\n")

@@ -17,6 +17,10 @@
 #   bdtools check-updates [tool|all]    report newer upstream versions
 #   bdtools update-packages <tool|all>  move a tool's analysis packages (vsnp3,
 #                                       AMRFinderPlus, …) to the newest release
+#   bdtools complete-env <tool|all>     add what a tool's environment.yml declares
+#                     [--dry-run]       and its env lacks — only that, with every
+#                                       installed package frozen; the dashboard's
+#                                       "Update tool environments" button
 #   bdtools pull                        update THIS checkout (the CLI, tools.yml,
 #                                       install scripts) — carrying this site's
 #                                       ood/apps/** card edits across the merge
@@ -863,6 +867,7 @@ cmd_sync() { "${KT_BIN_DIR}/sync.sh" "$@"; }
 cmd_versions() { _need_python; "${PYBIN}" "${KT_BIN_DIR}/lib/packages.py" "$@"; }
 
 cmd_update_packages() { "${KT_BIN_DIR}/update-packages.sh" "$@"; }
+cmd_complete_env() { "${KT_BIN_DIR}/complete-env.sh" "$@"; }
 
 cmd_update() {
   # `update --help` used to reach the manifest lookup and report
@@ -960,6 +965,7 @@ main() {
     check-updates)      cmd_check_updates "$@";;
     versions)           cmd_versions "$@";;
     update-packages)    cmd_update_packages "$@";;
+    complete-env)       cmd_complete_env "$@";;
     update)             cmd_update "$@";;
     sync)               cmd_sync "$@";;
     pull)               cmd_pull "$@";;

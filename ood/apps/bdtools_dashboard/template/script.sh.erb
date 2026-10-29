@@ -26,6 +26,7 @@ echo "host:$(hostname)  dashboard-port:${port}"
 # found nothing and told nobody, and put a foreign path in front of anyone
 # reading the session log.
 SITE_TOOLS_ROOT=/srv/kapurlab/tools
+CARD_TOOLS_ROOT="${SITE_TOOLS_ROOT}"
 [ -d "${SITE_TOOLS_ROOT}" ] || SITE_TOOLS_ROOT="${BDTOOLS_TOOLS_ROOT:-${BDTOOLS_TOOLSDIR:-}}"
 
 # ---- locate the umbrella checkout (shared install, else per-user) ----
@@ -41,6 +42,21 @@ else
   echo "ERROR: cannot find the bioinformatic_diagnostic_tools checkout (looked in" >&2
   echo "       ${SHARED_REPO:-<no shared tools root configured>} and ${PERSONAL_REPO})." >&2
   echo "       Set BDTOOLS_REPO to the checkout, or install it at ${PERSONAL_REPO}." >&2
+  # A rendered card names the site's install path, and that path missing HERE is
+  # almost always an install on the login node's own disk (2026-10-28: a USDA
+  # cluster built under site.conf.example's /srv default). Say so, since the
+  # fallback above has already discarded the path. The reference name is split
+  # so install-server.sh's subst cannot rewrite this pattern along with it: an
+  # unrendered (per-user) card says nothing about another site's path.
+  case "${CARD_TOOLS_ROOT}" in
+    */kapur""lab/tools) ;;
+    *) if [ ! -d "${CARD_TOOLS_ROOT}" ]; then
+         echo "       This card was installed for ${CARD_TOOLS_ROOT}, which does not exist on" >&2
+         echo "       this compute node ($(hostname)). bdtools must be installed on storage" >&2
+         echo "       every compute node mounts; local disk on the login node is not." >&2
+         echo "       See docs/INSTALL_HPC_OOD.md, 'Choose a path the compute nodes can see'." >&2
+       fi;;
+  esac
   exit 1
 fi
 echo "  umbrella: ${REPO}"

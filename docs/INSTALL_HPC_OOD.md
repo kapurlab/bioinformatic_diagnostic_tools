@@ -21,29 +21,39 @@ find site-specific problems before touching `/var/www/ood`.
 
 ---
 
-## Before you start — the five things that actually go wrong
+## Before you start — the six things that actually go wrong
 
 Please read these. They are the failures we have seen, not hypotheticals.
 
-1. **This is a `batch_connect` app, not a Passenger app.** If you are following
+1. **Install everything on storage the compute nodes mount.** You run the
+   installer on a login node, but every session runs on a **compute node**. The
+   umbrella checkout, the tool environments, the conda base and the databases
+   must all be visible from there. `sites/site.conf.example` defaults to
+   `/srv/<site>`, which is right for a single lab server and wrong on a cluster:
+   `/srv`, `/opt`, `/usr/local` and `/tmp` are usually the login node's own disk.
+   An install there looks complete, and every session ends immediately with
+   **Completed**. conda environments cannot be moved once built, so choosing the
+   wrong path means building everything again. Pick the path first:
+   [Step 0](#step-0--choose-a-path-the-compute-nodes-can-see).
+2. **This is a `batch_connect` app, not a Passenger app.** If you are following
    OSC's [Passenger app tutorial](https://osc.github.io/ood-documentation/latest/tutorials/tutorials-passenger-apps.html),
    you are reading about a different kind of app — one that runs on the OOD web
    node. bdtools runs on a **compute node** via the scheduler. See
    [Which kind of OOD app this is](#which-kind-of-ood-app-this-is).
-2. **Order matters: build the tool environments *before* installing the card.**
+3. **Order matters: build the tool environments *before* installing the card.**
    The dashboard needs a Python that has `starlette`, `httpx` and `uvicorn`, and
    it gets that from a tool environment. Install the card first and the session
    will start and immediately exit with an error.
-3. **Two of the nine tools do not build with the standard command, and the
+4. **Two of the nine tools do not build with the standard command, and the
    installer only *warns* about it.** `bdtools install all --server` will finish
    looking successful while `vsnp_gui` and `kraken_id_parse_gui` have no
    environment at all. [Steps 3b and 3c](#step-3--build-the-tool-environments)
    are not optional.
-4. **Install only the dashboard card.** Each tool also ships its own per-tool
+5. **Install only the dashboard card.** Each tool also ships its own per-tool
    card. Those still work, but each one starts *its own* scheduler job, and they
    have **no application-level authentication**. Registering them defeats the
    point of the dashboard. See [Why one card](#why-one-card-and-not-nine).
-5. **Reference data is not downloaded for you.** Only two of the nine tools need
+6. **Reference data is not downloaded for you.** Only two of the nine tools need
    any, and it is about 36 GB, but you must stage it and it must be visible **on
    the compute nodes**. Read [Reference databases](#reference-databases) before
    you tell users the app is ready — otherwise tools open fine and fail at run
@@ -162,10 +172,40 @@ function. Setting `CONDA_BASE` (Path A: in `sites/site.conf`; Path B:
 Roughly 45 minutes of your attention, plus unattended download time for conda
 environments and reference data.
 
+### Step 0 — Choose a path the compute nodes can see
+
+Everything in this guide goes under one root, `SITE_ROOT`: the umbrella checkout,
+the nine tool checkouts and their conda environments, and by default the reference
+databases. Sessions run on compute nodes, so that root must be on storage **every
+compute node mounts**, readable by every user. Use your cluster's shared software
+or project space (often `/project/<group>`, `/apps` or `/software`; your storage
+admin will know). A directory that exists only on the login node does not work.
+
+Check the candidate path **from a compute node** before you build anything:
+
+```bash
+# Add -p <partition> and/or -A <account> if your site requires them.
+srun -N1 -n1 -t 5 ls -ld /shared/apps/bdtools
+```
+
+That must list the directory. `No such file or directory` means the compute nodes
+cannot see it, so pick another path. On the login node,
+`df -hT /shared/apps/bdtools` should show a network or parallel filesystem
+(`nfs`, `nfs4`, `lustre`, `gpfs`, `beegfs`, `ceph`…). `xfs`, `ext4` or `tmpfs`
+there means that machine's own disk.
+
+The same applies to `CONDA_BASE`, because the dashboard's update buttons run conda
+from inside a session, and to `DATABASES_ROOT` if you put it somewhere else.
+
+**Choose before Step 3.** A conda environment records its own path inside its
+files, so it cannot be moved after it is built. A wrong root means rebuilding
+every environment. `bdtools install --server` checks this: on a Slurm cluster, it
+refuses to build under a root on the installing machine's local disk.
+
 ### Step 1 — Clone the umbrella repository
 
-Clone it onto the shared filesystem, at the path you intend to keep. The
-dashboard's session script resolves the checkout by path, so this is not a
+Clone it onto the shared filesystem from Step 0, at the path you intend to keep.
+The dashboard's session script resolves the checkout by path, so this is not a
 throwaway location.
 
 ```bash
@@ -202,10 +242,10 @@ Now edit it. These are the fields that matter:
 |---|---|---|
 | `SITE_NAME` | Short lowercase slug for your site | `psu` |
 | `SITE_DISPLAY` | Human-readable name, used in titles | `"Penn State ICDS"` |
-| `SITE_ROOT` | Shared root for tools, refs, projects | `/shared/apps/bdtools` |
+| `SITE_ROOT` | Shared root for tools, refs, projects: the [Step 0](#step-0--choose-a-path-the-compute-nodes-can-see) path, mounted on every compute node. **Not** the example file's `/srv/<site>` default, which is for a single lab server | `/shared/apps/bdtools` |
 | `CLUSTER_NAME` | **Your cluster id** — must match `/etc/ood/config/clusters.d/<id>.yml` | `roar` |
 | `TOOLS_ROOT` | Where tool checkouts and environments go | `${SITE_ROOT}/tools` |
-| `CONDA_BASE` | An existing conda/miniforge base | `${TOOLS_ROOT}/miniforge3` |
+| `CONDA_BASE` | An existing conda/miniforge base, also visible from the compute nodes | `${TOOLS_ROOT}/miniforge3` |
 | `SYS_APPS_DIR` | OOD system apps directory | `/var/www/ood/apps/sys` |
 | `DATABASES_ROOT` | Where reference databases will live | `${SITE_ROOT}/databases` |
 
@@ -433,7 +473,10 @@ Do all six. Items 4 and 5 exercise proxy behaviour that nothing else tests.
    under Bioinformatics.
 2. **A session starts.** Launch it. The job queues, then starts. If it fails
    immediately, read the session's `output.log` — the session script prints the
-   checkout path, the Python it selected, and the port.
+   checkout path, the Python it selected, and the port. A session that goes
+   straight to **Completed** with `cannot find the bioinformatic_diagnostic_tools
+   checkout` usually means the compute node cannot see `SITE_ROOT`: see
+   [Step 0](#step-0--choose-a-path-the-compute-nodes-can-see).
 3. **The dashboard loads.** Click the connect button. The landing page opens at
    `/rnode/<host>/<port>/?t=…` and lists the nine tools.
 4. **A tool opens and runs.** Open one and start a small job. Live progress
@@ -1005,7 +1048,8 @@ it bound — start there.
 | Symptom | Cause | Fix |
 |---|---|---|
 | Session starts then exits immediately | No Python with `starlette`+`httpx`+`uvicorn` | Build a tool environment (Step 3) |
-| `ERROR: cannot find the bioinformatic_diagnostic_tools checkout` | Umbrella is not at `$TOOLS_ROOT/bioinformatic_diagnostic_tools` | Move it there, or fix `SHARED_REPO` in the card's `script.sh.erb` |
+| Session goes straight to **Completed**; `output.log` says `cannot find the bioinformatic_diagnostic_tools checkout` and `This card was installed for <path>, which does not exist on this compute node` | The install is on the login node's own disk, not storage the compute nodes mount | [Moving an install the compute nodes cannot see](#moving-an-install-the-compute-nodes-cannot-see) |
+| `ERROR: cannot find the bioinformatic_diagnostic_tools checkout` (without the line above) | Umbrella is not at `$TOOLS_ROOT/bioinformatic_diagnostic_tools` | Move it there, or fix `SHARED_REPO` in the card's `script.sh.erb` |
 | Card missing from the app list | Not rendered into `$SYS_APPS_DIR` | Re-run Step 5; check `manifest.yml` exists in the destination |
 | Job never submits | `cluster:` does not match a real cluster, or partition is blank/invalid | Fix `form.yml`; compare with `ls /etc/ood/config/clusters.d/`. Sandbox cards ship `CHANGE_ME` — see [The one edit you must make per card](#the-one-edit-you-must-make-per-card--after-the-install-not-before) |
 | Environment build spins at 100% CPU for hours | mamba 2.x solver, or conda's classic solver | [Which solver you have](#which-solver-you-have) |
@@ -1016,6 +1060,32 @@ it bound — start there.
 | Tool reports a missing database | Data not staged, or path not visible on the compute node | [Reference databases](#reference-databases); confirm compute-node mounts |
 | A database field is blank on first launch | No path declared, or the data is not at the expected subpath | Set `DB_ROOT` in `sites/site.conf`, or set it per user in the tool's Settings |
 | A tool reports a path from some other site | An old `~/.config/<tool>/config.json` is being reused | Saved user settings win over site defaults; clear or correct that file |
+
+### Moving an install the compute nodes cannot see
+
+If the suite was built where only the login node can see it, here is what can be
+moved and what has to be rebuilt:
+
+| What | Under | Move or rebuild |
+|---|---|---|
+| Reference databases | `DATABASES_ROOT` | **Move.** Plain files: `rsync -a` them to the new root. |
+| Umbrella and tool checkouts | `TOOLS_ROOT/<repo>` | **Move or re-clone.** A git checkout does not depend on its path. |
+| Tool environments | `TOOLS_ROOT/<tool>/env`, `TOOLS_ROOT/vsnp3` | **Rebuild.** conda writes absolute paths into scripts and libraries, so a moved env fails in ways that look unrelated. |
+| conda base, if it was under the old root | `CONDA_BASE` | **Reinstall** miniforge at the new path before rebuilding. |
+| The card | `$SYS_APPS_DIR/bdtools_dashboard` | **Re-render.** The installer writes `TOOLS_ROOT` into its session script, so it still points at the old path until Step 5 runs again. |
+
+In order:
+
+1. Choose and check the new root from a compute node
+   ([Step 0](#step-0--choose-a-path-the-compute-nodes-can-see)).
+2. Set `SITE_ROOT` (and `CONDA_BASE`, `DATABASES_ROOT` if set on their own) in
+   `sites/site.conf`, then re-run Step 2's `source` block in your shell.
+3. Put the umbrella at `$TOOLS_ROOT/bioinformatic_diagnostic_tools` (Step 1) and
+   run everything below from there.
+4. Rebuild the environments: Step 3, all of 3a–3d, with `--dry-run` first.
+5. Move the databases to the new `DATABASES_ROOT` (Step 4).
+6. Re-render the card (Step 5), then verify (Step 7).
+7. Delete the old tree only after a session works.
 
 ### Non-Slurm sites
 

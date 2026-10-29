@@ -194,6 +194,77 @@ assert_pinned_source() {
 }
 
 # ---------------------------------------------------------------------------
+# Can the compute nodes see where this is about to be installed?
+#
+# The session runs on a compute node, so the umbrella, every tool env, the conda
+# base and the databases must sit on a filesystem the compute nodes mount. A
+# USDA cluster admin took site.conf.example's SITE_ROOT=/srv/<site> — right for a
+# single lab server, the login node's own disk on a cluster — built the suite
+# there, and the first session went straight to Completed (2026-10-28). conda envs
+# cannot be moved afterwards, so the whole build had to be redone. That costs an
+# hour of solves to discover, and one stat to prevent.
+#
+# _local_fstype <path> — the fstype of the nearest existing ancestor, ONLY when it
+# is one that is never shared between hosts. Shared, unknown and unreadable types
+# print nothing: this speaks only when it is sure (a beegfs or weka mount that stat
+# reports as UNKNOWN must not stop an install).
+_local_fstype() {
+  local p="$1" t
+  while [[ -n "${p}" && ! -e "${p}" ]]; do p="$(dirname "${p}")"; done
+  t="$(stat -f -c %T "${p}" 2>/dev/null || true)"
+  case "${t}" in
+    ext2/ext3|ext4|xfs|btrfs|tmpfs|ramfs|overlayfs|overlay|vfat) printf '%s' "${t}";;
+  esac
+}
+
+# _compute_nodes_elsewhere — true when the card's cluster is Slurm and has nodes
+# other than this machine. A one-box deployment (OOD and Slurm on the same server,
+# like ICAR-NIVEDI's /srv/icar) is correct on local disk and must not be refused.
+_compute_nodes_elsewhere() {
+  grep -qiE '^[[:space:]]*adapter:[[:space:]]*"?slurm' \
+    "${BDTOOLS_OOD_CLUSTERS_D:-/etc/ood/config/clusters.d}/${CLUSTER_NAME}.yml" \
+    2>/dev/null || return 1
+  command -v sinfo >/dev/null 2>&1 || return 0
+  local me n any=0; me="$(hostname -s 2>/dev/null || hostname)"
+  while read -r n; do
+    [[ -n "${n}" ]] || continue
+    any=1
+    [[ "${n}" != "${me}" ]] && return 0
+  done < <(sinfo -h -N -o '%N' 2>/dev/null || true)
+  [[ ${any} -eq 0 ]]   # sinfo said nothing: assume a real cluster
+}
+
+check_roots_reach_compute_nodes() {
+  _compute_nodes_elsewhere || return 0
+  local v p t bad=()
+  for v in SITE_ROOT TOOLS_ROOT CONDA_BASE DATABASES_ROOT; do
+    p="${!v:-}"; [[ -n "${p}" ]] || continue
+    t="$(_local_fstype "${p}")"
+    [[ -n "${t}" ]] && bad+=("${v}=${p}  (${t}, this machine's own disk)")
+  done
+  if [[ ${#bad[@]} -eq 0 ]]; then
+    ok "no install root is on a node-local filesystem"
+    return 0
+  fi
+  warn "cluster '${CLUSTER_NAME}' runs sessions on compute nodes, and these paths are on"
+  warn "a filesystem only $(hostname -s 2>/dev/null || hostname) can see:"
+  local b; for b in "${bad[@]}"; do warn "  ${b}"; done
+  info "  Every session would end at once (\"cannot find the bioinformatic_diagnostic_tools"
+  info "  checkout\"), and conda envs cannot be moved after they are built. Set SITE_ROOT"
+  info "  (and CONDA_BASE, DATABASES_ROOT if set apart) in ${SITE_CONF} to shared storage"
+  info "  the compute nodes mount — check with: srun -N1 -t 5 ls -ld <path>"
+  info "  docs/INSTALL_HPC_OOD.md: 'Choose a path the compute nodes can see'."
+  if [[ ${DRY_RUN} -eq 1 ]]; then
+    warn "  (dry run: reported only — the real run stops here)"
+  elif [[ "${BDTOOLS_ALLOW_LOCAL_ROOT:-0}" == 1 ]]; then
+    warn "  BDTOOLS_ALLOW_LOCAL_ROOT=1 — continuing (this host exports it to the nodes)"
+  else
+    die "refusing to install where the compute nodes cannot see it.
+       If this host exports that filesystem to the nodes, re-run with
+       BDTOOLS_ALLOW_LOCAL_ROOT=1."
+  fi
+}
+
 phase_preflight() {
   log "preflight — ${TOOL}"
   if [[ ${WITH_DEV} -eq 1 ]]; then
@@ -214,6 +285,7 @@ phase_preflight() {
     warn "  institutional: set CLUSTER_NAME to the site's existing cluster id."
     warn "  bare-metal: define it (ood-core bootstrap / vsnp_gui install_ood.sh)."
   fi
+  check_roots_reach_compute_nodes
   detect_conda >/dev/null 2>&1 && ok "conda available" || warn "no conda — toolchain phase needs miniforge at ${CONDA_BASE}"
   command -v npm >/dev/null 2>&1 && ok "npm available" || warn "no npm — frontend build needs Node"
   if [[ ${DRY_RUN} -eq 0 && "$(id -u)" -ne 0 && ! -w "${SYS_APPS_DIR}" ]]; then

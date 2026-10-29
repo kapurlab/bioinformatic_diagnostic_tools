@@ -14,7 +14,16 @@
 SITE_NAME=yoursite
 # Human-readable display name; replaces the literal 'WGS3' in titles.
 SITE_DISPLAY="Your Site"
-# Shared data/install root; replaces '/srv/kapurlab'.
+# Shared data/install root; replaces '/srv/kapurlab'. Tools, conda envs and (by
+# default) databases all go under it.
+#
+# ON A CLUSTER THIS MUST BE STORAGE EVERY COMPUTE NODE MOUNTS. Sessions run on a
+# compute node, not where you install from. The /srv default below is for a single
+# lab server; on a cluster, /srv, /opt, /usr/local and /tmp are usually the login
+# node's own disk, and every session then exits at once. conda envs cannot be
+# moved after they are built, so choose before Step 3. Check from a compute node:
+#   srun -N1 -t 5 ls -ld <path>      (add -p/-A if your site requires them)
+#   e.g. SITE_ROOT=/project/<group>/bdtools
 SITE_ROOT=/srv/${SITE_NAME}
 
 # ---- OOD cluster the app cards target --------------------------------------
@@ -28,7 +37,9 @@ CLUSTER_NAME=yoursite
 # Replaces '/srv/kapurlab/tools'. Each tool is checked out at TOOLS_ROOT/<tool>
 # and its conda env built at TOOLS_ROOT/<tool>/env.
 TOOLS_ROOT=${SITE_ROOT}/tools
-# Conda/mamba base used to build envs. Point at an existing miniforge.
+# Conda/mamba base used to build envs. Point at an existing miniforge — on a
+# cluster, one the compute nodes can see too (the dashboard's update buttons run
+# conda from inside the session, on a compute node).
 CONDA_BASE=${TOOLS_ROOT}/miniforge3
 
 # ---- OOD system-apps directory (where cards are registered) ----------------

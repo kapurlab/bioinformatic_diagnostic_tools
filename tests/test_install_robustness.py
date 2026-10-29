@@ -2088,5 +2088,123 @@ class EnvFromSpecTests(unittest.TestCase):
                          "a caller that already decided must not be second-guessed")
 
 
+class ComputeNodeVisibilityTests(unittest.TestCase):
+    """Sessions run on compute nodes; the install must be where they can see it.
+
+    A USDA cluster admin took site.conf.example's SITE_ROOT=/srv/<site> default,
+    built the whole suite on the login node's own disk, and the first session went
+    straight to Completed (2026-10-28). conda envs cannot be moved, so the build
+    had to be redone. install-server.sh now stops before building there, and the
+    session log says what happened instead of "no shared tools root configured".
+    """
+
+    FNS = ROOT / "bin/install-server.sh"
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        t = Path(self.tmp.name)
+        self.local, self.shared = t / "local", t / "shared"
+        self.local.mkdir(); self.shared.mkdir()
+        self.clusters = t / "clusters.d"
+        write(self.clusters / "slurmy.yml", 'v2:\n  job:\n    adapter: "slurm"\n')
+        write(self.clusters / "onebox.yml", 'v2:\n  job:\n    adapter: "linux_host"\n')
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def check(self, root, cluster="slurmy", nodes="login1 node001",
+              dry_run=0, allow=0, fstype="xfs"):
+        # stat, sinfo and hostname are stubbed as shell functions: the local
+        # tree reports `fstype`, everything else nfs.
+        fns = subprocess.run(
+            ["sed", "-n", "/^_local_fstype()/,/^}/p;/^_compute_nodes_elsewhere()/,/^}/p;"
+             "/^check_roots_reach_compute_nodes()/,/^}/p", str(self.FNS)],
+            capture_output=True, text=True, check=True).stdout
+        script = f"""
+stat() {{ case "${{@: -1}}" in "{self.local}"*) echo "{fstype}";; *) echo nfs;; esac; }}
+hostname() {{ echo login1; }}
+sinfo() {{ printf '%s\\n' {nodes}; }}
+{fns}
+SITE_ROOT="{root}"; TOOLS_ROOT="{root}/tools"; CONDA_BASE="{root}/tools/miniforge3"
+DATABASES_ROOT="{root}/databases"; CLUSTER_NAME={cluster}; SITE_CONF=site.conf
+DRY_RUN={dry_run}
+check_roots_reach_compute_nodes
+echo REACHED-END
+"""
+        return sh(script, env={"BDTOOLS_OOD_CLUSTERS_D": str(self.clusters),
+                               "BDTOOLS_ALLOW_LOCAL_ROOT": str(allow)})
+
+    def test_a_root_on_login_node_disk_is_refused_before_anything_is_built(self):
+        r = self.check(self.local)
+        out = r.stdout + r.stderr
+        self.assertNotEqual(r.returncode, 0, out)
+        self.assertNotIn("REACHED-END", out)
+        self.assertIn("refusing to install where the compute nodes cannot see it", out)
+        for var in ("SITE_ROOT", "TOOLS_ROOT", "CONDA_BASE", "DATABASES_ROOT"):
+            self.assertIn(f"{var}={self.local}", out, "every affected root is named")
+        self.assertIn("srun", out, "the way to check is part of the message")
+
+    def test_a_dry_run_reports_it_and_carries_on(self):
+        r = self.check(self.local, dry_run=1)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("REACHED-END", r.stdout)
+        self.assertIn("the real run stops here", r.stdout + r.stderr)
+
+    def test_the_override_is_for_a_host_that_exports_its_disk(self):
+        r = self.check(self.local, allow=1)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("REACHED-END", r.stdout)
+
+    def test_shared_storage_passes(self):
+        r = self.check(self.shared)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("no install root is on a node-local filesystem", r.stdout + r.stderr)
+
+    def test_a_filesystem_it_cannot_classify_never_stops_an_install(self):
+        # beegfs/weka can read as UNKNOWN to stat; cry-wolf is how checks die.
+        r = self.check(self.local, fstype="UNKNOWN (0x19830326)")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("REACHED-END", r.stdout)
+
+    def test_a_one_box_deployment_on_local_disk_is_correct(self):
+        # OOD and Slurm on the same server (ICAR-NIVEDI's /srv/icar): local is right.
+        for kw in ({"nodes": "login1"}, {"cluster": "onebox"}):
+            r = self.check(self.local, **kw)
+            self.assertEqual(r.returncode, 0, (kw, r.stderr))
+            self.assertNotIn("refusing", r.stdout + r.stderr, kw)
+
+    def test_preflight_runs_the_check(self):
+        text = self.FNS.read_text(encoding="utf-8")
+        pre = text[text.index("\nphase_preflight() {"):text.index("\nphase_toolchain() {")]
+        self.assertIn("check_roots_reach_compute_nodes", pre)
+
+    def _session_snippet(self, rendered_root):
+        """The session script's checkout lookup, rendered the way subst renders it."""
+        text = (ROOT / "ood/apps/bdtools_dashboard/template/script.sh.erb").read_text()
+        snippet = text[text.index("SITE_TOOLS_ROOT=/srv/"):text.index('echo "  umbrella:')]
+        if rendered_root:   # install-server.sh:subst, in its order
+            snippet = (snippet.replace("/srv/kapurlab/tools", rendered_root)
+                       .replace("/srv/kapurlab", str(Path(rendered_root).parent))
+                       .replace("kapurlab", "usda"))
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("BDTOOLS_TOOLS_ROOT", "BDTOOLS_TOOLSDIR", "BDTOOLS_REPO")}
+        env["HOME"] = self.tmp.name
+        return subprocess.run(["bash", "-c", snippet], capture_output=True,
+                              text=True, env=env)
+
+    def test_the_session_log_names_an_install_the_node_cannot_see(self):
+        missing = str(Path(self.tmp.name) / "srv/usda/tools")
+        r = self._session_snippet(missing)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn(f"This card was installed for {missing}, which does not exist",
+                      r.stderr)
+
+    def test_an_unrendered_card_does_not_blame_another_sites_path(self):
+        r = self._session_snippet(None)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("cannot find the bioinformatic_diagnostic_tools checkout", r.stderr)
+        self.assertNotIn("This card was installed for", r.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -59,6 +59,13 @@ role-independent.
    normal card (`manifest.yml`, `form.yml`, `submit.yml.erb`, `view.html.erb`,
    `template/{before.sh,script.sh.erb}`).
 4. **Storage** — see below. This is the biggest ask, and it isn't an OOD ask.
+   One rule matters more than the sizes: **everything goes on storage every
+   compute node mounts.** Sessions run on compute nodes. An install on the login
+   node's own disk (`/srv`, `/opt`, `/usr/local`; `site.conf.example`'s `/srv`
+   default is for a single lab server) builds fine, and then every session ends
+   immediately. The conda envs cannot be moved afterwards, so it means a full
+   rebuild. Check the path from a compute node first:
+   `srun -N1 -t 5 ls -ld <path>`.
 
 Explicitly **not** asked for: no Apache/nginx changes, no PAM or auth changes, no
 dashboard rebranding, no new Unix groups, no `clusters.d` edits, no setuid, no
@@ -100,7 +107,9 @@ implemented, not planned.
 The databases dominate and are the real planning item: Kraken2 standard index
 315 GB, BLAST 25 GB, bovine MHC 4 GB, AMRFinderPlus 240 MB. They are **not**
 bundled and **not** auto-staged — we stage them, but we need a shared,
-group-readable path and quota for them, plus a projects/output area. Both paths
+group-readable path and quota for them, plus a projects/output area. All of it
+(envs, conda base, databases, projects) must be mounted on the compute nodes,
+not just the login node. Both paths
 are configuration (`DATABASES_ROOT`, `SHARED_PROJECTS_ROOT` in `site.conf`); no
 absolute site path is compiled into tool code.
 

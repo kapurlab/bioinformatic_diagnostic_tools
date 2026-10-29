@@ -384,6 +384,33 @@ class UnsatisfiableRecordTests(unittest.TestCase):
             self.assertTrue(rec["update_available"], stale)
             self.assertFalse(rec["held"], stale)
 
+    def test_a_gate_record_from_an_older_gate_no_longer_holds(self):
+        # The HPC held vsnp3 at 3.36 on "not installable on linux-64 osx-64
+        # osx-arm64" — written by a gate that solved with python=3.10 for a tool
+        # whose env runs 3.13 (2026-10-29). Fixing the gate must also release what
+        # it wrongly held, without anyone editing the cache. A record from this
+        # gate still holds, and an in-env conflict is not the gate's to release.
+        def rec_for(record):
+            with tempfile.TemporaryDirectory() as tmp:
+                meta = Path(tmp) / "conda-meta"
+                meta.mkdir()
+                (meta / "vsnp3-3.36-hdfd78af_0.json").touch()
+                with mock.patch.object(PKG, "env_dir_for", return_value=tmp), \
+                     mock.patch.object(PKG, "latest_version", return_value="3.37"), \
+                     mock.patch.object(PKG, "_save_cache", lambda cache: None), \
+                     mock.patch.object(PKG, "unsatisfiable_here", return_value={
+                         "vsnp_gui/vsnp3": {"version": "3.37",
+                                            "pins": PKG.pins_for("vsnp_gui"),
+                                            **record}}):
+                    return next(r for r in PKG.report(["vsnp_gui"], use_network=True)
+                                if r["package"] == "vsnp3")
+        gate = "not installable on linux-64 osx-64 osx-arm64"
+        old = rec_for({"reason": gate})
+        self.assertTrue(old["update_available"])
+        self.assertFalse(old["held"])
+        self.assertTrue(rec_for({"reason": gate, "gate": PKG.GATE_VERSION})["held"])
+        self.assertTrue(rec_for({"reason": "requires python >=3.12"})["held"])
+
     def test_a_record_for_a_different_version_does_not_hold_the_new_one(self):
         # Keyed by version so a NEWER release is tried again — the record suppresses
         # one known-bad answer, it does not abandon the package.
@@ -478,13 +505,92 @@ class CrossPlatformGateTests(unittest.TestCase):
         # Gated unless explicitly overridden — not the other way round.
         self.assertIn("if [[ ${LOCAL_ONLY} -eq 0 ]]", self.script)
 
+    def _fn(self, name):
+        """One function's text from update-packages.sh, to run on its own."""
+        start = self.script.index(f"\n{name}() {{") + 1
+        return self.script[start:self.script.index("\n}\n", start) + 3]
+
+    def _bash(self, body, **env):
+        # `bash` from PATH: on a Mac that is /bin/bash 3.2, the shell the gate
+        # actually died in. set -euo pipefail, as the script runs.
+        import subprocess
+        return subprocess.run(["bash", "-c", "set -euo pipefail\n" + body],
+                              capture_output=True, text=True,
+                              env={**os.environ, **env})
+
     def test_foreign_platform_solves_set_the_osx_override(self):
         # Without CONDA_OVERRIDE_OSX a foreign solve fails on a missing __osx virtual
         # package, which would make every macOS check a false negative and block
-        # every update.
-        helper = self.script[self.script.index("_unavailable_platforms() {"):
-                             self.script.index("_tool_pyver()")]
+        # every update. Both solve sites must go through the one helper.
+        helper = self._fn("_solve_env_for")
         self.assertIn("CONDA_OVERRIDE_OSX", helper)
+        self.assertIn('"${SOLVE_ENV[@]}"', self._fn("_unavailable_platforms"))
+        self.assertIn('"${SOLVE_ENV[@]}"', self._fn("check_pins"))
+
+    def test_a_linux_solve_from_a_mac_supplies_glibc(self):
+        # From a Mac every linux-64 solve failed on "__glibc … missing on the
+        # system": the gate refused vsnp3 3.37 and irma 1.4.0 on Linux, where both
+        # install. On a Linux host the real glibc is the answer and is left alone.
+        import platform
+        out = self._bash(self._fn("_solve_env_for") + """
+for p in linux-64 osx-64 osx-arm64; do
+  _solve_env_for "$p"; echo "$p ${SOLVE_ENV[*]}"
+done""")
+        self.assertEqual(out.returncode, 0, out.stderr)
+        lines = dict(l.split(" ", 1) for l in out.stdout.splitlines())
+        for plat, words in lines.items():
+            self.assertTrue(words.startswith("env"), "never an empty prefix")
+        self.assertIn("CONDA_OVERRIDE_OSX", lines["osx-64"])
+        self.assertIn("CONDA_OVERRIDE_OSX", lines["osx-arm64"])
+        self.assertEqual("CONDA_OVERRIDE_GLIBC" in lines["linux-64"],
+                         platform.system() != "Linux")
+
+    def test_the_gate_answers_under_macos_bash(self):
+        # macOS /bin/bash 3.2 treats "${arr[@]}" of an empty array as unbound under
+        # `set -u`. The old linux-64 prefix was `pre=()`, so the gate's subshell
+        # died on its first platform, printed nothing — and nothing means
+        # "installable everywhere". A Mac's gate passed every set unsolved.
+        with tempfile.TemporaryDirectory() as tmp:
+            stub = Path(tmp) / "conda"
+            stub.write_text('#!/bin/sh\ncase "$*" in *osx-arm64*) exit 1;; esac\n'
+                            'exit 0\n')
+            stub.chmod(0o755)
+            fns = self._fn("_solve_env_for") + self._fn("_unavailable_platforms")
+            call = '\n_unavailable_platforms t python=3.13 irma=1.4.0'
+            env = {"BDTOOLS_HOME": tmp, "CONDA_BIN": str(stub),
+                   "PLATFORMS": "linux-64,osx-64,osx-arm64"}
+            blocked = self._bash(fns + call, **env)
+            self.assertEqual((blocked.returncode, blocked.stdout), (0, "osx-arm64"),
+                             blocked.stderr)
+            env["CONDA_BIN"] = "/usr/bin/true"
+            clear = self._bash(fns + call, **env)
+            self.assertEqual((clear.returncode, clear.stdout, clear.stderr),
+                             (0, "", ""))
+
+    def test_the_gate_solves_with_the_envs_own_python(self):
+        # vsnp_gui declares no conda_setup/environment.yml, so the gate fell back to
+        # python=3.10 — and vsnp3 3.37 needs >=3.12,<3.14. The env being updated
+        # runs 3.13; that is the python to solve with. Look-alike records
+        # (python_abi, python-dateutil) must not be mistaken for it.
+        with tempfile.TemporaryDirectory() as tmp:
+            meta = Path(tmp) / "env" / "conda-meta"
+            meta.mkdir(parents=True)
+            for f in ("python_abi-3.13-8_cp313.json",
+                      "python-dateutil-2.9.0.post0-pyhe01879c_2.json",
+                      "python-3.13.15-hb59dee6_103_cp313.json"):
+                (meta / f).touch()
+            yml = Path(tmp) / "tool" / "conda_setup"
+            yml.mkdir(parents=True)
+            fns = (self._fn("_tool_pyver")
+                   + f'tool_dir() {{ printf %s "{tmp}/${{TOOL_DIR:-none}}"; }}\n')
+            got = lambda *a, **e: self._bash(fns + "_tool_pyver " + " ".join(a), **e)
+            self.assertEqual(got("vsnp_gui", f"{tmp}/env").stdout, "python=3.13")
+            self.assertEqual(got("vsnp_gui", '""').stdout, "python=3.10")
+            (yml / "environment.yml").write_text("dependencies:\n  - python=3.11\n")
+            self.assertEqual(got("irma_gui", '""', TOOL_DIR="tool").stdout,
+                             "python=3.11")
+            self.assertEqual(got("irma_gui", f"{tmp}/env", TOOL_DIR="tool").stdout,
+                             "python=3.13", "the env outranks the declaration")
 
 
 class PinPlatformTests(unittest.TestCase):

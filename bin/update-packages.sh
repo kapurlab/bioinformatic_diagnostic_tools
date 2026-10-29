@@ -84,7 +84,31 @@ PKG_PY="${KT_BIN_DIR}/lib/packages.py"
 #
 # CONDA_OVERRIDE_OSX is required for the osx targets: solving for a foreign platform
 # otherwise fails on a missing __osx virtual package, which reads exactly like a real
-# dependency conflict and sends you after the wrong thing.
+# dependency conflict and sends you after the wrong thing. linux-64 needs the same
+# for __glibc when the host is not Linux — see _solve_env_for.
+
+# _solve_env_for <platform> — set SOLVE_ENV to the `env VAR=…` prefix a dry-run
+# solve for <platform> needs on THIS host. The virtual packages a foreign platform
+# requires are absent unless overridden, and their absence reads exactly like a real
+# conflict: from a Mac every linux-64 solve failed on "__glibc … missing on the
+# system", so a Mac's gate refused vsnp3 3.37 (via vcflib -> libzlib) and irma 1.4.0
+# (via samtools -> openssl) on Linux, where both install. On a Linux host the real
+# glibc is detected and is the right answer, so it is not overridden. 2.28 is EL8,
+# the oldest Linux the lab deploys to.
+#
+# Always starts with `env`, so the array is never empty: macOS's /bin/bash is 3.2,
+# where "${arr[@]}" of an empty array under `set -u` is an unbound-variable error.
+# The old `pre=()` for linux-64 killed the gate's subshell on its first platform,
+# the substitution came back empty, and empty means "installable everywhere" — on a
+# Mac the gate passed every set without solving anything.
+_solve_env_for() {
+  SOLVE_ENV=(env)
+  case "$1" in
+    osx-*)   SOLVE_ENV+=(CONDA_OVERRIDE_OSX=13.0);;
+    linux-*) [[ "$(uname -s)" == Linux ]] || SOLVE_ENV+=(CONDA_OVERRIDE_GLIBC=2.28);;
+  esac
+}
+
 check_pins() {
   local conda; conda="$(detect_conda)" || die "conda/mamba not found."
   CONDA_BIN="${conda}"
@@ -100,16 +124,14 @@ check_pins() {
     done
     [[ ${#want[@]} -gt 0 ]] || continue
     # Match the python the tool's env is built with, since that constrains the solve.
-    pyver="$(grep -m1 -oE 'python=3\.[0-9]+' "$(tool_dir "${tool}")/conda_setup/environment.yml" 2>/dev/null || true)"
-    [[ -z "${pyver}" ]] && pyver="python=3.10"
+    pyver="$(_tool_pyver "${tool}" "$(tool_env_prefix "${tool}" 2>/dev/null || true)")"
     log "${tool}: ${want[*]}  (${pyver})"
     for plat in ${PLATFORMS//,/ }; do
       checked=$((checked + 1))
       local logf="${BDTOOLS_HOME}/logs/${tool}-pins-${plat}.log"
       mkdir -p "$(dirname "${logf}")"
-      local -a env_pre=()
-      [[ "${plat}" == osx-* ]] && env_pre=(env CONDA_OVERRIDE_OSX=13.0)
-      if "${env_pre[@]}" "${conda}" create --dry-run -y -n "bdtools-pincheck-$$" \
+      _solve_env_for "${plat}"
+      if "${SOLVE_ENV[@]}" "${conda}" create --dry-run -y -n "bdtools-pincheck-$$" \
            --platform "${plat}" -c conda-forge -c bioconda \
            "${pyver}" "${want[@]}" > "${logf}" 2>&1; then
         ok "  ${plat}: installable"
@@ -229,20 +251,38 @@ _unavailable_platforms() {  # _unavailable_platforms <tool> <pyver> <spec>...
   for plat in ${PLATFORMS//,/ }; do
     logf="${BDTOOLS_HOME}/logs/${tool}-gate-${plat}.log"
     mkdir -p "$(dirname "${logf}")"
-    local -a pre=()
-    [[ "${plat}" == osx-* ]] && pre=(env CONDA_OVERRIDE_OSX=13.0)
-    if ! "${pre[@]}" "${CONDA_BIN}" create --dry-run -y -n "bdtools-gate-$$" \
+    _solve_env_for "${plat}"
+    if ! "${SOLVE_ENV[@]}" "${CONDA_BIN}" create --dry-run -y -n "bdtools-gate-$$" \
           --platform "${plat}" -c conda-forge -c bioconda "${pyver}" "$@" \
           > "${logf}" 2>&1; then
       bad+=("${plat}")
     fi
   done
-  printf '%s' "${bad[*]}"
+  # :- for the same bash 3.2 reason: an empty `bad` is the all-clear, not an error.
+  printf '%s' "${bad[*]:-}"
 }
 
+# _tool_pyver <tool> [envdir] — the python the gate solves with: the env's own
+# python first, then conda_setup/environment.yml, then 3.10.
+#
+# The env comes first because not every tool declares one. vsnp_gui has no
+# conda_setup/environment.yml (its env is `conda create vsnp3=<pin> snp-dists`, so
+# python is whatever that pin solves to — 3.13 today), the gate fell through to
+# python=3.10, and vsnp3 3.37 requires python >=3.12,<3.14. Every platform then
+# "could not install" a version that installs on all of them, and the HPC held
+# vsnp3 at 3.36 (2026-10-29). The env being updated is the one fact here about
+# what this tool actually runs on.
 _tool_pyver() {
-  local v
-  v="$(grep -m1 -oE 'python=3\.[0-9]+' "$(tool_dir "$1")/conda_setup/environment.yml" 2>/dev/null || true)"
+  local v="" f
+  if [[ -n "${2:-}" ]]; then
+    for f in "$2"/conda-meta/python-3.*.json; do
+      [[ -e "${f}" ]] || continue
+      v="$(basename "${f}" | sed -nE 's/^python-(3\.[0-9]+)\..*/python=\1/p')"
+      [[ -n "${v}" ]] && break
+    done
+  fi
+  [[ -n "${v}" ]] || \
+    v="$(grep -m1 -oE 'python=3\.[0-9]+' "$(tool_dir "$1")/conda_setup/environment.yml" 2>/dev/null || true)"
   printf '%s' "${v:-python=3.10}"
 }
 
@@ -388,7 +428,7 @@ PYREC
   # is the deliberate escape hatch for a machine-specific experiment.
   if [[ ${LOCAL_ONLY} -eq 0 ]]; then
     info "  checking the same set on ${PLATFORMS}…"
-    local badplats; badplats="$(_unavailable_platforms "${tool}" "$(_tool_pyver "${tool}")" "${specs[@]}")"
+    local badplats; badplats="$(_unavailable_platforms "${tool}" "$(_tool_pyver "${tool}" "${envdir}")" "${specs[@]}")"
     if [[ -n "${badplats}" ]]; then
       for p in "${plan[@]}"; do
         IFS='|' read -r pkg channel installed want <<< "${p}"

@@ -118,6 +118,16 @@ def pins_for(tool, specs=None):
     return sorted(f"{name}={pinned}" for _channel, name, pinned in specs.get(tool, []))
 
 
+# Bumped whenever update-packages.sh's cross-platform gate changes what it would
+# answer. Gate records ("not installable on <platforms>") from an older gate are
+# not evidence and are dropped, so the version is tried again. Gate 1 solved with
+# python=3.10 for any tool without a conda_setup/environment.yml, and on a Mac with
+# no __glibc for linux-64 — together that held vsnp3 3.37 on every platform while it
+# installs on all of them (2026-10-29). A record from an in-env solve is a different
+# question, answered by this env, and is not affected.
+GATE_VERSION = 2
+
+
 def record_unsatisfiable(tool, package, version, reason=""):
     """Remember that <package>=<version> could not be installed for <tool> here.
 
@@ -141,7 +151,7 @@ def record_unsatisfiable(tool, package, version, reason=""):
         pins = []   # unreadable manifest -> a pins mismatch later, i.e. a re-try
     data.setdefault(_platform_key(), {})[f"{tool}/{package}"] = {
         "version": version, "reason": reason, "at": int(time.time()),
-        "pins": pins,
+        "pins": pins, "gate": GATE_VERSION,
     }
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -381,6 +391,11 @@ def report(tools=None, use_network=True):
             # asked — drop it and let the next run re-try, instead of staying
             # "held" forever on a conflict that may have moved out of the env.
             if tried and tried.get("pins") != pins_for(tool, specs):
+                tried = {}
+            # ...and a cross-platform gate answer only while it came from the gate
+            # that runs now (see GATE_VERSION).
+            if (tried and (tried.get("reason") or "").startswith("not installable on")
+                    and tried.get("gate", 1) < GATE_VERSION):
                 tried = {}
             blocked_version = tried.get("version", "")
             newer = is_newer(latest, inst) if inst else False

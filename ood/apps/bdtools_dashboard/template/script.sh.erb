@@ -124,6 +124,23 @@ echo "  session budget: ${BDTOOLS_SESSION_CORES} cores, ${BDTOOLS_SESSION_MEM_GB
 # used. An exported CONDA_BASE still wins, and a path that is not present here is
 # dropped rather than passed on as another machine's layout.
 CONDA_BASE="${CONDA_BASE:-}"
+# A SITE card carries the site's own base, rendered by install-server.sh from
+# site.conf's CONDA_BASE. It replaces whatever this job inherited: an inherited
+# CONDA_BASE (or CONDA_EXE) comes from the launching user's login profile, so it
+# names THAT person's conda — the 2026-10-29 USDA report, where vSNP opened from
+# one user's personal miniconda for him and for nobody else. The launcher reads
+# BDTOOLS_SITE_CONDA_BASE for the same reason (tool_launch._site_env).
+SITE_CONDA_BASE=
+if [ -n "${SHARED_REPO}" ] && [ "${REPO}" = "${SHARED_REPO}" ]; then
+  if [ -n "${SITE_CONDA_BASE}" ] && [ -d "${SITE_CONDA_BASE}" ]; then
+    CONDA_BASE="${SITE_CONDA_BASE}"
+    export BDTOOLS_SITE_CONDA_BASE="${SITE_CONDA_BASE}"
+  else
+    CONDA_BASE=""
+  fi
+  # Same python, same packages, for every user: no ~/.local site-packages.
+  export PYTHONNOUSERSITE=1
+fi
 if [ -n "${CONDA_BASE}" ] && [ -d "${CONDA_BASE}" ]; then
   export CONDA_BASE
   echo "  conda base: ${CONDA_BASE}"
@@ -143,14 +160,21 @@ CANDS=()
 if [ -n "${SITE_TOOLS_ROOT}" ]; then
   CANDS+=( "${SITE_TOOLS_ROOT}"/*/env/bin/python "${SITE_TOOLS_ROOT}"/vsnp3/bin/python )
 fi
-# <checkout>/env is where install-local.sh builds a per-user env, and it was not
-# searched at all: a personal install with no miniforge base had no candidate
-# here and the session died with "no python with starlette+httpx+uvicorn found"
-# while every tool it lists had one.
-CANDS+=( "${BD_CHECKOUTS}"/*/env/bin/python )
-for base in ${CONDA_BASE:+"${CONDA_BASE}"} "${HOME}/miniforge3" "${HOME}/miniconda3" "${HOME}/mambaforge" "${HOME}/anaconda3"; do
-  CANDS+=( "${base}"/envs/*/bin/python "${base}/bin/python" )
-done
+if [ -n "${SHARED_REPO}" ] && [ "${REPO}" = "${SHARED_REPO}" ]; then
+  # A site session: the site's envs and the site's conda base, and nothing of
+  # the launching user's — or the dashboard starts for one person and not the
+  # next, for reasons neither can see.
+  [ -n "${CONDA_BASE:-}" ] && CANDS+=( "${CONDA_BASE}"/envs/*/bin/python "${CONDA_BASE}/bin/python" )
+else
+  # <checkout>/env is where install-local.sh builds a per-user env, and it was
+  # not searched at all: a personal install with no miniforge base had no
+  # candidate here and the session died with "no python with
+  # starlette+httpx+uvicorn found" while every tool it lists had one.
+  CANDS+=( "${BD_CHECKOUTS}"/*/env/bin/python )
+  for base in ${CONDA_BASE:+"${CONDA_BASE}"} "${HOME}/miniforge3" "${HOME}/miniconda3" "${HOME}/mambaforge" "${HOME}/anaconda3"; do
+    CANDS+=( "${base}"/envs/*/bin/python "${base}/bin/python" )
+  done
+fi
 for cand in "${CANDS[@]}"; do
   [ -x "${cand}" ] || continue
   if "${cand}" -c 'import starlette, httpx, uvicorn' >/dev/null 2>&1; then
@@ -160,6 +184,11 @@ done
 if [ -z "${PYTHON}" ]; then
   echo "ERROR: no python with starlette+httpx+uvicorn found. Install any tool" >&2
   echo "       (its conda env ships these) or add them to a base env." >&2
+  if [ -n "${SHARED_REPO}" ] && [ "${REPO}" = "${SHARED_REPO}" ]; then
+    echo "       Site session: only ${SITE_TOOLS_ROOT}/*/env, ${SITE_TOOLS_ROOT}/vsnp3" >&2
+    echo "       and the card's site conda base (${SITE_CONDA_BASE:-none rendered}) are searched —" >&2
+    echo "       never one user's own conda. docs/INSTALL_HPC_OOD.md, Step 3." >&2
+  fi
   exit 1
 fi
 echo "  python:   ${PYTHON}"

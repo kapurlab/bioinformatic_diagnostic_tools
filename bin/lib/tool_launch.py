@@ -183,7 +183,7 @@ def _recorded_env_dir(tool):
         "`bdtools install %s` to settle it." % (tool, prefix, tool))
 
 
-def _resolve_asset_dir(tool, rel, d, sb_dir=""):
+def _resolve_asset_dir(tool, rel, d, sb_dir="", site=False):
     """Locate a tool's vendored asset dir, tolerating a source-tree override.
 
     Large third-party payloads are gitignored (ksnp_gui/vendor/.gitignore ignores
@@ -210,7 +210,8 @@ def _resolve_asset_dir(tool, rel, d, sb_dir=""):
     hit = _try(os.path.join(d, rel))
     if hit:
         return hit, tried
-    if os.environ.get("BDTOOLS_TOOLSDIR", "").strip() and not sb_dir:
+    # Not for a site tool: the installed checkout is the launching user's own.
+    if os.environ.get("BDTOOLS_TOOLSDIR", "").strip() and not sb_dir and not site:
         installed_dir = os.path.join(_bdtools_home(), "checkouts", tool)
         if os.path.abspath(d) != os.path.abspath(installed_dir):
             hit = _try(os.path.join(installed_dir, rel))
@@ -287,6 +288,147 @@ def _sandbox_env(tool):
     except OSError:
         pass
     return app_dir, app_env
+
+
+class SiteEnvMissing(RuntimeError):
+    """A SITE deployment has no environment of its own that can serve this tool.
+
+    Its own class so a caller that would otherwise go looking in a personal conda
+    (common.sh:tool_env_python's `conda run -n` fallback) can tell "the site is not
+    built" from "nothing is installed here", and refuse to substitute one user's env
+    for the site's."""
+
+
+# How to build a site's env for a tool, when none resolves. vsnp_gui is the one
+# whose env is not <tool>/env: its shared vsnp3 env comes from its own installer.
+# (what to do, the command, where the guide explains it)
+_SITE_ENV_FIX = {
+    "vsnp_gui": ("build the shared vsnp3 env at {root}/vsnp3 with vSNP's own installer",
+                 "cd {root}/vsnp_gui && sudo ./deploy/install_ood.sh "
+                 "--site-conf deploy/site.conf toolchain",
+                 "docs/INSTALL_HPC_OOD.md Step 3b"),
+}
+_SITE_ENV_FIX_DEFAULT = ("build it",
+                         "sudo bin/bdtools install {tool} --server --site-conf sites/site.conf",
+                         "docs/INSTALL_HPC_OOD.md Step 3")
+
+
+def site_env_fix(tool, root):
+    """The command that builds a site's env for `tool` (doctor's FIX line)."""
+    return _SITE_ENV_FIX.get(tool, _SITE_ENV_FIX_DEFAULT)[1].format(root=root, tool=tool)
+
+
+def _site_tools_root(tool, d):
+    """The tools root when `d` is a SITE deployment of `tool`, else "".
+
+    THE 2026-10-29 USDA REPORT. On a SciComp OOD site, vSNP opened from the
+    dashboard for tstuber, who installed the suite, and for nobody else. Every
+    step of resolve() after the site's own envs is per-user: ~/.config/<tool>/
+    sandbox.env, the env-prefix record under the installer's BDTOOLS_HOME, the
+    installed personal checkout, and conda bases found through CONDA_BASE /
+    CONDA_EXE / ~/miniconda3 — which conda init in a login profile hands a batch
+    job. The site's vsnp3 env was never built, so vSNP resolved through
+    tstuber's personal miniconda: world-readable, so it RAN for him, and
+    invisible to everyone else, whose sessions found nothing. A site tool must
+    launch from site state alone, the same way for every user, or fail the same
+    way for every user.
+
+    A site deployment is recognised, not assumed: `d` is not the managed
+    per-user checkout, and its parent is either the TOOLS_ROOT the site
+    declares or the directory holding this umbrella. The latter is what the
+    dashboard card requires (<TOOLS_ROOT>/bioinformatic_diagnostic_tools), so
+    every card session qualifies. A `--tools-dir` feature worktree is neither,
+    and a sandbox or local install is the managed checkout, so both keep their
+    per-user resolution exactly as before."""
+    if not d:
+        return ""
+    real = os.path.realpath(d)
+    if real == os.path.realpath(os.path.join(_bdtools_home(), "checkouts", tool)):
+        return ""
+    parent = os.path.dirname(real)
+    declared = (site_paths.site_config(_REPO_DIR).get("TOOLS_ROOT") or "").strip()
+    for root in (declared, os.path.dirname(_REPO_DIR)):
+        if root and os.path.realpath(root) == parent:
+            # Compared resolved, returned as given: env paths, logs and the
+            # error text should read the way the site writes its own paths.
+            return os.path.dirname(os.path.abspath(d))
+    return ""
+
+
+# env dirs already seen to hold the web stack. Positive answers only: an env that
+# gains uvicorn later (complete-env, a rebuild) is recognised on the next look.
+_WEB_READY = set()
+
+
+def _web_ready(env_dir):
+    """Does this env's OWN site-packages hold uvicorn and fastapi?
+
+    Every tool is a FastAPI app run by uvicorn, so an env without them is not a
+    candidate however complete its analysis packages are. A bare bioconda vsnp3
+    env has a python and neither. Read from the filesystem rather than by
+    importing: resolve() runs for every tool on every dashboard discovery pass,
+    and a python per candidate per pass would make the page crawl on shared
+    storage. Also deliberately blind to ~/.local user site-packages, the other
+    way one user's environment could make a site env work for them alone."""
+    if env_dir in _WEB_READY:
+        return True
+    import glob
+    for mod in ("uvicorn", "fastapi"):
+        if not glob.glob(os.path.join(env_dir, "lib", "python3*", "site-packages", mod)):
+            return False
+    _WEB_READY.add(env_dir)
+    return True
+
+
+def _site_env(tool, root, d, spec, env_name):
+    """(env_dir, source, tried) from SITE state only; env_dir "" if none serves.
+
+    Candidates, in order: the shared sibling env (<root>/vsnp3), the tool's own
+    <d>/env, and <site conda base>/envs/<env> — the base taken from the card or
+    sites/site.conf (site_paths.site_conda_base), never from the user's shell."""
+    cands = []
+    if spec["shared_env_sibling"]:
+        cands.append(("site shared env", os.path.join(root, spec["shared_env_sibling"])))
+    cands.append(("site tool env", os.path.join(d, "env")))
+    base = site_paths.site_conda_base(_REPO_DIR)
+    if base is not None:
+        cands.append(("site conda base", os.path.join(str(base), "envs", env_name)))
+    tried = []
+    for source, cand in cands:
+        if not os.path.isfile(os.path.join(cand, "bin", "python")):
+            tried.append("%s (no python)" % cand)
+        elif not _web_ready(cand):
+            tried.append("%s (python, but no uvicorn/fastapi in its site-packages)" % cand)
+        else:
+            return cand, source, tried
+    if base is None:
+        tried.append("<site conda base>/envs/%s (CONDA_BASE is not declared in %s)"
+                     % (env_name, os.path.join(_REPO_DIR, "sites", "site.conf")))
+    return "", "", tried
+
+
+def _site_missing_message(tool, root, tried, personal):
+    """One paragraph: what was checked, why per-user state was not used, the fix.
+
+    It lands on the dashboard card in place of the tool, so it has to read as an
+    explanation, not a stack trace, and name the command that ends it."""
+    msg = ["%s: none of this site's environments can run it, so it will not start "
+           "for any user. Checked: %s." % (tool, "; ".join(tried))]
+    if personal:
+        path, source = personal
+        msg.append("Your account also reaches %s (through %s), but a site tool "
+                   "never runs from one person's environment — that is how it "
+                   "could open for one user and not another." % (path, source))
+        base, leaf = os.path.split(path)
+        if os.path.basename(base) == "envs":
+            msg.append("If that env is meant to be the site's, declare its conda "
+                       "base for everyone: CONDA_BASE=%s in %s." % (
+                           os.path.dirname(base),
+                           os.path.join(_REPO_DIR, "sites", "site.conf")))
+    what, _cmd, doc = _SITE_ENV_FIX.get(tool, _SITE_ENV_FIX_DEFAULT)
+    msg.append("Otherwise %s: %s (%s)." % (what.format(root=root, tool=tool),
+                                          site_env_fix(tool, root), doc))
+    return " ".join(msg)
 
 
 # resolve() builds the sibling map by asking resolve() about each sibling, so the
@@ -383,8 +525,16 @@ def resolve(tool, port, host="127.0.0.1"):
     Raises RuntimeError with an actionable message if nothing runnable is found.
     """
     spec = _spec(tool)
-    sb_dir, sb_env = _sandbox_env(tool)
-    d = sb_dir or tool_dir(tool)
+    d = tool_dir(tool)
+    # A site deployment is decided BEFORE sandbox.env is read: that file is
+    # per-user and would otherwise swap the site checkout itself for a personal
+    # one (see _site_tools_root).
+    site_root = _site_tools_root(tool, d)
+    if site_root:
+        sb_dir = sb_env = ""
+    else:
+        sb_dir, sb_env = _sandbox_env(tool)
+        d = sb_dir or d
     if not os.path.isdir(os.path.join(d, spec["workdir"])):
         raise RuntimeError("%s: no %s/ at %s (tool not installed here?)" % (tool, spec["workdir"], d))
 
@@ -432,21 +582,35 @@ def resolve(tool, port, host="127.0.0.1"):
     # search is what picked the wrong env of two same-named ones (see
     # _recorded_env_dir).
     recorded_env, recorded_warning = _recorded_env_dir(tool)
-    env_dir = None
-    for cand in (sb_env, recorded_env, shared_env, own_env, source_override_env):
-        if _has_python(cand):
-            env_dir = cand
-            break
-    if env_dir is None:
-        env_dir = next((p for p in personal_envs if _has_python(p)), None)
-
-    if env_dir:
+    personal_order = [("~/.config/%s/sandbox.env" % tool, sb_env),
+                      ("the env-prefix record in %s" % _bdtools_home(), recorded_env),
+                      ("shared env", shared_env), ("tool env", own_env),
+                      ("the installed personal checkout", source_override_env)]
+    personal_order += [("conda base %s" % os.path.dirname(os.path.dirname(p)), p)
+                       for p in personal_envs]
+    env_dir, env_source = None, ""
+    if site_root:
+        # Site state only — and the SAME answer for every user, including "none".
+        recorded_warning = ""
+        env_dir, env_source, tried = _site_env(tool, site_root, d, spec, env_name)
+        if not env_dir:
+            personal = next(((p, src) for src, p in personal_order
+                             if _has_python(p) and p not in (shared_env, own_env)), None)
+            raise SiteEnvMissing(_site_missing_message(tool, site_root, tried, personal))
         python = os.path.join(env_dir, "bin", "python")
     else:
-        python = next((p for p in base_pythons if os.path.isfile(p)), None)
-    if not python:
-        looked = ", ".join([shared_env] + personal_envs + base_pythons)
-        raise RuntimeError("%s: no python found (looked for %s)" % (tool, looked))
+        for src, cand in personal_order:
+            if _has_python(cand):
+                env_dir, env_source = cand, src
+                break
+        if env_dir:
+            python = os.path.join(env_dir, "bin", "python")
+        else:
+            python = next((p for p in base_pythons if os.path.isfile(p)), None)
+            env_source = "conda base python" if python else ""
+        if not python:
+            looked = ", ".join([shared_env] + personal_envs + base_pythons)
+            raise RuntimeError("%s: no python found (looked for %s)" % (tool, looked))
 
     # ---- build the environment overrides
     # env_overrides records ONLY the variables this function sets on top of the
@@ -466,7 +630,7 @@ def resolve(tool, port, host="127.0.0.1"):
     # loud warning at LAUNCH rather than a bare "command not found" mid-analysis.
     missing_assets = []
     for rel in spec["path_prepend"]:
-        asset, tried = _resolve_asset_dir(tool, rel, d, sb_dir=sb_dir)
+        asset, tried = _resolve_asset_dir(tool, rel, d, sb_dir=sb_dir, site=bool(site_root))
         if asset:
             path_parts.append(asset)
             continue
@@ -500,6 +664,13 @@ def resolve(tool, port, host="127.0.0.1"):
     # baked-in path. BDTOOLS_TOOLS_ROOT is the dir CONTAINING the checkouts, so a
     # sibling tool is <root>/<tool>; we pass the tree we actually resolved above,
     # which also keeps a feature worktree self-consistent.
+    # A site tool runs the same python for everyone, so it must also IMPORT the
+    # same packages for everyone: ~/.local user site-packages are the launching
+    # user's, and a uvicorn pip-installed there makes a site env work for that
+    # one person.
+    if site_root:
+        env["PYTHONNOUSERSITE"] = "1"
+        env_overrides["PYTHONNOUSERSITE"] = "1"
     for _k, _v in site_paths.as_env(_REPO_DIR).items():
         env[_k] = _v
         env_overrides[_k] = _v
@@ -603,7 +774,11 @@ def resolve(tool, port, host="127.0.0.1"):
         # deployment declares.
         _managed = os.path.join(_bdtools_home(), "checkouts", tool)
         _is_personal = os.path.realpath(d) == os.path.realpath(_managed)
-        if os.path.isdir(_site) and (_is_personal or not env.get(site_paths.ENV_SITE_ROOT)):
+        # Never for a site tool: <BDTOOLS_HOME>/vsnp3-site is the launching
+        # user's own tree, and taking it there is the per-user substitution
+        # _site_tools_root exists to stop.
+        if not site_root and os.path.isdir(_site) and (
+                _is_personal or not env.get(site_paths.ENV_SITE_ROOT)):
             env.setdefault("VSNP_GUI_SITE_ROOT", _site)
             # Single-user local install: one Projects root. "" is authoritative-empty
             # in the backend (disables the multi-user shared root); mirrors install-local.sh.
@@ -643,6 +818,10 @@ def resolve(tool, port, host="127.0.0.1"):
         "env_overrides": env_overrides,
         "python": python,
         "env_dir": env_dir or "(base)",
+        # Which candidate won, and whether this was resolved as a site tool —
+        # the two facts that explain "it opens for me and not for them".
+        "env_source": env_source,
+        "site_root": site_root,
         "dir": d,
         "warnings": warnings,
         "notices": notices,

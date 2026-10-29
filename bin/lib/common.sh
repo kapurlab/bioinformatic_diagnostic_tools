@@ -631,19 +631,28 @@ tool_env_python() {
     # shell variable in common.sh, never exported, so reading it from os.environ
     # here silently found nothing and every lookup fell through to the old
     # heuristics — the bug this function exists to fix, still happening.
+    # "!" = a SITE tool with no site env. Then there is no fallback: both
+    # fallbacks below are this shell's own view — <dir>/env without the web stack,
+    # and `conda run -n` under whichever conda THIS user's PATH finds — and
+    # answering with them made doctor grade an env the dashboard would never
+    # launch for anyone else (tool_launch._site_tools_root, 2026-10-29).
     py="$("${PYBIN}" -c '
 import os, sys
 sys.path.insert(0, sys.argv[1])
 try:
     import tool_launch
     d = (tool_launch.resolve(sys.argv[2], 0) or {}).get("env_dir") or ""
-except Exception:
+except Exception as exc:
+    if type(exc).__name__ == "SiteEnvMissing":
+        print("!")
+        sys.exit(0)
     d = ""
 if d and d != "(base)":
     p = os.path.join(d, "bin", "python")
     if os.path.exists(p):
         print(p)
 ' "${KT_BIN_DIR}/lib" "${name}" 2>/dev/null)"
+    [[ "${py}" == "!" ]] && return 0
     [[ -n "${py}" ]] && { echo "${py}"; return; }
   fi
   if [[ -x "${dir}/env/bin/python" ]]; then echo "${dir}/env/bin/python"; return; fi
@@ -652,6 +661,24 @@ if d and d != "(base)":
      && "${conda}" env list 2>/dev/null | awk '{print $1}' | grep -qxF "${envname}"; then
     "${conda}" run -n "${envname}" sh -c 'echo $CONDA_PREFIX/bin/python' 2>/dev/null
   fi
+}
+
+# tool_env_problem TOOL — when TOOL is a site tool with no site env: the launcher's
+# explanation on line 1 and the command that builds it on line 2. Nothing
+# otherwise. doctor prints it, so the terminal says what the dashboard card says.
+tool_env_problem() {
+  "${PYBIN}" -c '
+import sys
+sys.path.insert(0, sys.argv[1])
+try:
+    import tool_launch
+    tool_launch.resolve(sys.argv[2], 0)
+except Exception as exc:
+    if type(exc).__name__ == "SiteEnvMissing":
+        root = tool_launch._site_tools_root(sys.argv[2], tool_launch.tool_dir(sys.argv[2]))
+        print(exc)
+        print(tool_launch.site_env_fix(sys.argv[2], root))
+' "${KT_BIN_DIR}/lib" "$1" 2>/dev/null || true
 }
 
 # ---- the env a tool was actually BUILT into --------------------------------

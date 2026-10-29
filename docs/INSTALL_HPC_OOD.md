@@ -44,11 +44,13 @@ Please read these. They are the failures we have seen, not hypotheticals.
    The dashboard needs a Python that has `starlette`, `httpx` and `uvicorn`, and
    it gets that from a tool environment. Install the card first and the session
    will start and immediately exit with an error.
-4. **Two of the nine tools do not build with the standard command, and the
-   installer only *warns* about it.** `bdtools install all --server` will finish
-   looking successful while `vsnp_gui` and `kraken_id_parse_gui` have no
-   environment at all. [Steps 3b and 3c](#step-3--build-the-tool-environments)
-   are not optional.
+4. **vSNP does not build with the standard command.** `bdtools install all
+   --server` reports `install failed: vsnp_gui` with the exact command for
+   [Step 3b](#3b-vsnp_gui--build-the-shared-vsnp3-environment), which builds its
+   shared `vsnp3` environment. That step is not optional. Until it runs, vSNP
+   will not open for **anyone**. A site tool never borrows a user's own conda
+   environment, so it cannot work for whoever happened to install it and fail for
+   everyone else. See [A tool opens for one user and not another](#a-tool-opens-for-one-user-and-not-another).
 5. **Install only the dashboard card.** Each tool also ships its own per-tool
    card. Those still work, but each one starts *its own* scheduler job, and they
    have **no application-level authentication**. Registering them defeats the
@@ -245,7 +247,7 @@ Now edit it. These are the fields that matter:
 | `SITE_ROOT` | Shared root for tools, refs, projects: the [Step 0](#step-0--choose-a-path-the-compute-nodes-can-see) path, mounted on every compute node. **Not** the example file's `/srv/<site>` default, which is for a single lab server | `/shared/apps/bdtools` |
 | `CLUSTER_NAME` | **Your cluster id** — must match `/etc/ood/config/clusters.d/<id>.yml` | `roar` |
 | `TOOLS_ROOT` | Where tool checkouts and environments go | `${SITE_ROOT}/tools` |
-| `CONDA_BASE` | An existing conda/miniforge base, also visible from the compute nodes | `${TOOLS_ROOT}/miniforge3` |
+| `CONDA_BASE` | An existing conda/miniforge base, also visible from the compute nodes. The card is rendered with it, and it is the **only** conda base a session searches for a tool's named env (`<CONDA_BASE>/envs/<env>`). The conda on a user's own `PATH` is never used | `${TOOLS_ROOT}/miniforge3` |
 | `SYS_APPS_DIR` | OOD system apps directory | `/var/www/ood/apps/sys` |
 | `DATABASES_ROOT` | Where reference databases will live | `${SITE_ROOT}/databases` |
 
@@ -303,16 +305,18 @@ This clones each tool at its pinned tag into `$TOOLS_ROOT/<tool>` and builds its
 conda environment at `$TOOLS_ROOT/<tool>/env`. Expect it to take a while;
 `amr_plus_gui` and `kraken_id_parse_gui` are multi-GB environments.
 
-> **Read the output.** This command builds seven of the nine tools. For the other
-> two it prints a **warning and continues** — it does not fail. Look for:
+> **Read the output.** Each tool ends with the environment every user's session
+> will launch it from:
 >
 > ```
-> !! vsnp_gui has no deploy/install.sh — build its env+frontend manually,
-> !! kraken_id_parse_gui has no deploy/install.sh — build its env+frontend manually,
+> ok every user's session launches mlst_gui from /shared/apps/bdtools/tools/mlst_gui/env (site tool env)
 > ```
 >
-> Those two are Steps 3b and 3c. If you skip them, the suite will appear to
-> install cleanly and those two tools will fail when a user opens them.
+> `vsnp_gui` instead ends `install failed: vsnp_gui`, naming the command for
+> Step 3b. That is expected until 3b has run. Run it, then re-run
+> `sudo bin/bdtools install vsnp_gui --server --site-conf sites/site.conf` to
+> confirm. `kraken_id_parse_gui` has no installer of its own; this command builds
+> it from its environment file, and Step 3c is the manual equivalent.
 
 #### 3b. `vsnp_gui` — build the shared `vsnp3` environment
 
@@ -349,8 +353,10 @@ ls $TOOLS_ROOT/vsnp3/bin/vsnp3_step1.py $TOOLS_ROOT/vsnp3/bin/snp-dists
 
 #### 3c. `kraken_id_parse_gui` — build from its environment file
 
-This tool has no `deploy/` directory at all. Its environment file documents the
-exact command, and `-p` puts the environment where the launcher looks for it:
+Step 3a already does this. Use the command below only if you are building the
+environment by hand. This tool has no `deploy/` directory at all. Its environment
+file documents the exact command, and `-p` puts the environment where the
+launcher looks for it:
 
 ```bash
 cd $TOOLS_ROOT/kraken_id_parse_gui
@@ -1060,6 +1066,32 @@ it bound — start there.
 | Tool reports a missing database | Data not staged, or path not visible on the compute node | [Reference databases](#reference-databases); confirm compute-node mounts |
 | A database field is blank on first launch | No path declared, or the data is not at the expected subpath | Set `DB_ROOT` in `sites/site.conf`, or set it per user in the tool's Settings |
 | A tool reports a path from some other site | An old `~/.config/<tool>/config.json` is being reused | Saved user settings win over site defaults; clear or correct that file |
+
+### A tool opens for one user and not another
+
+A site tool launches from **site state only**, in this order: the shared sibling
+env (`$TOOLS_ROOT/vsnp3`, for vSNP), the tool's own `$TOOLS_ROOT/<tool>/env`, then
+`<CONDA_BASE>/envs/<env>` with `CONDA_BASE` from `sites/site.conf` (rendered into
+the card). An env counts only if `uvicorn` and `fastapi` are in its own
+site-packages. Nothing per-user is consulted: not `~/.config/<tool>/sandbox.env`,
+not `~/.local/share/bdtools`, not the conda that `conda init` puts on a user's
+`PATH`, and not `~/.local` user site-packages. So every user gets the same tool,
+or the same error. Before this rule, a site whose vSNP env was never built
+opened vSNP from the installer's personal conda, for the installer only
+(USDA, 2026-10-29).
+
+To see what a session will run, from the umbrella on a compute node:
+
+```bash
+BDTOOLS_TOOLSDIR=$TOOLS_ROOT python3 bin/lib/tool_launch.py show vsnp_gui 0
+```
+
+`site_root` must be set (empty means the tool was not recognised as a site
+tool), and `env_dir` and `env_source` say which env won. With none, the dashboard
+card and `bdtools doctor` show the same message: every path checked and the
+command that builds the env. If the env it mentions finding through your own
+account is meant to be the site's, declare its base for everyone with
+`CONDA_BASE=<base>` in `sites/site.conf`, then re-render the card (Step 5).
 
 ### Moving an install the compute nodes cannot see
 

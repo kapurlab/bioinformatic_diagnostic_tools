@@ -125,6 +125,38 @@ def site_config(repo_dir=None) -> dict:
     return merged
 
 
+def site_declared(repo_dir) -> dict:
+    """ONLY what the deployment's own sites/site.conf says — no per-user record.
+
+    site_config() lets <BDTOOLS_HOME>/site.conf override the repo's file, and
+    BDTOOLS_HOME is per-user: install-server.sh writes it for the account that ran
+    the install and nobody else. A value that decides what EVERY user's session
+    runs must come from the file every user reads, or it works for the installer
+    alone — the 2026-10-29 USDA vSNP report, where only tstuber could open vSNP."""
+    if not repo_dir:
+        return {}
+    return _read_site_file(Path(repo_dir) / "sites" / _SITE_FILE)
+
+
+ENV_SITE_CONDA_BASE = "BDTOOLS_SITE_CONDA_BASE"
+
+
+def site_conda_base(repo_dir=None):
+    """The conda base a SITE deployment's named envs live under, or None.
+
+    The card exports BDTOOLS_SITE_CONDA_BASE (install-server.sh renders the
+    site's CONDA_BASE into it); otherwise sites/site.conf's CONDA_BASE. Never the
+    ambient CONDA_BASE/CONDA_EXE: those come from the launching user's shell
+    (conda init in a login profile reaches a batch job), so they name THAT
+    person's conda — which is how one user's personal vsnp3 env served vSNP for
+    him and for no one else."""
+    env = os.environ.get(ENV_SITE_CONDA_BASE, "").strip()
+    if env:
+        return Path(env)
+    val = (site_declared(repo_dir).get("CONDA_BASE") or "").strip()
+    return Path(val) if val else None
+
+
 def shared_projects_root(repo_dir=None):
     """The multi-user projects root, or None when this deployment has none.
 

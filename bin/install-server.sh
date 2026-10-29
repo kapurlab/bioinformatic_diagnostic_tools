@@ -143,6 +143,11 @@ subst() {
   if [[ -n "${ORIGIN_SERVERNAME:-}" && -n "${SERVERNAME:-}" ]]; then
     extra+=( -e "s|${ORIGIN_SERVERNAME}|${SERVERNAME}|g" )
   fi
+  # The dashboard card's site conda base (template/script.sh.erb): rendered here
+  # so a session never takes it from the launching user's shell instead.
+  if [[ -n "${CONDA_BASE:-}" ]]; then
+    extra+=( -e "s|^SITE_CONDA_BASE=\$|SITE_CONDA_BASE=${CONDA_BASE}|" )
+  fi
   sed -e "s|/srv/kapurlab/tools|${TOOLS_ROOT}|g" \
       -e "s|/srv/kapurlab|${SITE_ROOT}|g" \
       -e "s|kapurlab-admins|${ADMINS_GROUP:-kapurlab-admins}|g" \
@@ -442,6 +447,46 @@ phase_app() {
   done
 }
 
+# How will EVERY user's session launch this tool? Asked of the launcher itself,
+# with only the site's state, rather than checking one path: vsnp_gui's env is not
+# <dir>/env at all, and on a USDA site this command finished "successfully" while
+# vSNP could open only for the one account whose personal conda happened to hold
+# a vsnp3 env (2026-10-29). tool_launch._site_tools_root explains the rule.
+VERIFY_FAILED=0
+check_site_launch() {
+  local out rc=0
+  out="$(BDTOOLS_TOOLSDIR="${TOOLS_ROOT}" BDTOOLS_SITE_CONDA_BASE="${CONDA_BASE:-}" \
+         "${PYBIN:-python3}" - "${KT_BIN_DIR}/lib" "${TOOL}" 2>&1 <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+import tool_launch
+try:
+    plan = tool_launch.resolve(sys.argv[2], 0)
+except tool_launch.SiteEnvMissing as exc:
+    print(exc)
+    sys.exit(3)
+except Exception as exc:
+    print(exc)
+    sys.exit(4)
+if not plan.get("site_root"):
+    sys.exit(5)
+print("%s (%s)" % (plan["env_dir"], plan["env_source"]))
+PY
+)" || rc=$?
+  case ${rc} in
+    0) ok "every user's session launches ${TOOL} from ${out}";;
+    3) warn "${out}"
+       if [[ ${DRY_RUN} -eq 1 ]]; then
+         warn "  (dry run: reported only — the real run exits non-zero here)"
+       else
+         VERIFY_FAILED=1
+       fi;;
+    5) warn "the dashboard will not treat ${TOOL} as a site tool: this umbrella is not"
+       warn "  ${TOOLS_ROOT}/bioinformatic_diagnostic_tools, where the card looks for it.";;
+    *) warn "could not check how ${TOOL} launches: ${out}";;
+  esac
+}
+
 phase_verify() {
   log "verify — ${TOOL}"
   if [[ ${DASHBOARD} -eq 1 ]]; then
@@ -455,11 +500,19 @@ phase_verify() {
     done
     [[ -n "${anypy}" ]] && ok "a python with the dashboard deps exists (${anypy})" \
       || warn "no tool env has starlette+httpx+uvicorn yet — install a tool first (e.g. bdtools install mlst_gui --server --no-card)"
+    if [[ -n "${CONDA_BASE:-}" ]]; then
+      grep -q "^SITE_CONDA_BASE=${CONDA_BASE}\$" "${APP_DST_BASE}/bdtools_dashboard/template/script.sh.erb" 2>/dev/null \
+        && ok "card searches named envs under the site conda base: ${CONDA_BASE}" \
+        || warn "the card does not carry the site conda base (${CONDA_BASE}) — re-render it: this command without --dry-run"
+    else
+      info "no CONDA_BASE in ${SITE_CONF}: sessions find only <TOOLS_ROOT>/<tool>/env and <TOOLS_ROOT>/vsnp3"
+    fi
     info "Final manual check: launch 'Diagnostic Tools Dashboard' in OOD; confirm the landing page loads and a tool opens through /rnode."
     return
   fi
   assert_pinned_source
   [[ -x "${DIR}/env/bin/python" ]] && ok "env python present" || warn "no ${DIR}/env/bin/python (toolchain not built?)"
+  check_site_launch
   [[ -f "${DIR}/frontend/dist/index.html" ]] && ok "frontend built" || warn "frontend/dist missing"
   local app
   for app in "${OOD_APPS[@]}"; do
@@ -487,6 +540,10 @@ for ph in "${PHASES[@]}"; do
   esac
   echo
 done
+if [[ ${VERIFY_FAILED} -eq 1 ]]; then
+  warn "${TOOL}: installed, but no user's dashboard session can launch it yet — see above."
+  exit 1
+fi
 log "done."
 [[ ${DRY_RUN} -eq 1 ]] && echo "Re-run without --dry-run as root to apply."
 exit 0

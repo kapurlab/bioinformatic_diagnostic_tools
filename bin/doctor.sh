@@ -78,6 +78,13 @@ while read -r name; do
   fi
   checked=$((checked + 1))
   py="$(tool_env_python "${dir}" "$(manifest_get "$name" env)" "$name")"
+  # A site tool with no site env: say WHY, in the launcher's own words, rather
+  # than check.py's bare "environment not built" with a personal-install fix.
+  # Same text the dashboard card shows, for every user.
+  site_problem=""; site_fix=""
+  if [[ -z "${py}" ]]; then
+    { IFS= read -r site_problem; IFS= read -r site_fix; } < <(tool_env_problem "$name") || true
+  fi
 
   # Two findings check.py cannot make, because neither is visible from inside the
   # env's python. Computed for BOTH output modes: they used to exist only on the
@@ -103,6 +110,9 @@ while read -r name; do
   fi
 
   if [[ ${JSON} -eq 1 ]]; then
+    if [[ -n "${site_problem}" ]]; then
+      extra_labels+=("${site_problem}"); extra_fixes+=("${site_fix}")
+    fi
     item="$("${PYBIN}" "${KT_BIN_DIR}/lib/check.py" --tool "$name" --dir "${dir}" \
               --python "${py}" --scope "${SCOPE}" ${deep_args[@]+"${deep_args[@]}"} --json)" || issues=$((issues + 1))
     if [[ -n "${item}" && ${#extra_labels[@]} -gt 0 ]]; then
@@ -127,6 +137,10 @@ MERGE
   else
     "${PYBIN}" "${KT_BIN_DIR}/lib/check.py" --tool "$name" --dir "${dir}" \
             --python "${py}" --scope "${SCOPE}" ${deep_args[@]+"${deep_args[@]}"} || issues=$((issues + 1))
+    if [[ -n "${site_problem}" ]]; then
+      warn "${site_problem}"
+      info "  FIX: ${site_fix}"
+    fi
     for i in "${!extra_labels[@]}"; do
       warn "${name}: ${extra_labels[$i]}"
       info "  FIX: ${extra_fixes[$i]}   (an update cannot repair either of these; --fresh rebuilds the env)"

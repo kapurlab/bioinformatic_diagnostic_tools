@@ -1975,8 +1975,11 @@ class EnvFromSpecTests(unittest.TestCase):
         base = Path(self.td.name)
         self.tool = base / "tools/kraken_id_parse_gui"
         (self.tool / "conda_setup").mkdir(parents=True)
-        # A fake conda first on PATH, and a HOME with no conda under it, so
+        # A fake conda base (CONDA_BASE=<base>, shim at <base>/bin/conda), so
         # detect_conda lands on this shim and records what it was asked to do.
+        # CONDA_BASE is the one input detect_conda checks BEFORE its system
+        # probe list: leaving it empty let a real /opt/anaconda3 on the test
+        # host outrank the PATH shim, and these tests drove a real conda.
         self.home = base / "home"; self.home.mkdir()
         self.log = base / "conda.calls"
         # Both names: detect_conda prefers `mamba` over `conda`, so a conda-only
@@ -1989,7 +1992,7 @@ class EnvFromSpecTests(unittest.TestCase):
                 printf '%s\\n' "$*" >> "{self.log}"
                 """, mode=0o755)
         self.env = {"HOME": str(self.home), "PATH": f"{base / 'bin'}:/usr/bin:/bin",
-                    "CONDA_BASE": "", "CONDA_EXE": ""}
+                    "CONDA_BASE": str(base), "CONDA_EXE": ""}
 
     def calls(self):
         return self.log.read_text().splitlines() if self.log.exists() else []

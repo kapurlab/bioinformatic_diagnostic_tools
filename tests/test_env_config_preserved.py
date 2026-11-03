@@ -261,7 +261,7 @@ class EveryCondaCallSiteIsBracketed(unittest.TestCase):
 
     def test_complete_env(self):
         self._between("bin/complete-env.sh", "env_config_save",
-                      'run "${conda}" install -y -p "${envdir}" --freeze-installed',
+                      'run "${conda}" install -y -p "${envdir}" ${cache[@]+"${cache[@]}"} --freeze-installed',
                       "env_config_restore")
 
     def test_restore_env(self):

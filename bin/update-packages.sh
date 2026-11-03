@@ -298,7 +298,7 @@ update_one_tool() {
     return 0
   fi
   local dir; dir="$(tool_dir "${tool}")"
-  local any=0 envdir="" specs=() plan=()
+  local any=0 envdir="" specs=() plan=() at_pin=1 t_tool=${SECONDS} t_step
 
   # Collect every package that needs to move, then install them in ONE conda
   # transaction. Per-package transactions cannot work in a coupled bioinformatics
@@ -347,6 +347,7 @@ update_one_tool() {
     fi
     specs+=("${pkg}=${want}")
     plan+=("${pkg}|${channel}|${installed}|${want}")
+    [[ "${want}" == "${pinned}" ]] || at_pin=0
   done < <(records_for "${tool}")
 
   [[ ${any} -eq 1 ]] || { info "${tool}: no analysis packages declared in tools.yml — nothing to do"; return 0; }
@@ -361,6 +362,7 @@ update_one_tool() {
 
   local conda; conda="$(detect_conda)" || { FAILED+=("${tool}: conda not found"); return 0; }
   CONDA_BIN="${conda}"
+  say_conda "${conda}"
 
   # Solve before installing. An unsatisfiable set is the normal outcome for an
   # older env — a newer package can need a newer libcurl/zlib/perl than something
@@ -374,6 +376,7 @@ update_one_tool() {
   local solvelog="${BDTOOLS_HOME}/logs/${tool}-package-solve.log"
   mkdir -p "$(dirname "${solvelog}")"
   info "  checking whether these versions can coexist in this env…"
+  t_step=${SECONDS}
   if ! "${conda}" install --dry-run -y -p "${envdir}" \
         -c conda-forge -c bioconda "${specs[@]}" > "${solvelog}" 2>&1; then
     local why; why="$(_solve_headline "${solvelog}")"
@@ -422,12 +425,23 @@ PYREC
     info "    ${solvelog}"
     return 0
   fi
-  ok "  the set solves here"
+  ok "  the set solves here ($(elapsed_since "${t_step}"))"
 
   # ...and must solve everywhere else too, or it does not get applied. --local-only
   # is the deliberate escape hatch for a machine-specific experiment.
-  if [[ ${LOCAL_ONLY} -eq 0 ]]; then
+  #
+  # Not when every package is moving to exactly the version tools.yml pins. A
+  # pin is checked on every platform before it goes into tools.yml (by this
+  # very gate on the machine that moved it, or `--check-pins`), and the answer
+  # depends only on the package set, not on which machine asks — so each site
+  # re-proving it was three full solves per tool for an answer already on
+  # record. On the Ames HPC that made a two-package update run past half an
+  # hour (2026-11-03). Moving PAST the pin still runs the whole gate.
+  if [[ ${LOCAL_ONLY} -eq 0 && ${at_pin} -eq 1 ]]; then
+    ok "  ${specs[*]}: the version(s) tools.yml pins — checked on ${PLATFORMS} when pinned, not solved again here"
+  elif [[ ${LOCAL_ONLY} -eq 0 ]]; then
     info "  checking the same set on ${PLATFORMS}…"
+    t_step=${SECONDS}
     local badplats; badplats="$(_unavailable_platforms "${tool}" "$(_tool_pyver "${tool}" "${envdir}")" "${specs[@]}")"
     if [[ -n "${badplats}" ]]; then
       for p in "${plan[@]}"; do
@@ -446,7 +460,7 @@ PYREC
       info "  Override for a local experiment only:  --local-only"
       return 0
     fi
-    ok "  installable on ${PLATFORMS}"
+    ok "  installable on ${PLATFORMS} ($(elapsed_since "${t_step}"))"
   fi
 
   # Room for it: the solve above says what it downloads. Stops the whole run
@@ -472,12 +486,15 @@ PYREC
     return 0
   fi
   local _irc=0
+  info "  installing…"
+  t_step=${SECONDS}
   _conda_install_set "${conda}" "${envdir}" "${specs[@]}" || _irc=$?
   env_config_restore "${tool}" "${envdir}"
   if [[ ${_irc} -ne 0 ]]; then
     FAILED+=("${tool}: conda install failed after a successful solve — see ${solvelog}")
     return 0
   fi
+  ok "  installed ($(elapsed_since "${t_step}"))"
 
   # Local patches, re-applied. A new package overwrites the patched files, and
   # apply.sh is idempotent precisely so this is safe after every package change.
@@ -491,7 +508,10 @@ PYREC
 
   # Still runnable? A package update that breaks the env should be reported now,
   # not on the next analysis.
-  if ! "${KT_BIN_DIR}/bdtools" doctor "${tool}" >/dev/null 2>&1; then
+  t_step=${SECONDS}
+  if "${KT_BIN_DIR}/bdtools" doctor "${tool}" >/dev/null 2>&1; then
+    ok "  self-check passed ($(elapsed_since "${t_step}"))"
+  else
     warn "${tool}: doctor reports a problem after the update — run: bin/bdtools doctor ${tool}"
   fi
 
@@ -500,6 +520,7 @@ PYREC
     _bump_pin "${tool}" "${pkg}" "${channel}" "${want}"
     ok "${tool}: ${pkg} is now ${want}"
   done
+  info "  ${tool} took $(elapsed_since "${t_tool}") in all"
   CHANGED=1
 }
 
@@ -524,10 +545,16 @@ _pin_env_subdir() {   # ENVDIR
   return 0
 }
 
+# The channel index the dry-run solve fetched moments ago is reused rather than
+# downloaded again (-C/--use-index-cache: the cached copy even if expired). The
+# same index makes the install's solve the one the dry run just approved, and on
+# shared storage the fetch is a real part of each solve's cost. conda only —
+# mamba's flags differ across its major versions, so it fetches as before.
 _conda_install_set() {
-  local conda="$1" envdir="$2"; shift 2
+  local conda="$1" envdir="$2" cache=(); shift 2
   _pin_env_subdir "${envdir}"
-  run "${conda}" install -y -p "${envdir}" -c conda-forge -c bioconda "$@"
+  [[ "$(basename "${conda}")" == conda ]] && cache=(--use-index-cache)
+  run "${conda}" install -y -p "${envdir}" ${cache[@]+"${cache[@]}"} -c conda-forge -c bioconda "$@"
 }
 
 # Rewrite one entry of a tool's `packages:` list in tools.yml, leaving the others
@@ -579,7 +606,10 @@ if [[ ${#FAILED[@]} -gt 0 ]]; then
   for f in "${FAILED[@]}"; do info "  • ${f}"; done
   exit 1
 fi
-if [[ ${CHANGED} -eq 1 ]]; then
+if [[ ${CHANGED} -eq 1 && "${DRY_RUN}" -eq 1 ]]; then
+  ok "dry run: nothing was installed and tools.yml is unchanged."
+  info "  The [dry-run] lines above say what a real run would change."
+elif [[ ${CHANGED} -eq 1 ]]; then
   ok "package updates complete. Restart the dashboard to pick them up."
   info "  tools.yml now pins what is installed — commit it to share this set."
 elif [[ ${#BLOCKED[@]} -eq 0 && ${#REPORT_ONLY[@]} -eq 0 ]]; then

@@ -1233,6 +1233,47 @@ env_config_forget() {   # TOOL
   done
 }
 
+# ---- how long a step took, and which conda took it -------------------------
+# A slow update can only be made faster once the log says which step was slow
+# and which conda ran it. On the suite's build Mac a kraken2 package update
+# solves in its env in 14 s and on three platforms in 26 s; on the Ames HPC the
+# same update ran for over half an hour (2026-11-03) with nothing in the log to
+# say where.
+elapsed_since() {   # START (an earlier $SECONDS) -> "14s" or "3m 05s"
+  local s=$(( SECONDS - $1 ))
+  if (( s < 60 )); then printf '%ds' "${s}"; else printf '%dm %02ds' $(( s / 60 )) $(( s % 60 )); fi
+}
+
+# CONDA -> "conda 25.7.0, libmamba solver". The classic solver is the usual
+# reason one machine's solves take many times longer than another's.
+conda_describe() {
+  local c="$1" v solver
+  v="$("${c}" --version 2>/dev/null | head -1)"
+  case "$(basename "${c}")" in
+    mamba|micromamba) printf '%s' "${v:-$(basename "${c}")}"; return 0;;
+  esac
+  solver="$("${c}" config --show solver 2>/dev/null | sed -n 's/^solver:[[:space:]]*//p')"
+  [[ -n "${solver}" ]] || solver="$("${c}" config --show experimental_solver 2>/dev/null \
+                                    | sed -n 's/^experimental_solver:[[:space:]]*//p')"
+  printf '%s, %s solver' "${v:-conda}" "${solver:-classic}"
+}
+
+# Say once per run which conda is about to solve, and flag the classic solver.
+_CONDA_SAID=""
+say_conda() {   # CONDA
+  [[ "${_CONDA_SAID}" == "$1" ]] && return 0
+  _CONDA_SAID="$1"
+  local d; d="$(conda_describe "$1")"
+  info "  conda: $1 (${d})"
+  if [[ "${d}" == *"classic solver" ]]; then
+    warn "this conda uses the classic solver — every solve and install below takes many times"
+    info "  longer than with libmamba (conda's default since 23.10). An admin can switch it for"
+    info "  everyone who uses this conda:"
+    info "      $1 install -n base conda-libmamba-solver"
+    info "      $1 config --system --set solver libmamba"
+  fi
+}
+
 # ---- room for an install -----------------------------------------------------
 # Every install asks bin/lib/storage.py whether the filesystems it is about to
 # write have room, and stops — exit 28 (ENOSPC), before writing anything — when

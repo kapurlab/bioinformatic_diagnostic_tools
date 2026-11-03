@@ -99,6 +99,8 @@ complete_one() {   # complete_one TOOL SWEEP(0|1)
   info "  spec: ${spec}"
   local dir; dir="$(tool_dir "${tool}")"
   local conda; conda="$(detect_conda)" || { FAILED+=("${tool}: conda/mamba not found"); return 0; }
+  say_conda "${conda}"
+  local t_tool=${SECONDS} t_step
 
   # The spec's own channels, in its order; the suite's two when it names none.
   local -a ch=()
@@ -113,6 +115,7 @@ complete_one() {   # complete_one TOOL SWEEP(0|1)
   local solvelog="${BDTOOLS_HOME}/logs/${tool}-complete-env-solve.log"
   mkdir -p "$(dirname "${solvelog}")" 2>/dev/null || solvelog="/tmp/${tool}-complete-env-solve.log"
   info "  solving with every installed package frozen…"
+  t_step=${SECONDS}
   if ! "${conda}" install --dry-run -y -p "${envdir}" --freeze-installed "${ch[@]}" "${missing[@]}" > "${solvelog}" 2>&1; then
     warn "${tool}: ${names[*]} cannot be added without changing packages already installed — the environment was left exactly as it was."
     info "  That is this command's promise. The fuller operations are deliberate acts:"
@@ -125,7 +128,7 @@ complete_one() {   # complete_one TOOL SWEEP(0|1)
     BLOCKED+=("${tool}: ${names[*]}")
     return 0
   fi
-  ok "  solves with nothing already installed moving"
+  ok "  solves with nothing already installed moving ($(elapsed_since "${t_step}"))"
 
   # Room for it, from the solve above; stops the run (exit 28) when there is none
   # (a dry run reports it and goes on).
@@ -146,9 +149,15 @@ complete_one() {   # complete_one TOOL SWEEP(0|1)
     FAILED+=("${tool}: not changed — could not save a copy of its env's configuration first (see above)")
     return 0
   fi
+  # The index the solve above just fetched, not a second download (see
+  # update-packages.sh, _conda_install_set). conda only.
+  local cache=(); [[ "$(basename "${conda}")" == conda ]] && cache=(--use-index-cache)
   local _irc=0
-  run "${conda}" install -y -p "${envdir}" --freeze-installed "${ch[@]}" "${missing[@]}" || _irc=$?
+  info "  installing…"
+  t_step=${SECONDS}
+  run "${conda}" install -y -p "${envdir}" ${cache[@]+"${cache[@]}"} --freeze-installed "${ch[@]}" "${missing[@]}" || _irc=$?
   env_config_restore "${tool}" "${envdir}"
+  [[ ${_irc} -eq 0 ]] && ok "  installed ($(elapsed_since "${t_step}"))"
   if [[ ${_irc} -ne 0 ]]; then
     harden_conda_hooks "${envdir}"
     warn "${tool}: conda install failed after a successful solve — conda rolls the transaction back."
@@ -180,6 +189,7 @@ complete_one() {   # complete_one TOOL SWEEP(0|1)
     FAILED+=("${tool}: self-check fails after the addition — bin/bdtools restore-env ${tool} puts the env back")
     return 0
   fi
+  info "  ${tool} took $(elapsed_since "${t_tool}") in all"
   ADDED+=("${tool}: ${names[*]}")
 }
 
@@ -188,7 +198,10 @@ for t in $(targets); do
 done
 
 echo
-[[ ${#ADDED[@]}   -gt 0 ]] && { log "added:";   for a in "${ADDED[@]}";   do info "  ${a}"; done; }
+if [[ ${#ADDED[@]} -gt 0 ]]; then
+  if [[ "${DRY_RUN}" -eq 1 ]]; then log "would add (dry run — nothing was installed):"; else log "added:"; fi
+  for a in "${ADDED[@]}"; do info "  ${a}"; done
+fi
 [[ ${#BLOCKED[@]} -gt 0 ]] && { log "not added (environment unchanged):"; for a in "${BLOCKED[@]}"; do info "  ${a}"; done; }
 [[ ${#SKIPPED[@]} -gt 0 ]] && info "left unchanged (report-only in tools.yml): ${SKIPPED[*]}"
 if [[ ${#FAILED[@]} -gt 0 ]]; then

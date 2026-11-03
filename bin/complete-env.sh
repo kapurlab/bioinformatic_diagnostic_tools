@@ -127,6 +127,11 @@ complete_one() {   # complete_one TOOL SWEEP(0|1)
   fi
   ok "  solves with nothing already installed moving"
 
+  # Room for it, from the solve above; stops the run (exit 28) when there is none
+  # (a dry run reports it and goes on).
+  storage_preflight_env "${tool}" "${envdir}" update \
+    "adding ${names[*]} to ${tool}'s env" "bin/bdtools complete-env ${TARGET}" "${solvelog}"
+
   if [[ "${DRY_RUN}" -eq 1 ]]; then
     info "  [dry-run] ${tool}: would add ${names[*]}"
     ADDED+=("${tool}: ${names[*]} (dry-run)")
@@ -137,7 +142,14 @@ complete_one() {   # complete_one TOOL SWEEP(0|1)
   _selfcheck "${tool}" "${dir}" "${envdir}" || before=0
   snapshot_env "${tool}" "${envdir}"
   harden_conda_hooks "${envdir}"
-  if ! run "${conda}" install -y -p "${envdir}" --freeze-installed "${ch[@]}" "${missing[@]}"; then
+  if ! env_config_save "${tool}" "${envdir}"; then
+    FAILED+=("${tool}: not changed — could not save a copy of its env's configuration first (see above)")
+    return 0
+  fi
+  local _irc=0
+  run "${conda}" install -y -p "${envdir}" --freeze-installed "${ch[@]}" "${missing[@]}" || _irc=$?
+  env_config_restore "${tool}" "${envdir}"
+  if [[ ${_irc} -ne 0 ]]; then
     harden_conda_hooks "${envdir}"
     warn "${tool}: conda install failed after a successful solve — conda rolls the transaction back."
     restore_env_hint "${tool}"

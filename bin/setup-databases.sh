@@ -190,6 +190,12 @@ fetch_kraken() {
   if [[ -d "${KRAKEN_DEST}" && -n "$(ls -A "${KRAKEN_DEST}" 2>/dev/null)" ]]; then
     warn "kraken2 DB at ${KRAKEN_DEST} is incomplete (no $(kraken_db_missing "${KRAKEN_DEST}")) — re-downloading"
   fi
+  # Room for it (common.sh, storage_preflight; exit 28 when there is none). The
+  # archive streams straight into tar and is never on disk, so the extracted
+  # DB is the whole need: 8.0 GiB measured for k2_standard_08_GB_20260226,
+  # plus headroom.
+  storage_preflight "the Kraken2 database download" "bin/bdtools setup-databases kraken" \
+    "$(( 8704 * 1024 * 1024 )):${KRAKEN_DEST}:Kraken2 k2_standard_08gb, extracted"
   log "downloading Kraken2 k2_standard_08gb (~8 GB) -> ${KRAKEN_DEST}"
   local f; f="$(fetcher)" || die "need curl or wget to download the Kraken2 DB"
   run mkdir -p "${KRAKEN_DEST}"
@@ -294,6 +300,30 @@ blast_updater_advice() {
   fi
 }
 
+# blast_db_bytes_needed NAME — peak bytes update_blastdb.pl --decompress needs,
+# from NCBI's <name>-{nucl,prot}-metadata.json; empty when it cannot be read.
+# ref_prok_rep_genomes, 2026-10-25: 26.7 GB unpacked in 27 volumes.
+blast_db_bytes_needed() {
+  local kind meta f; f="$(fetcher)" || return 0
+  for kind in nucl prot; do
+    if [[ "${f}" == curl ]]; then
+      meta="$(curl -fsL --max-time 30 "https://ftp.ncbi.nlm.nih.gov/blast/db/${1}-${kind}-metadata.json" 2>/dev/null || true)"
+    else
+      meta="$(wget -qO- --timeout=30 "https://ftp.ncbi.nlm.nih.gov/blast/db/${1}-${kind}-metadata.json" 2>/dev/null || true)"
+    fi
+    [[ -n "${meta}" ]] || continue
+    printf '%s' "${meta}" | "${PYBIN}" -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    total = int(d["bytes-total"]); vols = max(1, int(d.get("number-of-volumes") or 1))
+except Exception:
+    sys.exit(0)
+print(total + total // vols + 512 * 1024 ** 2)' 2>/dev/null && return 0
+  done
+  return 0
+}
+
 fetch_blast() {
   if compgen -G "${BLAST_DB}.*" >/dev/null 2>&1; then ok "BLAST DB present: ${BLAST_DB}"; return; fi
   local ublast; if ! ublast="$(find_update_blastdb)"; then blast_updater_advice; return; fi
@@ -304,6 +334,17 @@ fetch_blast() {
   local _envdir _run_path="${PATH}"
   _envdir="$(dirname "$(dirname "${ublast}")")"
   [[ -d "${_envdir}/conda-meta" ]] || _envdir=""
+  # Room for it: NCBI publishes each database's size beside it. update_blastdb.pl
+  # downloads every volume and then unpacks them one at a time, deleting each
+  # archive as it goes — so the peak is about the unpacked total plus one volume.
+  # Unreachable metadata only means "not checked", never a refusal.
+  local _bneed; _bneed="$(blast_db_bytes_needed "${BLAST_DBNAME}")"
+  if [[ -n "${_bneed}" ]]; then
+    storage_preflight "the BLAST ${BLAST_DBNAME} download" "bin/bdtools setup-databases blast" \
+      "${_bneed}:${BLAST_DIR}:BLAST ${BLAST_DBNAME}, unpacked"
+  else
+    info "  could not read ${BLAST_DBNAME}'s size from NCBI — downloading without a storage check"
+  fi
   log "downloading BLAST ${BLAST_DBNAME} (large; tens of GB) -> ${BLAST_DIR}"
   # Say which copy is about to run: the whole failure this replaced was two
   # sides disagreeing about where update_blastdb.pl lives, in silence.

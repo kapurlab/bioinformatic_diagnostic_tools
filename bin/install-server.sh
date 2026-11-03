@@ -348,6 +348,19 @@ phase_toolchain() {
   # same self-check install-local.sh applies. doctor's repair for stale sibling
   # packages inside an env is exactly this flag; until 2026-09-02 a site install
   # answered it with "unknown option" (ICAR-NIVEDI).
+  # Room for the env, before anything in it changes (common.sh,
+  # storage_preflight_env): the whole env when there is none yet or --fresh is
+  # replacing it, else what a change to it can cost. A tool with neither an
+  # installer nor a spec builds nothing here (vsnp_gui: install_ood.sh does).
+  if [[ ${DASHBOARD} -eq 0 ]] && [[ -x "${DIR}/deploy/install.sh" || -f "${DIR}/conda_setup/environment.yml" ]]; then
+    local _smode=update _swhat="a change to its conda env" _srerun="bin/bdtools install --server ${TOOL}"
+    [[ ${REBUILD} -eq 1 ]] && _srerun+=" --rebuild"
+    [[ ${FRESH} -eq 1 ]] && _srerun+=" --fresh"
+    if [[ ${FRESH} -eq 1 || ! -x "${DIR}/env/bin/python" ]]; then
+      _smode=new; _swhat="a new conda env"
+    fi
+    storage_preflight_env "${TOOL}" "${DIR}/env" "${_smode}" "the ${TOOL} site install (${_swhat})" "${_srerun}"
+  fi
   [[ ${FRESH} -eq 1 && ${DASHBOARD} -eq 0 ]] && discard_env_for_fresh
   # Build env + frontend via the tool's own no-sudo installer (shared env at <dir>/env).
   if [[ -x "${DIR}/deploy/install.sh" ]]; then

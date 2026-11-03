@@ -1217,6 +1217,8 @@ class DelegatedInstallerArchTests(unittest.TestCase):
               # `ln -sfn` link fails the tool's own conda create identically);
               # this harness lifts build() alone, so stub its collaborator.
               _clear_partial_checkout_env() {{ :; }}
+              # The storage check is its own subject (test_storage_preflight).
+              check_storage() {{ :; }}
               enforce_package_pins() {{ :; }}
               enforce_env_constraints() {{ :; }}
               with_progress() {{ shift; "$@"; }}

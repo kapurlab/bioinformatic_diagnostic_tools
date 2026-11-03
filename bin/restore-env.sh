@@ -81,7 +81,11 @@ if [[ "${DRY_RUN:-0}" -eq 1 ]]; then
 fi
 rc=0
 _conda_restore() { "${CONDA}" install -y -p "${ENVDIR}" --force-reinstall --file "${SNAP}"; }
+# --force-reinstall relinks every package's files, vsnp3's shipped reference
+# locations file among them — keep this machine's copy (common.sh, env_config_save).
+env_config_save "${TOOL}" "${ENVDIR}" || die "not restoring ${ENVDIR} without a copy of the file above"
 _conda_restore || rc=$?
+env_config_restore "${TOOL}" "${ENVDIR}"
 harden_conda_hooks "${ENVDIR}"
 if [[ ${rc} -ne 0 ]]; then
   warn "${TOOL}: restore did not finish (exit ${rc})."

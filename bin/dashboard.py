@@ -77,6 +77,8 @@ from suite_common import (  # noqa: E402
     tool_python, readiness_map, check_tool_updates, check_bdtools_update,
     write_dashboard_state, remove_dashboard_state, suite_update_command,
     clean_log_line,
+    finish_line,
+    storage_block,
     tool_checkout_version, package_map, package_update_records,
     tool_update_commands, tool_update_mode,
 )
@@ -435,12 +437,15 @@ class Suite:
             except (OSError, subprocess.SubprocessError) as exc:
                 self._log(f"ERROR: {exc}")
                 ok = False
+        with self.lock:
+            storage = storage_block(self.update_job["log"])
         self._log("")
-        self._log("✅ Done." if ok else "⚠ Update finished with errors — see the log above.")
+        self._log(finish_line(ok, storage))
         with self.lock:
             self.update_job["running"] = False
             self.update_job["done"] = True
             self.update_job["ok"] = ok
+            self.update_job["storage"] = storage
         # Refresh the update cache so the banner reflects the new state.
         self.check_updates_async(force=True)
 
@@ -448,7 +453,8 @@ class Suite:
         with self.lock:
             j = self.update_job
             status = {"running": j["running"], "done": j["done"], "ok": j["ok"],
-                      "target": j["target"], "log": j["log"][-400:]}
+                      "target": j["target"], "log": j["log"][-400:],
+                      "storage": j.get("storage") or []}
         if status["done"] and self.updating:
             self.finish_update()
         return status
@@ -693,6 +699,11 @@ addEventListener('storage',e=>{if(e.key===THEME_KEY)applyTheme(preferredTheme(),
  .ulog{margin-top:10px;background:var(--log-bg);color:var(--log-ink);border-radius:8px;padding:8px 10px;
    font-size:12px;line-height:1.45;max-height:220px;overflow:auto;white-space:pre-wrap}
  .udone{margin-top:8px;font-weight:600}
+ /* An update that stopped for lack of room leads with how much, where and how
+    much is there (bin/lib/storage.py's block), not with the log. */
+ .ustorage{margin-top:4px;background:var(--danger-bg);border:1px solid var(--danger-line);color:var(--danger-ink);
+   border-radius:10px;padding:10px 14px}
+ .ustorage pre{margin:8px 0 0;font-weight:400;font-size:12px;line-height:1.45;white-space:pre-wrap;overflow-wrap:anywhere}
  /* Portal sign-in expired while the page sat open (OOD). Danger tokens, so no
     per-theme override is needed. */
  .sessexp{margin:14px 0 0;background:var(--danger-bg);border:1px solid var(--danger-line);color:var(--danger-ink);
@@ -1536,8 +1547,13 @@ async function pollUpdate(){
       if(log){ log.textContent=(s.log||[]).join('\\n'); log.scrollTop=log.scrollHeight; }
       if(s.done){
         updatePolling=false;
-        runTitle(s.ok ? 'Update finished' : 'Update finished with a problem');
-        if(done) done.innerHTML = s.ok
+        const short=(s.storage||[]).length>0;
+        runTitle(short ? 'Not enough storage — nothing was installed'
+                       : (s.ok ? 'Update finished' : 'Update finished with a problem'));
+        if(done) done.innerHTML = short
+          ? ('<div class="ustorage">⛔ Not enough storage — nothing was installed or changed.'
+            + '<pre>'+esc(s.storage.join('\\n'))+'</pre></div>')
+          : s.ok
           // Neutral on purpose: a run can finish correctly having installed
           // nothing, because it worked out that an update cannot be applied here.
           // Calling that "errors" taught people to ignore the word.

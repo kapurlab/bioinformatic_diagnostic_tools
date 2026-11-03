@@ -257,6 +257,11 @@ EOF
     if "$script" "$t" ${passthru[@]+"${passthru[@]}"} ${phases[@]+"${phases[@]}"}; then :; else
       local ec=$?
       if [[ ${ec} -eq 3 ]]; then skipped+=("$t");   # no local-build path (OOD-only) — not a failure
+      elif [[ ${ec} -eq ${STORAGE_SHORT_EXIT} ]]; then
+        # No room (the block above says how much, where). The tools after this
+        # one land on the same disks, so stop here rather than print it again
+        # per tool — and leave that block as the last thing on screen.
+        rc=${STORAGE_SHORT_EXIT}; break
       else warn "install failed: ${t}"; rc=1; fi
     fi
   done
@@ -951,6 +956,11 @@ cmd_test() {
 main() {
   [[ $# -ge 1 ]] || { usage; exit 0; }
   local cmd="$1"; shift
+  # A new run id per command, never the one this process inherited: the
+  # dashboard runs every update through here, and it was itself started by
+  # bdtools, so an inherited id would make a week of its updates one "run"
+  # (see common.sh, configuration that lives inside a conda env).
+  BDTOOLS_RUN_ID="$$-$(date +%s)"; export BDTOOLS_RUN_ID
   # This checkout builds envs and node_modules inside itself, same as a tool's.
   # Keep its local ignore rules current on any run; failure here must never
   # stop a command, so it is advisory only.

@@ -35,6 +35,7 @@ ALLOW_REPORT_ONLY=0
 NOT_INSTALLED=()   # tools named in an --apply run that aren't checked out yet
 REPORT_ONLY=()     # tools tools.yml says bdtools must not change
 FAILED=()          # tools whose update/build did not finish (reported at the end)
+STORAGE_STOP=""    # the tool the run stopped at for lack of room (exit 28)
 ARGS=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -219,6 +220,14 @@ apply_one() {
     fi
   fi
 
+  # Room for the rebuild below — asked BEFORE the checkout and the pin move, so
+  # a refusal leaves the tool exactly as it was: code, pin and env. Exit 28
+  # (no room) ends this tool and, in the loop below, the run.
+  local sc=(--check-storage --rebuild) src=0
+  [[ ${DRY_RUN} -eq 1 ]] && sc+=(--dry-run)
+  BDTOOLS_RERUN="bin/bdtools update ${name}" "${KT_BIN_DIR}/install-local.sh" "${sc[@]}" "$name" || src=$?
+  [[ ${src} -eq 0 ]] || return ${src}
+
   log "updating ${name} -> ${target}"
   # Line-ending pin on every mutating git op (lock-step with install-local.sh
   # and common.sh): checkouts cloned before the persisted --config existed
@@ -254,7 +263,7 @@ apply_one() {
   log "rebuilding ${name}"
   local a=(--rebuild) rc=0
   [[ ${DRY_RUN} -eq 1 ]] && a+=(--dry-run)
-  run "${KT_BIN_DIR}/install-local.sh" --build-only "${a[@]}" "$name" || rc=$?
+  BDTOOLS_STORAGE_CHECKED="${name}" run "${KT_BIN_DIR}/install-local.sh" --build-only "${a[@]}" "$name" || rc=$?
   # 3 = install-local's "no local-build path" sentinel: the code was updated, the
   # env belongs to the tool's OOD installer. Not a failure.
   [[ ${rc} -eq 3 ]] && { warn "${name}: code updated; its env is provisioned by the OOD installer, not locally."; return 3; }
@@ -279,6 +288,8 @@ if [[ ${APPLY} -eq 1 ]]; then
       0|3) ;;                            # updated, or code-only (no local env)
       4)   NOT_INSTALLED+=("$n");;
       5)   REPORT_ONLY+=("$n");;         # not ours to change; not a failure
+      "${STORAGE_SHORT_EXIT}")           # no room: the block above says how much, where
+           FAILED+=("$n"); STORAGE_STOP="$n"; break;;
       *)   FAILED+=("$n"); warn "${n}: update failed (exit ${rc}) — continuing with the remaining tools.";;
     esac
   done < <(targets)
@@ -312,6 +323,13 @@ if [[ ${APPLY} -eq 1 ]]; then
     echo
     warn "not installed (skipped): ${NOT_INSTALLED[*]}"
     info "  install them with:  bdtools install ${NOT_INSTALLED[*]}"
+  fi
+  if [[ -n "${STORAGE_STOP}" ]]; then
+    # The storage block is what the reader needs; end on it, not on a
+    # retry list. Nothing of ${STORAGE_STOP} was changed — the check ran first.
+    echo
+    warn "stopped at ${STORAGE_STOP}: not enough storage (see above). ${STORAGE_STOP} and the tools after it were not changed."
+    exit "${STORAGE_SHORT_EXIT}"
   fi
   if [[ ${#FAILED[@]} -gt 0 ]]; then
     echo

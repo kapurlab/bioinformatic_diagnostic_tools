@@ -16,6 +16,12 @@ BDTOOLS_HOME="${BDTOOLS_HOME:-${XDG_DATA_HOME:-${HOME}/.local/share}/bdtools}"
 
 DRY_RUN="${DRY_RUN:-0}"
 
+# One id per command a person (or the dashboard) runs, shared by the scripts it
+# calls — env_config_save tells "an attempt of this run" from "another run" by
+# it. bin/bdtools sets a new one per command; a script run directly starts one.
+: "${BDTOOLS_RUN_ID:=$$-$(date +%s)}"
+export BDTOOLS_RUN_ID
+
 # ---- logging (matches vsnp_gui/deploy) ------------------------------------
 if [[ -t 1 ]]; then
   _c_blu=$'\e[1;34m'; _c_grn=$'\e[1;32m'; _c_ylw=$'\e[1;33m'; _c_red=$'\e[1;31m'; _c_rst=$'\e[0m'
@@ -788,6 +794,9 @@ discard_env_for_fresh() {
        That is the env ${TOOL} runs from. Ask whoever owns it, or install your own copy."
   log "--fresh: replacing ${envdir}"
   snapshot_env "${TOOL}" "${envdir}"
+  # The env's own configuration (vsnp3's reference locations) is not software
+  # to start over: copied out here, put into the new env after its create.
+  env_config_save "${TOOL}" "${envdir}" || die "--fresh: not replacing ${envdir} without a copy of the file above"
   local aside="${envdir}.bdtools-old-$(date +%Y%m%d%H%M%S)"
   if [[ "${DRY_RUN:-0}" -eq 1 ]]; then
     echo "  [dry-run] mv ${envdir} ${aside}"
@@ -805,6 +814,7 @@ restore_env_from_fresh() {
   [[ -n "${FRESH_ASIDE}" && -d "${FRESH_ASIDE}" ]] || return 0
   rm -rf "${FRESH_ORIG}" 2>/dev/null || true
   if mv "${FRESH_ASIDE}" "${FRESH_ORIG}"; then
+    env_config_forget "${TOOL}"   # it came back with the old env, untouched
     warn "--fresh: build failed — the previous env has been put back at ${FRESH_ORIG}"
     info "  It is exactly what it was, so the tool should run as it did before."
   else
@@ -888,8 +898,11 @@ env_from_spec() {
     # the update leaves it worse — the promise install-local.sh makes before
     # every env change (_conda_step), kept on this path too.
     snapshot_env "${TOOL:-$(basename "${dir}")}" "${dir}/env"
-    run "${conda}" env update -p "${dir}/env" -f "${spec}" \
-      || { restore_env_hint "${TOOL:-$(basename "${dir}")}"; die "conda env update failed for ${dir}/env"; }
+    env_config_save "${TOOL:-$(basename "${dir}")}" "${dir}/env" || die "not updating ${dir}/env without a copy of the file above"
+    local _rc=0
+    run "${conda}" env update -p "${dir}/env" -f "${spec}" || _rc=$?
+    env_config_restore "${TOOL:-$(basename "${dir}")}" "${dir}/env"
+    [[ ${_rc} -eq 0 ]] || { restore_env_hint "${TOOL:-$(basename "${dir}")}"; die "conda env update failed for ${dir}/env"; }
   else
     # A FRESH env has no recorded platform to honour, and the policy for
     # choosing one on Apple Silicon lives in install-local.sh's
@@ -906,6 +919,7 @@ env_from_spec() {
     fi
     log "$(basename "${dir}"): creating env from conda_setup/environment.yml (a solve can take several minutes)"
     run "${conda}" env create -p "${dir}/env" -f "${spec}" || die "conda env create failed for ${dir}/env"
+    env_config_restore "${TOOL:-$(basename "${dir}")}" "${dir}/env"   # a --fresh rebuild's saved copy
   fi
   harden_conda_hooks "${dir}/env"
   if [[ -f "${dir}/backend/requirements.txt" ]]; then
@@ -1079,6 +1093,189 @@ registry_remove_line() {  # <file> <line> — remove exact line, hardlink-safe
   tmp="$(mktemp "${f}.XXXXXX")" || return 1
   grep -vxF "${line}" "${f}" > "${tmp}" || true
   mv -f "${tmp}" "${f}"
+}
+
+# ---- configuration that lives inside a conda env ----------------------------
+# That same registry is a file the vsnp3 PACKAGE ships, so conda owns its path.
+# Any transaction that replaces vsnp3 — `update-packages` (the dashboard's
+# package update), a pin enforced by `install`/`update`, a --force-reinstall
+# restore, a --fresh rebuild — unlinks this machine's file along with the old
+# package and links the new package's copy, which lists only the upstream
+# author's own paths. Ames HPC, 2026-11: the dashboard's vsnp3 3.36 -> 3.37
+# update left the Reference Editor with one "path not found" location and
+# Step 2 unable to find any project's reference folder, and nothing in the
+# update's log said a thing had been lost.
+#
+# tools.yml names such files per tool (`env_config:`, paths inside the env).
+# Every conda operation on a tool's env runs between env_config_save and
+# env_config_restore, and what comes back is the ORIGINAL FILE, not a copy of
+# it: the save hard-links it beside itself (.<name>.bdtools-kept), the
+# transaction can only unlink the name, and the restore renames the link back
+# over the package's copy. Same inode, so the same owner, group, permissions
+# and ACLs. Who may read or edit a site's reference locations is that site's
+# decision — on the HPC different people deliberately have different access —
+# and a package update is not allowed to change it. (A rename also leaves the
+# package's copy, a hardlink into the package cache, untouched.)
+#
+# Only when that link cannot be made (the kernel refuses hard links to another
+# account's file under fs.protected_hardlinks, or a --fresh env lands on
+# another filesystem) is a copy written instead: same contents, mode and ACLs,
+# but owned by whoever ran the command — only root can give a file back to
+# another account — and the message says so.
+#
+# A copy is also kept at ${BDTOOLS_HOME}/state/env-config/<tool>/<path> (one
+# generation back as .prev) to compare against and to recover from by hand. A
+# `.pending` beside it means "saved, not yet put back": an attempt that was
+# killed mid-transaction leaves it, so the retry keeps what it saved BEFORE that
+# attempt instead of saving the package's replacement over it. A pending copy
+# from another run is never put back on its own — it may be older than edits
+# made since — only named.
+_env_config_stash() { printf '%s' "${BDTOOLS_HOME}/state/env-config/${1}/${2}"; }
+_env_config_kept()  { printf '%s/.%s.bdtools-kept' "$(dirname "$1")" "$(basename "$1")"; }
+_env_config_owner() { ls -ld "$1" 2>/dev/null | awk '{print $3 ":" $4}'; }
+_env_config_field() { sed -n "s/^$2=//p" "$1" 2>/dev/null; }   # PENDING KEY
+
+_env_config_same() {   # A B — same bytes?
+  if command -v cmp >/dev/null 2>&1; then cmp -s "$1" "$2"; return; fi
+  [[ "$(cat "$1" 2>/dev/null)" == "$(cat "$2" 2>/dev/null)" ]]
+}
+
+env_config_save() {   # TOOL ENVDIR — 1 when a declared file exists but cannot be copied
+  local tool="$1" envdir="$2" rel src stash run kept
+  [[ "${DRY_RUN:-0}" -eq 1 || -z "${tool}" || -z "${envdir}" ]] && return 0
+  run="${BDTOOLS_RUN_ID}"
+  for rel in $(manifest_get "${tool}" env_config 2>/dev/null || true); do
+    src="${envdir}/${rel}"; stash="$(_env_config_stash "${tool}" "${rel}")"
+    if [[ -f "${stash}.pending" ]]; then
+      if [[ "$(_env_config_field "${stash}.pending" run)" == "${run}" ]]; then
+        continue   # an attempt in THIS run never got to put it back: keep what it saved
+      fi
+      warn "${tool}: an earlier run was stopped while changing its env; the copy of ${rel} it saved is at ${stash}"
+      rm -f "${stash}.pending"
+    fi
+    [[ -f "${src}" ]] || continue
+    if ! mkdir -p "$(dirname "${stash}")" 2>/dev/null \
+       || { [[ -f "${stash}" ]] && ! cp -p "${stash}" "${stash}.prev" 2>/dev/null; } \
+       || ! cp -p "${src}" "${stash}" 2>/dev/null; then
+      warn "${tool}: cannot copy ${src} to ${stash} — not changing the env without a copy of it."
+      info "  The update would replace it with the package's own copy. Make it readable to $(id -un), or"
+      info "  save it yourself, then run this again."
+      return 1
+    fi
+    kept="$(_env_config_kept "${src}")"
+    ln -f "${src}" "${kept}" 2>/dev/null || kept=""
+    printf 'run=%s\nenv=%s\nkept=%s\nowner=%s\nwhen=%s\n' "${run}" "${envdir}" "${kept}" \
+      "$(_env_config_owner "${src}")" "$(date '+%Y-%m-%d %H:%M:%S')" > "${stash}.pending"
+  done
+  return 0
+}
+
+env_config_restore() {   # TOOL ENVDIR — put back what a transaction replaced
+  local tool="$1" envdir="$2" rel dst stash tmp kept owner now
+  [[ "${DRY_RUN:-0}" -eq 1 || -z "${tool}" || -z "${envdir}" ]] && return 0
+  for rel in $(manifest_get "${tool}" env_config 2>/dev/null || true); do
+    dst="${envdir}/${rel}"; stash="$(_env_config_stash "${tool}" "${rel}")"
+    [[ -f "${stash}.pending" && -f "${stash}" ]] || continue
+    [[ "$(_env_config_field "${stash}.pending" run)" == "${BDTOOLS_RUN_ID}" ]] || continue
+    # A failed create leaves no env to put it in; keep it pending for the retry.
+    [[ -x "${envdir}/bin/python" ]] || continue
+    kept="$(_env_config_field "${stash}.pending" kept)"
+    owner="$(_env_config_field "${stash}.pending" owner)"
+    # --fresh: the link went aside with the old env (discard_env_for_fresh).
+    if [[ -n "${kept}" && ! -e "${kept}" && -n "${FRESH_ORIG:-}" && -n "${FRESH_ASIDE:-}" \
+          && "${kept}" == "${FRESH_ORIG}/"* ]]; then
+      kept="${FRESH_ASIDE}/${kept#"${FRESH_ORIG}/"}"
+    fi
+    if [[ -f "${dst}" ]] && _env_config_same "${stash}" "${dst}"; then
+      [[ "${kept}" == "$(dirname "${dst}")/"* ]] && rm -f "${kept}"
+      rm -f "${stash}.pending"; continue
+    fi
+    mkdir -p "$(dirname "${dst}")" 2>/dev/null || true
+    # The original itself: renamed back in place, or — from an env set aside by
+    # --fresh, which may yet be put back whole — linked, so both keep it.
+    if [[ -n "${kept}" && -f "${kept}" ]] && _env_config_same "${stash}" "${kept}" \
+       && if [[ "${kept}" == "$(dirname "${dst}")/"* ]]; then mv -f "${kept}" "${dst}"
+          else ln -f "${kept}" "${dst}"; fi 2>/dev/null; then
+      rm -f "${stash}.pending"
+      ok "${tool}: kept this machine's ${rel} — the conda transaction had replaced it with the package's own copy"
+      info "  put back as it was: same file, owner, group and permissions ($(grep -c . "${dst}" 2>/dev/null || echo 0) line(s))"
+      continue
+    fi
+    tmp=""
+    if tmp="$(mktemp "${dst}.XXXXXX")" && cp -p "${stash}" "${tmp}" && mv -f "${tmp}" "${dst}"; then
+      rm -f "${stash}.pending"
+      ok "${tool}: kept this machine's ${rel} — the conda transaction had replaced it with the package's own copy"
+      info "  $(grep -c . "${dst}" 2>/dev/null || echo 0) line(s) carried over, with the same permissions; a copy stays at ${stash}"
+      now="$(_env_config_owner "${dst}")"
+      if [[ -n "${owner}" && "${now}" != "${owner}" ]]; then
+        warn "${tool}: ${dst} is now owned by ${now} (it was ${owner}) — only root can give a file back to another account."
+        info "  Restore the owner with:  sudo chown ${owner} ${dst}"
+      fi
+    else
+      [[ -n "${tmp}" ]] && rm -f "${tmp}"
+      warn "${tool}: could not put back ${dst} — the package's own copy is in place."
+      info "  This machine's copy is saved at ${stash}. Put it back with:"
+      info "      cp ${stash} ${dst}"
+    fi
+  done
+  return 0
+}
+
+# The old env came back whole (restore_env_from_fresh): nothing to put back,
+# and its own hard link to the file is no longer needed.
+env_config_forget() {   # TOOL
+  local rel pending kept
+  for rel in $(manifest_get "${1}" env_config 2>/dev/null || true); do
+    pending="$(_env_config_stash "${1}" "${rel}").pending"
+    kept="$(_env_config_field "${pending}" kept)"
+    [[ -n "${kept}" ]] && rm -f "${kept}"
+    rm -f "${pending}"
+  done
+}
+
+# ---- room for an install -----------------------------------------------------
+# Every install asks bin/lib/storage.py whether the filesystems it is about to
+# write have room, and stops — exit 28 (ENOSPC), before writing anything — when
+# one does not, with a block that says how much is needed, where, and how much
+# is there (storage.py has the estimate and why running out half-way is the
+# case worth stopping for). --dry-run prints the verdict and carries on.
+# BDTOOLS_SKIP_STORAGE_CHECK=1 skips it, for a filesystem whose free space
+# statvfs misreports.
+STORAGE_PY="${KT_BIN_DIR}/lib/storage.py"
+STORAGE_SHORT_EXIT=28
+
+_storage_run() {   # storage.py args… — exits 28 when it says there is no room
+  local rc=0
+  if [[ "${BDTOOLS_SKIP_STORAGE_CHECK:-0}" == 1 ]]; then
+    warn "storage check skipped (BDTOOLS_SKIP_STORAGE_CHECK=1)"; return 0
+  fi
+  [[ "${DRY_RUN:-0}" -eq 1 ]] && set -- "$@" --report-only
+  "${PYBIN}" "${STORAGE_PY}" "$@" || rc=$?
+  [[ ${rc} -eq 0 ]] && return 0
+  [[ ${rc} -eq ${STORAGE_SHORT_EXIT} ]] && exit ${STORAGE_SHORT_EXIT}
+  warn "the storage check could not run (exit ${rc}) — going ahead without it"
+  return 0
+}
+
+# storage_preflight_env TOOL ENVDIR new|update WHAT RERUN [SOLVE_LOG]
+# A conda operation on a tool's env: the env and conda's package cache.
+# SOLVE_LOG is a `--dry-run` solve of the same change, when there is one — its
+# download total is the best estimate there is.
+storage_preflight_env() {
+  local conda disk a=(env --tool "$1" --env "$2" --mode "$3" --what "$4" --rerun "$5")
+  conda="$(detect_conda 2>/dev/null || true)"
+  disk="$(manifest_get "$1" disk_gb 2>/dev/null || true)"
+  [[ -n "${conda}" ]] && a+=(--conda "${conda}")
+  [[ -n "${disk}" ]] && a+=(--disk-gb "${disk}")
+  [[ -n "${6:-}" ]] && a+=(--solve-log "$6")
+  _storage_run "${a[@]}"
+}
+
+# storage_preflight WHAT RERUN BYTES:PATH:LABEL… — anything else of known size.
+storage_preflight() {
+  local what="$1" rerun="$2" n a=(); shift 2
+  for n in "$@"; do a+=(--need "${n}"); done
+  _storage_run need --what "${what}" --rerun "${rerun}" "${a[@]}"
 }
 
 # ---- Step 2 VCF databases (kapurlab/vcf_db_directories) ---------------------

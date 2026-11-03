@@ -30,6 +30,15 @@
 #             every platform. Unlike `packages`, a floor is deliberately NOT an
 #             exact pin: the requirement is "new enough", so a machine that
 #             already has something newer is left alone.        (optional)
+#   disk_gb   how much one built env of this tool takes, in GB — what the storage
+#             check before an install asks the disks for (bin/lib/storage.py
+#             adds conda's package cache and headroom). Measured from built envs
+#             (`du -sk <env>`, 2026-11-03) and rounded up; 3 when absent.
+#   env_config  files INSIDE the env that hold this machine's configuration, not
+#             software — paths relative to the env. A package that ships one
+#             replaces it on every update, so bdtools keeps each through any
+#             conda operation on the env and puts the same file back after —
+#             owner, group and permissions unchanged. (optional)
 #   updates   whether bdtools may CHANGE this tool:
 #               install — offered in the dashboard, and `bdtools update` /
 #                         `update-packages` will act on it
@@ -116,6 +125,11 @@ tools:
     ood_apps: [vsnp_gui]
     dev_apps: [vsnp_gui_dev]
     env: vsnp3
+    disk_gb: 2.5
+    # vsnp3 reads its reference locations from this file, and the vsnp3
+    # package ships its own copy (the upstream author's paths), so every
+    # package update used to reset it — Ames, 3.36 -> 3.37, 2026-11.
+    env_config: [dependencies/reference_options_paths.txt]
     databases: [vsnp3_refs]
     packages: [bioconda::vsnp3=3.36, bioconda::snp-dists=1.2.0]
 
@@ -126,6 +140,7 @@ tools:
     ood_apps: [amr_plus_gui]
     dev_apps: [amr_plus_gui_dev]
     env: amr_plus
+    disk_gb: 3
     databases: [amrfinder_db]
     # mlst and kraken2 are deliberately NOT here. Each runs from its own tool's
     # env (mlst_gui, kraken_id_parse_gui), invoked through
@@ -169,6 +184,7 @@ tools:
     ood_apps: [irma_gui]
     dev_apps: [irma_gui_dev]
     env: irma_gui
+    disk_gb: 2.5
     # genoflu is deliberately NOT here: it runs from genoflu_gui's env via
     # BDTOOLS_SIBLING_ENV_GENOFLU_GUI (the amr_plus/mlst arrangement), so the
     # suite pins GenoFLU once, below — two pins of one package are two copies
@@ -184,6 +200,7 @@ tools:
     ood_apps: [genoflu_gui]
     dev_apps: [genoflu_gui_dev]
     env: genoflu_gui
+    disk_gb: 1.5
     # GenoFLU's suite-wide pin. irma_gui also runs genoflu from THIS env
     # (BDTOOLS_SIBLING_ENV_GENOFLU_GUI) — bumping it moves both tools together.
     packages: [bioconda::genoflu=1.08]
@@ -195,6 +212,7 @@ tools:
     ood_apps: [mlst_gui]
     dev_apps: [mlst_gui_dev]
     env: mlst
+    disk_gb: 3
     packages: [bioconda::mlst=2.33.1]
     # 2.34.0 and 2.35.0 exist and are noarch, and can never be installed on macOS:
     # they depend on libxcrypt1, which has no macOS build. Declared held so the
@@ -214,6 +232,7 @@ tools:
     ood_apps: [kraken_id_parse_gui]
     dev_apps: [kraken_id_parse_gui_dev]
     env: kraken_id_parse
+    disk_gb: 4.5
     databases: [kraken2_db]
     # kraken2's suite-wide pin. amr_plus_gui also runs kraken2 from THIS env
     # (BDTOOLS_SIBLING_ENV_KRAKEN_ID_PARSE_GUI) — bumping it moves both tools
@@ -272,6 +291,7 @@ tools:
     ood_apps: [ksnp_gui]
     dev_apps: [ksnp_gui_dev]
     env: ksnp
+    disk_gb: 2
 
   - name: ncbi_submit_gui
     repo: https://github.com/kapurlab/ncbi_submit_gui.git
@@ -280,6 +300,7 @@ tools:
     ood_apps: [ncbi_submit_gui]
     dev_apps: [ncbi_submit_gui_dev]
     env: ncbi_submit
+    disk_gb: 1
 
   # Under active development. Results are preliminary and not yet validated for
   # diagnostic use (its dashboard card stopped carrying a notice saying so on
@@ -294,3 +315,4 @@ tools:
     ood_apps: [mhc_gui]
     dev_apps: [mhc_gui_dev]
     env: mhc_gui
+    disk_gb: 2.5

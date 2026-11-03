@@ -18,7 +18,7 @@
 set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
 
-TOOL=""; RUN_ONLY=0; BUILD_ONLY=0; PORT=""; NO_BROWSER=0; PRINT_PYTHON=0; REBUILD=0; FRESH=0
+TOOL=""; RUN_ONLY=0; BUILD_ONLY=0; PORT=""; NO_BROWSER=0; PRINT_PYTHON=0; REBUILD=0; FRESH=0; CHECK_STORAGE=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --run-only)   RUN_ONLY=1; shift;;
@@ -27,6 +27,7 @@ while [[ $# -gt 0 ]]; do
     --fresh)      FRESH=1; shift;;              # START OVER: discard the existing env and build it from nothing
     --no-browser) NO_BROWSER=1; shift;;        # launch but don't open a browser (used by the dashboard)
     --print-python) PRINT_PYTHON=1; shift;;     # print the tool's env python if built, else exit 1; no build/launch
+    --check-storage) CHECK_STORAGE=1; shift;;  # is there room to build it (with --rebuild/--fresh as given)? exit 28 if not; no build
     --prefix)   export BDTOOLS_HOME="$2"; shift 2;;
     --port)     PORT="$2"; shift 2;;
     --dry-run)  DRY_RUN=1; export DRY_RUN; shift;;
@@ -570,8 +571,15 @@ _conda_step() {
   # every script conda runs during the transaction.
   local prelude; prelude="$(_conda_prelude_file)"
   [[ -n "${prelude}" ]] && pre+=("BASH_ENV=${prelude}")
+  # Files in the env that hold this machine's configuration, not software
+  # (vsnp3's reference locations): copied out now, put back below if this
+  # transaction replaced them with a package's copy (common.sh, env_config_save).
+  # On the way out whether conda succeeded or not — a rolled-back transaction
+  # can have unlinked the file too.
+  env_config_save "${TOOL:-}" "${envdir}" || return 1
   local rc=0
   "${pre[@]}" "$@" || rc=$?
+  env_config_restore "${TOOL:-}" "${envdir}"
   # Harden again on the way out: this transaction may have just installed the very
   # hooks that break the NEXT one, and hardening only before a step can never see
   # those. Cheap and idempotent.
@@ -1344,6 +1352,7 @@ build_vsnp_local() {
 # --fresh: discard_env_for_fresh / restore_env_from_fresh moved to lib/common.sh
 # (2026-09-02) so install-server.sh can offer the same rebuild. Semantics unchanged.
 build() {
+  check_storage
   discard_env_for_fresh
   ensure_conda_subdir
   # Guard the existing env's activation hooks before anything runs conda —
@@ -1412,8 +1421,12 @@ build() {
     # pin (Linux, no env yet, noarch-only env), so splicing costs nothing.
     BDTOOLS_ARCH_PREFIX="$(arch_prefix "$(resolve_env_prefix)")"
     export BDTOOLS_ARCH_PREFIX
+    # It runs conda itself, outside _conda_step, so bracket it the same way.
+    local _cfg_env; _cfg_env="$(resolve_env_prefix)"
+    env_config_save "${TOOL}" "${_cfg_env}" || die "${TOOL}: not changing its env without a copy of the file above"
     with_progress "${TOOL}: building env + frontend (deploy/install.sh)" \
       "${DIR}/deploy/install.sh" ${args[@]+"${args[@]}"} || die "${TOOL} deploy/install.sh failed"
+    env_config_restore "${TOOL}" "$(resolve_env_prefix)"
   elif [[ -f "${DIR}/conda_setup/environment.yml" ]]; then
     log "no deploy/install.sh in ${TOOL}; using generic build"
     generic_build
@@ -1430,6 +1443,45 @@ build() {
   fi
   enforce_package_pins
   enforce_env_constraints
+}
+
+# Where a NEW env for this tool will be created: a delegated installer that
+# takes --personal builds a named env under the conda base (build() passes it
+# --personal); everything else builds ${DIR}/env.
+_new_env_location() {
+  local base
+  if [[ -n "${ENV_NAME}" && -x "${DIR}/deploy/install.sh" ]] \
+     && grep -q -- '--personal' "${DIR}/deploy/install.sh" 2>/dev/null; then
+    base="$(conda_base_dir 2>/dev/null || true)"
+    [[ -n "${base}" ]] && { printf '%s' "${base}/envs/${ENV_NAME}"; return 0; }
+  fi
+  printf '%s' "${DIR}/env"
+}
+
+# Is there room for this build? Asked once per run, before the checkout is
+# cloned or moved, so a refusal leaves the tool exactly as it was. A new env
+# (none yet, or --fresh — which keeps the old one until the new one passes)
+# needs the whole env; an existing one, what a change to it can cost.
+# `bdtools update` asks first (--check-storage) and says so in
+# BDTOOLS_STORAGE_CHECKED, so the build it starts does not ask again.
+_STORAGE_CHECKED=0
+check_storage() {
+  [[ ${_STORAGE_CHECKED} -eq 0 && "${BDTOOLS_STORAGE_CHECKED:-}" != "${TOOL}" ]] || return 0
+  _STORAGE_CHECKED=1
+  local envp mode=update what rerun="${BDTOOLS_RERUN:-bin/bdtools install ${TOOL}}"
+  envp="$(resolve_env_prefix)"
+  if [[ -z "${BDTOOLS_RERUN:-}" ]]; then
+    [[ ${REBUILD} -eq 1 ]] && rerun+=" --rebuild"
+    [[ ${FRESH} -eq 1 ]] && rerun+=" --fresh"
+  fi
+  if [[ ${FRESH} -eq 1 || -z "${envp}" ]]; then
+    mode=new
+    [[ -n "${envp}" ]] || envp="$(_new_env_location)"
+    what="the ${TOOL} install (a new conda env)"
+  else
+    what="the ${TOOL} install (a change to its conda env)"
+  fi
+  storage_preflight_env "${TOOL}" "${envp}" "${mode}" "${what}" "${rerun}"
 }
 
 # _version_ge A B — is version A >= version B?  (numeric-aware, no dependencies)
@@ -1847,6 +1899,10 @@ for k in KEYS:
   PATH="${launch_path}:${PATH}" PYTHONPATH="${DIR}/bin:${PYTHONPATH:-}" \
     exec ${_arch_cmd[@]+"${_arch_cmd[@]}"} "${py}" -m uvicorn app.main:app --host 127.0.0.1 --port "${PORT}" --log-level info
 }
+
+# Room for the build, before ensure_checkout clones or moves anything.
+[[ ${RUN_ONLY} -eq 0 && ${PRINT_PYTHON} -eq 0 ]] && check_storage
+[[ ${CHECK_STORAGE} -eq 1 ]] && exit 0
 
 ensure_checkout
 

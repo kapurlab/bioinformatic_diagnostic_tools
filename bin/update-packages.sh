@@ -449,6 +449,12 @@ PYREC
     ok "  installable on ${PLATFORMS}"
   fi
 
+  # Room for it: the solve above says what it downloads. Stops the whole run
+  # (exit 28) — the next tool's env is on the same disks. A dry run reports it
+  # and goes on.
+  storage_preflight_env "${tool}" "${envdir}" update \
+    "the ${tool} package update (${specs[*]})" "bin/bdtools update-packages ${TARGET}" "${solvelog}"
+
   if [[ "${DRY_RUN}" -eq 1 ]]; then
     for p in "${plan[@]}"; do
       IFS='|' read -r pkg channel installed want <<< "${p}"
@@ -458,7 +464,17 @@ PYREC
     return 0
   fi
 
-  if ! _conda_install_set "${conda}" "${envdir}" "${specs[@]}"; then
+  # vsnp3's reference locations live in a file the package itself ships, so
+  # replacing the package replaces the file. Copied out first, put back after
+  # (common.sh, env_config_save) — the Ames 3.36 -> 3.37 loss.
+  if ! env_config_save "${tool}" "${envdir}"; then
+    FAILED+=("${tool}: not updated — could not save a copy of its env's configuration first (see above)")
+    return 0
+  fi
+  local _irc=0
+  _conda_install_set "${conda}" "${envdir}" "${specs[@]}" || _irc=$?
+  env_config_restore "${tool}" "${envdir}"
+  if [[ ${_irc} -ne 0 ]]; then
     FAILED+=("${tool}: conda install failed after a successful solve — see ${solvelog}")
     return 0
   fi

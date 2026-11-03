@@ -719,6 +719,40 @@ def _dirty_paths(porcelain):
     return paths
 
 
+# First line of the block bin/lib/storage.py prints when an install stops for
+# lack of room (its STORAGE_MARKER). Kept as a literal so the dashboards need
+# nothing from bin/lib/storage.py at import time.
+STORAGE_MARKER = "NOT ENOUGH STORAGE"
+
+
+def storage_block(lines):
+    """The not-enough-storage block a command printed, as lines, or [].
+
+    The update panel shows the whole log, where the block is one stanza among
+    hundreds of solver lines — and the run then ended on the same generic
+    "finished with errors" as any other failure. The dashboards lift it out so
+    the panel can lead with how much is needed, where, and how much is there.
+    The block is its marker line plus the indented lines under it."""
+    for i, line in enumerate(lines):
+        if line.startswith(STORAGE_MARKER):
+            block = [line]
+            for nxt in lines[i + 1:]:
+                if nxt and not nxt[:1].isspace():
+                    break
+                block.append(nxt)
+            while block and not block[-1].strip():
+                block.pop()
+            return block
+    return []
+
+
+def finish_line(ok, storage):
+    """The last line of an update's log."""
+    if storage:
+        return "⛔ Not enough storage — nothing was installed or changed. See the block above."
+    return "✅ Done." if ok else "⚠ Update finished with errors — see the log above."
+
+
 def clean_log_line(line):
     """One captured subprocess-output line, made fit for the job log — or None.
 
@@ -1018,16 +1052,20 @@ class UpdateManager:
             except (OSError, subprocess.SubprocessError) as exc:
                 self._log(f"ERROR: {exc}")
                 ok = False
+        with self.lock:
+            storage = storage_block(self.job["log"])
         self._log("")
-        self._log("✅ Done." if ok else "⚠ Update finished with errors — see the log above.")
+        self._log(finish_line(ok, storage))
         with self.lock:
             self.job["running"] = False
             self.job["done"] = True
             self.job["ok"] = ok
+            self.job["storage"] = storage
         self.check_async(force=True)  # refresh the banner after applying
 
     def job_status(self):
         with self.lock:
             j = self.job
             return {"running": j["running"], "done": j["done"], "ok": j["ok"],
-                    "target": j["target"], "log": j["log"][-400:]}
+                    "target": j["target"], "log": j["log"][-400:],
+                    "storage": j.get("storage") or []}

@@ -94,6 +94,8 @@ bin/bdtools test <tool>
 | A shipped fix does not appear in a run, and every tool reports "up to date" | A shipped fix does not reach a run |
 | A run names `/srv/...` or another site's directory that does not exist here | A run names another site's directory |
 | Windows browser can't reach a tool running in WSL | Windows browser cannot reach a WSL tool |
+| `NOT ENOUGH STORAGE — … was not started. Nothing was changed.` | Not enough storage |
+| vSNP's Reference Locations list only `/Users/todstuber/vsnp3_test_dataset/vsnp_dependencies` ("path not found") after a vsnp3 update, and Step 2 says "the project's reference folder could not be found" | vSNP reference locations reset by an update |
 
 On Windows/WSL, also read [WSL: the four rules](#wsl-the-four-rules).
 
@@ -1031,6 +1033,86 @@ says the repair happened; there is nothing to fix. It appears once, on the
 launch that performed it, and is gone from then on — including after a dashboard
 restart. The permanent copy is the `# NOTE:` line at the top of that run's log,
 and doctor's listing of what was removed.
+
+### Not enough storage
+
+Full text, at the start of an install, an update or a database download:
+
+```
+NOT ENOUGH STORAGE — the vsnp_gui install (a new conda env) was not started. Nothing was changed.
+
+  On the filesystem mounted at /project:
+      needed:     3.6 GB
+      available:  1.2 GB
+      short by:   2.4 GB
+    needed for:
+      conda's package cache     3.6 GB  /project/shared/miniconda3/pkgs
+      the new conda env        (links)  /project/shared/bdtools/tools/vsnp3
+```
+
+The dashboard's update panel shows the same block under the title "Not enough
+storage — nothing was installed".
+
+**What it means.** Before anything is written, every install measures the
+filesystems it is about to write and stops when one of them is short. Running
+out half-way through a conda transaction leaves an env that is neither the old
+one nor the new one; stopping first leaves everything as it was. The numbers
+are per filesystem — the env, conda's package cache and a database directory
+can each be on a different one, and each line under "needed for" names the
+directory that needs the space. An env on the same filesystem as the package
+cache shows `(links)`: its files are hard links into the cache, already counted.
+
+"Needed" is an estimate (bin/lib/storage.py explains it): a new env is the
+tool's `disk_gb:` in tools.yml plus the package cache's copy, a package update
+is what its solve downloads, and both carry 512 MB of headroom. "Available" is
+what `df` reports for your account.
+
+**The fix.** Free at least the "short by" amount on the filesystem named, then
+run the command the block prints. A package cache full of old versions is the
+usual place to find it:
+
+```bash
+conda clean --all --dry-run
+```
+
+If the cache sits in your home directory (`~/.conda/pkgs` — conda falls back to
+it when the shared base is not writable) and home has a small quota, point the
+cache at a filesystem with room instead:
+
+```bash
+conda config --add pkgs_dirs /path/with/room/conda-pkgs
+```
+
+A disk quota can be tighter than the filesystem `df` reports on; check it with
+`quota -s` or your site's quota command. If you are certain the free space is
+misreported, `BDTOOLS_SKIP_STORAGE_CHECK=1` skips the check for one command.
+
+### vSNP reference locations reset by an update
+
+**What it means.** vsnp3 reads its reference locations from
+`<vsnp3 env>/dependencies/reference_options_paths.txt`, and the vsnp3 conda
+package ships its own copy of that file, listing only the upstream author's
+paths. conda owns the path, so before this was fixed every transaction that
+replaced vsnp3 — the dashboard's package update, a `--fresh` rebuild, a
+`restore-env` — swapped this machine's file for the package's copy.
+
+Current bdtools keeps the file through any conda operation on the env and puts
+the same file back afterwards (tools.yml `env_config:`), so its owner, group and
+permissions are what they were — who may read or edit a site's reference
+locations is the site's decision, not the update's. The update log says
+`kept this machine's dependencies/reference_options_paths.txt`. A copy also
+stays at `~/.local/share/bdtools/state/env-config/vsnp_gui/dependencies/reference_options_paths.txt`
+for whoever ran the update. If the log instead says the file "is now owned by"
+the person who ran the update, the original could not be kept (another
+account's file); it prints the `sudo chown` that gives it back.
+
+**The fix**, for a file lost before that: put the locations back in the
+Reference Editor (Reference Locations → Add), or copy the file from another
+vsnp3 env that still has them:
+
+```bash
+cp <old env>/dependencies/reference_options_paths.txt <vsnp3 env>/dependencies/
+```
 
 ### Windows browser cannot reach a WSL tool
 

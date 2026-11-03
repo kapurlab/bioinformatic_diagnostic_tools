@@ -84,11 +84,45 @@ fi
 
 # Refuse on anything that is NOT site-localized card config, before touching
 # the tree. Named individually: "you have local changes" is not actionable.
-blocking=""
+blocking=""; blocking_paths=()
 while IFS= read -r p; do
   [[ -n "${p}" ]] || continue
   blocking+="       ${p}"$'\n'
+  blocking_paths+=("${p}")
 done < <(tool_blocking_edits "${REPO_DIR}")
+
+# ...except tools.yml changed only in version pins. `bdtools update` and
+# `update-packages` write those lines themselves, the dashboard's own bdtools
+# update has restored them before pulling since 2026-09-25
+# (suite_common.suite_update_command), and this command refused them — so a
+# site that had moved one package (Ames, vsnp3 3.37, 2026-10-29) could update
+# bdtools from the dashboard and not from a terminal. Same rule, same classifier:
+# the pin lines are derived state, origin's manifest is the release of record,
+# and restoring them changes nothing installed.
+if [[ ${#blocking_paths[@]} -eq 1 && "${blocking_paths[0]}" == "tools.yml" ]]; then
+  _need_python
+  drift="$("${PYBIN}" - "${KT_BIN_DIR}/lib" <<'PY' 2>/dev/null || true
+import sys
+sys.path.insert(0, sys.argv[1])
+import suite_common
+kind, lines = suite_common._manifest_drift()
+print(kind)
+print("\n".join(lines[:20]))
+PY
+)"
+  case "${drift%%$'\n'*}" in
+    bookkeeping|mode)
+      log "tools.yml differs from the committed copy only in version pins (bdtools' own"
+      info "bookkeeping, not an edit of yours) — restoring it so the pull can proceed:"
+      while IFS= read -r ln; do [[ -n "${ln}" ]] && info "  ${ln}"; done <<< "${drift#*$'\n'}"
+      if [[ ${DRY_RUN:-0} -eq 0 ]]; then
+        git checkout -- tools.yml || die "could not restore tools.yml"
+      else
+        echo "  [dry-run] git checkout -- tools.yml"
+      fi
+      blocking="";;
+  esac
+fi
 if [[ -n "${blocking}" ]]; then
   die "these tracked files have local changes that are not site card config:
 ${blocking}       A pull would overwrite them. Commit or stash them yourself, then

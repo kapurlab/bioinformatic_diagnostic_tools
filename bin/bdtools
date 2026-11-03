@@ -44,6 +44,9 @@
 #                                       native builds. Reports by default, one
 #                                       line per tool, naming what blocks the
 #                                       rest.
+#   bdtools launch-check [tool ...]     one line per tool: the env EVERY user's
+#                                       dashboard session launches it from, or
+#                                       what a site must build (exit 1 if any)
 #   bdtools diagnose [tool ...]         dump EVERYTHING about how a tool
 #                                       resolves and runs, into one file to send
 #   bdtools lint    [tool ...]          (maintainer) flag dependency drift in repos
@@ -983,6 +986,7 @@ main() {
     site-init)          cmd_site_init "$@";;
     setup-databases)    cmd_setup_databases "$@";;
     check-paths)        cmd_check_paths "$@";;
+    launch-check)       _need_python; "${PYBIN}" "${KT_BIN_DIR}/lib/tool_launch.py" check "$@";;
     doctor)             cmd_doctor "$@";;
     diagnose)           cmd_diagnose "$@";;
     fix)                cmd_fix "$@";;

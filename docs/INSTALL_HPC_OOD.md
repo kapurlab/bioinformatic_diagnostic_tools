@@ -326,19 +326,27 @@ it ships its own installer.
 
 That installer, `deploy/install_ood.sh`, is a full site-bootstrap script with
 phases for Unix groups, storage, OOD cards and cron. **You only want the
-`toolchain` phase** — the conda `vsnp3` environment, backend dependencies,
-upstream patches, and the frontend build. Naming the phase explicitly is what
-keeps it from touching anything else.
+`toolchain` phase**: the conda `vsnp3` environment, its web-server dependencies,
+the Kapur Lab patches, and the reference path. Naming the phase explicitly is
+what keeps it from touching anything else.
+
+It reads its **own** `deploy/site.conf`. Write that from the umbrella's
+`sites/site.conf` rather than by hand, from the umbrella checkout:
+
+```bash
+bash bin/vsnp-site-conf.sh            # prefix with sudo if vsnp_gui/deploy is root-owned
+```
+
+It sets `SITE_ROOT`, `CLUSTER_NAME` and `CONDA_BASE` from your site file, and
+`VSNP3_PREFIX` to `$TOOLS_ROOT/vsnp3`, the only place a session looks for vSNP. It
+takes `VSNP3_VERSION` from `tools.yml`. It fills in `ADMIN_USER` and `SERVERNAME`,
+which the installer refuses to run without, and leaves `NPM_BIN` empty so the
+shipped frontend is used rather than rebuilt as root. It refuses if `CONDA_BASE`
+holds no conda, because the installer would otherwise skip the env with only a
+warning. An existing `deploy/site.conf` is edited in place, with a backup. Then:
 
 ```bash
 cd $TOOLS_ROOT/vsnp_gui
-sudo cp deploy/site.conf.example deploy/site.conf
-```
-
-Edit `deploy/site.conf` so `SITE_ROOT`, `CLUSTER_NAME` and `CONDA_BASE` match what
-you put in the umbrella's `sites/site.conf`, then:
-
-```bash
 sudo ./deploy/install_ood.sh --site-conf deploy/site.conf --dry-run toolchain
 sudo ./deploy/install_ood.sh --site-conf deploy/site.conf toolchain
 ```
@@ -374,6 +382,7 @@ $TOOLS_ROOT/kraken_id_parse_gui/env/bin/kraken2 --version
 
 ```bash
 BDTOOLS_TOOLSDIR=$TOOLS_ROOT bin/bdtools doctor
+bin/bdtools launch-check        # the env every user's session launches each tool from
 ```
 
 `BDTOOLS_TOOLSDIR` is required here. Without it, `doctor` and `status` inspect
@@ -1080,14 +1089,17 @@ or the same error. Before this rule, a site whose vSNP env was never built
 opened vSNP from the installer's personal conda, for the installer only
 (USDA, 2026-10-29).
 
-To see what a session will run, from the umbrella on a compute node:
+To see what every user's session will run, from the umbrella checkout:
 
 ```bash
-BDTOOLS_TOOLSDIR=$TOOLS_ROOT python3 bin/lib/tool_launch.py show vsnp_gui 0
+bin/bdtools launch-check
 ```
 
-`site_root` must be set (empty means the tool was not recognised as a site
-tool), and `env_dir` and `env_source` say which env won. With none, the dashboard
+It prints one line per tool. `OK` lines name the env and where it came from. A
+tool marked `personal install` was not recognised as a site tool; the umbrella
+must sit at `$TOOLS_ROOT/bioinformatic_diagnostic_tools`. `FIX` lines say what to
+build. It exits 1 if any site tool has no env. For the full plan of one tool:
+`BDTOOLS_TOOLSDIR=$TOOLS_ROOT python3 bin/lib/tool_launch.py show vsnp_gui 0`. With none, the dashboard
 card and `bdtools doctor` show the same message: every path checked and the
 command that builds the env. If the env it mentions finding through your own
 account is meant to be the site's, declare its base for everyone with

@@ -19,6 +19,9 @@ CLI (used by tests / a bash shim):
   tool_launch.py cmd   <tool> <port> [--host H]   -> prints argv (one per line)
   tool_launch.py repro <tool> <port> [--host H]   -> prints a copy/paste shell command
   tool_launch.py show  <tool> <port> [--host H]   -> prints resolved plan as JSON
+  tool_launch.py check [tool ...]                 -> one line per tool: the env every
+                                                     session launches it from (exit 1
+                                                     if a site tool has none)
 """
 import json
 import os
@@ -304,8 +307,8 @@ class SiteEnvMissing(RuntimeError):
 # (what to do, the command, where the guide explains it)
 _SITE_ENV_FIX = {
     "vsnp_gui": ("build the shared vsnp3 env at {root}/vsnp3 with vSNP's own installer",
-                 "cd {root}/vsnp_gui && sudo ./deploy/install_ood.sh "
-                 "--site-conf deploy/site.conf toolchain",
+                 "bash {repo}/bin/vsnp-site-conf.sh && cd {root}/vsnp_gui && "
+                 "sudo ./deploy/install_ood.sh --site-conf deploy/site.conf toolchain",
                  "docs/INSTALL_HPC_OOD.md Step 3b"),
 }
 _SITE_ENV_FIX_DEFAULT = ("build it",
@@ -315,7 +318,8 @@ _SITE_ENV_FIX_DEFAULT = ("build it",
 
 def site_env_fix(tool, root):
     """The command that builds a site's env for `tool` (doctor's FIX line)."""
-    return _SITE_ENV_FIX.get(tool, _SITE_ENV_FIX_DEFAULT)[1].format(root=root, tool=tool)
+    return _SITE_ENV_FIX.get(tool, _SITE_ENV_FIX_DEFAULT)[1].format(
+        root=root, tool=tool, repo=_REPO_DIR)
 
 
 def _site_tools_root(tool, d):
@@ -997,7 +1001,33 @@ def log_header(plan, when=None):
          file_limit() or "unknown", warn_block, reproduce_command(plan), bar)
 
 
+def check(tools=None, out=sys.stdout):
+    """One line per tool: the env EVERY user's session will launch it from, or why
+    none. Returns the number of tools that cannot launch.
+
+    The question a site admin needs answered after any install or update, and the
+    one nothing answered in one place: `show` is one tool at a time and dumps the
+    whole plan, doctor grades much more and takes minutes. Asked of resolve(), so
+    it is the dashboard's own answer, not a re-derivation."""
+    bad = 0
+    for name in tools or _manifest_tool_names():
+        try:
+            plan = resolve(name, 0)
+        except SiteEnvMissing as exc:
+            bad += 1
+            out.write("FIX  %s\n" % exc)
+            continue
+        except RuntimeError as exc:
+            out.write("--   %s\n" % exc)       # not installed here: not this site's problem
+            continue
+        scope = "site" if plan["site_root"] else "personal install"
+        out.write("OK   %s: %s (%s; %s)\n" % (name, plan["env_dir"], plan["env_source"], scope))
+    return bad
+
+
 def _cli():
+    if len(sys.argv) >= 2 and sys.argv[1] == "check":
+        sys.exit(1 if check(sys.argv[2:] or None) else 0)
     if len(sys.argv) < 4:
         sys.exit(__doc__)
     action, tool, port = sys.argv[1], sys.argv[2], sys.argv[3]

@@ -69,6 +69,15 @@ CARD_V2 = _card(mem_help="Shared across all tools in the session. "
 CARD_V2_CLASH = _card(mem_min="8")                            # a release moving min: itself
 
 
+MANIFEST = (
+    "tools:\n"
+    "  - name: vsnp_gui\n"
+    "    # the site's validated set\n"
+    "    version: v0.4.130\n"
+    "    packages: [bioconda::vsnp3=3.36, bioconda::snp-dists=1.2.0]\n"
+)
+
+
 def git(repo, *args, check=True):
     return subprocess.run(["git", "-C", str(repo), *args], capture_output=True,
                           text=True, check=check)
@@ -93,6 +102,7 @@ class UmbrellaPull(unittest.TestCase):
         (seed / CARD).write_text(CARD_V1, encoding="utf-8")
         (seed / "bin").mkdir(exist_ok=True)
         (seed / "bin/doctor.sh").write_text("# suite code\n", encoding="utf-8")
+        (seed / "tools.yml").write_text(MANIFEST, encoding="utf-8")
         git(seed, "add", "-A")
         git(seed, "commit", "-qm", "seed")
         subprocess.run(["git", "clone", "-q", "--bare", str(seed), str(self.origin)], check=True)
@@ -146,6 +156,32 @@ class UmbrellaPull(unittest.TestCase):
         self.assertEqual(git(self.site, "rev-parse", "HEAD").stdout, before,
                          "nothing may move when the pull is refused")
         self.assertIn("experiment", (self.site / "bin/doctor.sh").read_text(encoding="utf-8"))
+
+    def test_tools_yml_changed_only_in_pins_does_not_block_the_pull(self):
+        """`update-packages` moved a pin (Ames, vsnp3 3.37, 2026-10-29). The
+        dashboard's bdtools update restores such a manifest before pulling; this
+        command refused it, so the same site could update from the dashboard and
+        not from a terminal."""
+        (self.site / "tools.yml").write_text(
+            MANIFEST.replace("vsnp3=3.36", "vsnp3=3.37"), encoding="utf-8")
+        self.release(CARD_V2)
+        r = self.run_pull()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("only in version pins", r.stdout + r.stderr)
+        self.assertIn("Slurm clusters only", (self.site / CARD).read_text(encoding="utf-8"))
+        self.assertEqual((self.site / "tools.yml").read_text(encoding="utf-8"), MANIFEST)
+
+    def test_a_real_tools_yml_edit_is_still_refused(self):
+        (self.site / "tools.yml").write_text(
+            MANIFEST.replace("# the site's validated set", "# frozen for validation"),
+            encoding="utf-8")
+        before = git(self.site, "rev-parse", "HEAD").stdout
+        self.release(CARD_V2)
+        r = self.run_pull()
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("tools.yml", r.stderr)
+        self.assertEqual(git(self.site, "rev-parse", "HEAD").stdout, before)
+        self.assertIn("frozen for validation", (self.site / "tools.yml").read_text(encoding="utf-8"))
 
     def test_a_same_line_clash_keeps_the_site_version_and_fails_loudly(self):
         """Whose value wins is a human decision. Nothing may be lost, and the

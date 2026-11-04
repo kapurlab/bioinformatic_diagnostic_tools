@@ -73,7 +73,7 @@ def _host_allowed(header):
 # (bin/ood_dashboard/app.py) so the two can never drift apart.
 sys.path.insert(0, str(BIN_DIR / "lib"))
 from suite_common import (  # noqa: E402
-    BLURB, CAVEAT, pretty, free_port, port_open, list_tools, update_scope,
+    BLURB, CAVEAT, pretty, free_port, port_open, early_exit_message, list_tools, update_scope,
     tool_python, readiness_map, check_tool_updates, check_bdtools_update,
     write_dashboard_state, remove_dashboard_state, suite_update_command,
     clean_log_line,
@@ -186,6 +186,7 @@ class Suite:
                           Path.home() / ".local/share/bdtools")) / "dashboard-logs"
             logdir.mkdir(parents=True, exist_ok=True)
             logf = open(logdir / f"{name}.log", "ab")
+            out_from = logf.tell()  # where this launch's own output begins
             try:
                 proc = subprocess.Popen(
                     [BDTOOLS, "local", name, "--run-only", "--no-browser", "--port", str(port)],
@@ -200,7 +201,7 @@ class Suite:
                 }
             for _ in range(120):  # up to ~60s
                 if proc.poll() is not None:
-                    result = (None, f"the tool exited early — see {logf.name}")
+                    result = (None, early_exit_message(name, logf.name, out_from))
                     return result
                 if port_open("127.0.0.1", port):
                     result = (url, None)
@@ -1098,9 +1099,13 @@ function versionBlock(t){
   return `<div class="vers">${bits.map((b, i) =>
     `<span class="vpkg">${i ? '<span class="vsep">·</span>' : ''}${b}</span>`).join('')}</div>`;
 }
-// tool -> launch-time warning. Kept OUTSIDE load() so it survives the 5s
-// re-render: a missing vendored dependency only bites once an analysis runs, so a
-// message that flashes and vanishes is worse than none.
+// tool -> launch-time warning, or why the launch failed. Kept OUTSIDE load() so
+// it survives the 5s re-render: a missing vendored dependency only bites once an
+// analysis runs, so a message that flashes and vanishes is worse than none.
+// A FAILED launch flashed and vanished for exactly that reason: act() wrote the
+// error into the card and then called load(), which redrew the card empty in the
+// same click. On Ames that read as "vSNP clicks and nothing happens" (2026-11-04).
+// Plain text; esc() at render.
 const launchWarn = {};
 // The portal's SSO session has its own lifetime, independent of both the Slurm
 // allocation and this dashboard's token, and it can lapse while this page sits
@@ -1214,7 +1219,7 @@ async function load(){
       ${devBlock(t)}
       ${setupBlock(t)}
       ${noteBlock(t)}
-      <div class="err" id="err-${t.name}">${launchWarn[t.name]||''}</div>`;
+      <div class="err" id="err-${t.name}">${esc(launchWarn[t.name]||'')}</div>`;
     const b=c.querySelector('button');
     b.onclick=()=>act(t.name,b);
     g.appendChild(c);
@@ -1229,7 +1234,7 @@ async function recheck(btn){
   await load(); btn.disabled=false; btn.textContent=was;
 }
 async function act(name,btn){
-  const err=document.getElementById('err-'+name); err.textContent='';
+  const err=document.getElementById('err-'+name); err.textContent=''; delete launchWarn[name];
   btn.disabled=true; const was=btn.textContent; btn.textContent='Starting…';
   try{
     const r=await controlFetch('./api/launch?tool='+encodeURIComponent(name),{method:'POST'});
@@ -1242,8 +1247,8 @@ async function act(name,btn){
       err.textContent = launchWarn[name] || '';
       window.open(j.url,'_blank');
     }
-    else { err.textContent = j.error || 'failed to launch'; }
-  }catch(e){ err.textContent=String(e); }
+    else { err.textContent = launchWarn[name] = j.error || 'failed to launch'; }
+  }catch(e){ err.textContent = launchWarn[name] = String(e); }
   btn.disabled=false; btn.textContent=was; load();
 }
 // ---- Updates: checked in the BACKGROUND so the dashboard is usable at once.
@@ -1891,6 +1896,7 @@ class Handler(BaseHTTPRequestHandler):
             if url:
                 self._send(200, json.dumps({"url": url}))
             else:
+                print(f"launch {tool} failed: {err or 'launch failed'}", file=sys.stderr, flush=True)
                 self._send(500, json.dumps({"error": err or "launch failed"}))
         else:
             self._send(404, json.dumps({"error": "not found"}))

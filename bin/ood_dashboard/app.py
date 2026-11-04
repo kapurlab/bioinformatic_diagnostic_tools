@@ -298,6 +298,7 @@ class Suite:
         try:
             logf.write(tool_launch.log_header(plan).encode())
             logf.flush()
+            out_from = logf.tell()  # where this launch's own output begins
             proc = await asyncio.create_subprocess_exec(
                 *plan["argv"], cwd=plan["cwd"], env=plan["env"],
                 stdout=logf, stderr=asyncio.subprocess.STDOUT)
@@ -312,7 +313,7 @@ class Suite:
                     if self.running.get(name, {}).get("proc") is proc:
                         self.running.pop(name, None)
                 logf.close()
-                return None, f"the tool exited early — see {logf.name}"
+                return None, sc.early_exit_message(name, logf.name, out_from)
             if await _port_open(port):
                 return f"t/{name}/", None
             await asyncio.sleep(0.5)
@@ -671,6 +672,10 @@ function split(t){{
   else{{qual=q;}}}}
  return {{head,tool,qual}};
 }}
+// tool -> why its last launch failed. Outside load(), which redraws every card
+// right after a click: written only into the card, the reason was gone
+// before anyone could read it.
+const launchErr={{}};
 async function load(){{
  const r=await fetch('./api/tools');const tools=await r.json();
  const g=document.getElementById('grid');g.innerHTML='';
@@ -681,12 +686,12 @@ async function load(){{
   c.innerHTML='<div class="blurb">'+esc(h.head)+'</div><div class="name">'+esc(h.tool)+(h.qual?'<span class="qual">'+esc(h.qual)+'</span>':'')+'</div>'+
    '<div class="row">'+pill+'<button '+(t.installed?'':'disabled')+' class="'+(t.running?'open':'')+'">'+(t.running?'Open':'Launch')+'</button></div>'+
    (t.caveat?'<div class="dev"><b>⚠ Development status:</b> '+esc(t.caveat)+'</div>':'')+
-   '<div class="err" id="err-'+t.name+'"></div>';
+   '<div class="err" id="err-'+t.name+'">'+esc(launchErr[t.name]||'')+'</div>';
   const b=c.querySelector('button');b.onclick=()=>act(t.name,b);g.appendChild(c);
  }}
 }}
 async function act(name,btn){{
- const err=document.getElementById('err-'+name);err.textContent='';
+ const err=document.getElementById('err-'+name);err.textContent='';delete launchErr[name];
  btn.disabled=true;const was=btn.textContent;btn.textContent='Starting…';
  try{{const r=await fetch('./api/launch?tool='+encodeURIComponent(name),{{method:'POST'}});
   const j=await r.json();
@@ -694,8 +699,8 @@ async function act(name,btn){{
     if(j.warnings&&j.warnings.length){{err.className='err';err.textContent='⚠ '+j.warnings.join(' ');}}
     else if(j.notices&&j.notices.length){{err.className='note';err.textContent=j.notices.join(' ');}}
     window.open(j.url,'_blank');
-  }}else{{err.className='err';err.textContent=j.error||'failed to launch';}}
- }}catch(e){{err.textContent=String(e);}}
+  }}else{{err.className='err';err.textContent=launchErr[name]=j.error||'failed to launch';}}
+ }}catch(e){{err.textContent=launchErr[name]=String(e);}}
  btn.disabled=false;btn.textContent=was;load();
 }}
 load();setInterval(load,5000);
@@ -745,6 +750,9 @@ async def api_launch(request):
         # pop: shown once, then gone — including for a relaunch in this session.
         notices = SUITE.launch_notices.pop(tool, [])
         return JSONResponse({"url": url, "warnings": warnings, "notices": notices})
+    # Into the session's output.log as well. The card is the only other place
+    # this reason appears, and the access line uvicorn writes says just "500".
+    print(f"launch {tool} failed: {err or 'launch failed'}", file=sys.stderr, flush=True)
     return JSONResponse({"error": err or "launch failed"}, status_code=500)
 
 

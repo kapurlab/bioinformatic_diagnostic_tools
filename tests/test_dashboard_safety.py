@@ -1253,5 +1253,60 @@ class FailClosedImportTests(unittest.TestCase):
                 self.assertIn("IMPORTED", r.stdout)
 
 
+class LaunchFailureReportTests(unittest.TestCase):
+    """2026-11-04, Ames: vSNP "clicks and nothing happens" for a second user.
+    The dashboard had the reason and the page threw it away: act() wrote the
+    error into the card, then load() redrew the card empty in the same click,
+    and output.log said only "POST /api/launch?tool=vsnp_gui ... 500"."""
+
+    def _log(self, tmp, text):
+        path = Path(tmp) / "vsnp_gui.log"
+        path.write_bytes(text.encode())
+        return str(path)
+
+    def test_names_the_exception_not_uvicorns_sign_off(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._log(tmp, (
+                "INFO:     Waiting for application startup.\n"
+                "ERROR:    Traceback (most recent call last):\n"
+                '  File "/x/app/main.py", line 3, in <module>\n'
+                "PermissionError: [Errno 13] Permission denied: '/x/refs'\n"
+                "\n"
+                "ERROR:    Application startup failed. Exiting.\n"))
+            msg = SC.early_exit_message("vsnp_gui", path)
+        self.assertIn("PermissionError: [Errno 13] Permission denied", msg)
+        self.assertIn(path, msg)
+
+    def test_falls_back_to_the_last_line_python_printed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._log(tmp, "/x/vsnp3/bin/python: No module named uvicorn\n")
+            msg = SC.early_exit_message("vsnp_gui", path)
+        self.assertIn("No module named uvicorn", msg)
+
+    def test_reads_only_this_launchs_output(self):
+        # The log is appended to by every launch; a previous run's verdict, or
+        # this run's own header and reproduce line, is not this run's reason.
+        earlier = "ModuleNotFoundError: No module named 'fastapi'\n"
+        header = TL.log_header({"tool": "vsnp_gui", "env_dir": "/x/env",
+                                "argv": ["/x/env/bin/python"], "cwd": "/x",
+                                "env_overrides": {}})
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._log(tmp, earlier + header)
+            msg = SC.early_exit_message("vsnp_gui", path, len((earlier + header).encode()))
+        self.assertNotIn("fastapi", msg)
+        self.assertNotIn("/x/env/bin/python", msg)
+        self.assertIn("printed nothing", msg)
+
+    def test_both_pages_keep_a_failed_launchs_reason_across_the_redraw(self):
+        dashboard = (ROOT / "bin/dashboard.py").read_text(encoding="utf-8")
+        self.assertIn("launchWarn[name] = j.error", dashboard)
+        self.assertIn("${esc(launchWarn[t.name]||'')}", dashboard)
+        app = (ROOT / "bin/ood_dashboard/app.py").read_text(encoding="utf-8")
+        self.assertIn("launchErr[name]=j.error", app)
+        self.assertIn("esc(launchErr[t.name]||'')", app)
+        # ...and the session log says why, not just "500".
+        self.assertIn('print(f"launch {tool} failed:', app)
+
+
 if __name__ == "__main__":
     unittest.main()

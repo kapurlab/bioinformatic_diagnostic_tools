@@ -82,6 +82,44 @@ def port_open(host, port, timeout=0.5):
         return False
 
 
+# A line a dying Python process prints as its verdict: "ModuleNotFoundError: No
+# module named 'uvicorn'", "PermissionError: [Errno 13] ...". Case-sensitive on
+# purpose: uvicorn's own "ERROR:    Application startup failed. Exiting." is the
+# line AFTER the one that says why.
+_EXCEPTION_LINE = re.compile(r"^[A-Za-z_][\w.]*(Error|Exception|Exit)\b")
+
+
+def early_exit_message(name, log_path, offset=0):
+    """Why a tool backend died while starting, in one line, and where the rest is.
+
+    This used to be only "the tool exited early — see <log>". On an OOD session
+    that log sits in the launching user's home on the cluster, and the session's
+    output.log recorded nothing but "POST /api/launch 500" (2026-11-04, Ames:
+    vSNP "clicks and nothing happens" for a second user). A dying Python backend
+    ends with its exception, so lead with that, and fall back to its last line.
+
+    Reads only what THIS launch wrote, from `offset` on: the log is appended to
+    by every launch, and the previous run's last line would be a confident wrong
+    answer."""
+    text = ""
+    try:
+        with open(log_path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            f.seek(max(offset, f.tell() - 16384))
+            text = f.read().decode("utf-8", "replace")
+    except OSError:
+        pass
+    lines = [ln.strip() for ln in text.splitlines()]
+    lines = [ln for ln in lines if ln and not ln.startswith("#")]
+    reason = next((ln for ln in reversed(lines) if _EXCEPTION_LINE.match(ln)),
+                  lines[-1] if lines else "")
+    if len(reason) > 300:
+        reason = reason[:297] + "..."
+    if not reason:
+        return "%s stopped while starting and printed nothing (log: %s)" % (name, log_path)
+    return "%s stopped while starting: %s (full log: %s)" % (name, reason, log_path)
+
+
 def write_dashboard_state(path, port, control_token, session_token=""):
     """Atomically write the private local-dashboard control record.
 

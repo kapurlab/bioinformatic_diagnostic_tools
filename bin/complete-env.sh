@@ -157,6 +157,10 @@ complete_one() {   # complete_one TOOL SWEEP(0|1)
   t_step=${SECONDS}
   run "${conda}" install -y -p "${envdir}" ${cache[@]+"${cache[@]}"} --freeze-installed "${ch[@]}" "${missing[@]}" || _irc=$?
   env_config_restore "${tool}" "${envdir}"
+  if [[ -n "${ENV_ACCESS_PROBLEM}" ]]; then   # see update-packages.sh
+    FAILED+=("${tool}: ${ENV_ACCESS_PROBLEM} — repair: bin/bdtools access ${tool} --fix")
+    ENV_ACCESS_PROBLEM=""
+  fi
   [[ ${_irc} -eq 0 ]] && ok "  installed ($(elapsed_since "${t_step}"))"
   if [[ ${_irc} -ne 0 ]]; then
     harden_conda_hooks "${envdir}"

@@ -1112,10 +1112,11 @@ registry_remove_line() {  # <file> <line> — remove exact line, hardlink-safe
 # it: the save hard-links it beside itself (.<name>.bdtools-kept), the
 # transaction can only unlink the name, and the restore renames the link back
 # over the package's copy. Same inode, so the same owner, group, permissions
-# and ACLs. Who may read or edit a site's reference locations is that site's
-# decision — on the HPC different people deliberately have different access —
-# and a package update is not allowed to change it. (A rename also leaves the
-# package's copy, a hardlink into the package cache, untouched.)
+# and ACLs, and a package update does not get to decide who may read or edit
+# the site's reference locations. (A rename also leaves the package's copy, a
+# hardlink into the package cache, untouched.) Who may is then checked like
+# every other file in the env (env_access_settle below): every vSNP user must
+# be able to read the list and, the site's decision of 2026-11-04, update it.
 #
 # Only when that link cannot be made (the kernel refuses hard links to another
 # account's file under fs.protected_hardlinks, or a --fresh env lands on
@@ -1140,7 +1141,7 @@ _env_config_same() {   # A B — same bytes?
   [[ "$(cat "$1" 2>/dev/null)" == "$(cat "$2" 2>/dev/null)" ]]
 }
 
-env_config_save() {   # TOOL ENVDIR — 1 when a declared file exists but cannot be copied
+_env_config_save_files() {   # TOOL ENVDIR — 1 when a declared file exists but cannot be copied
   local tool="$1" envdir="$2" rel src stash run kept
   [[ "${DRY_RUN:-0}" -eq 1 || -z "${tool}" || -z "${envdir}" ]] && return 0
   run="${BDTOOLS_RUN_ID}"
@@ -1170,7 +1171,7 @@ env_config_save() {   # TOOL ENVDIR — 1 when a declared file exists but cannot
   return 0
 }
 
-env_config_restore() {   # TOOL ENVDIR — put back what a transaction replaced
+_env_config_restore_files() {   # TOOL ENVDIR — put back what a transaction replaced
   local tool="$1" envdir="$2" rel dst stash tmp kept owner now
   [[ "${DRY_RUN:-0}" -eq 1 || -z "${tool}" || -z "${envdir}" ]] && return 0
   for rel in $(manifest_get "${tool}" env_config 2>/dev/null || true); do
@@ -1218,6 +1219,52 @@ env_config_restore() {   # TOOL ENVDIR — put back what a transaction replaced
       info "      cp ${stash} ${dst}"
     fi
   done
+  return 0
+}
+
+# ---- who can read an env after a transaction ------------------------------
+# The same bracket also keeps a transaction from narrowing who can READ the env.
+# Ames HPC, 2026-11-04: the dashboard's vsnp3 3.36 -> 3.37 update ran as one
+# admin, through a conda whose package cache sat in his home directory. /home
+# and /project are separate NFS exports, so conda copied every new file into the
+# shared env instead of hard-linking it, and its copy carries the file's NFSv4
+# ACL: each one arrived granting his home-directory group instead of the
+# cluster's users. vSNP then started for him and died for everyone else with
+# "libssl.so.3: cannot open shared object file: No such file or directory".
+#
+# After every transaction, bin/lib/env_access.py settle gives whatever it wrote
+# that the env's own readers cannot read the access the rest of the env has
+# (who the env's top directory is shared with defines who it is for). That
+# includes the env_config files above: on Ames vsnp3's reference list came in
+# with the same transaction and was just as unreadable. The start is taken before the transaction, less a margin for an NFS server
+# clock ahead of this one; a create, rename or ACL write moves a file's ctime,
+# which is what "since" compares.
+ENV_ACCESS_SINCE=""
+ENV_ACCESS_PROBLEM=""
+
+env_access_mark() {   # note when the next transaction starts (the first mark wins)
+  [[ -n "${ENV_ACCESS_SINCE}" ]] || ENV_ACCESS_SINCE="$(date +%s)"
+}
+
+env_access_settle() {   # TOOL ENVDIR — 1 (and ENV_ACCESS_PROBLEM) when what it wrote stays unreadable
+  local tool="$1" envdir="$2" since="${ENV_ACCESS_SINCE}"
+  ENV_ACCESS_SINCE=""
+  [[ -n "${since}" && -d "${envdir}" ]] || return 0
+  "${PYBIN:-python3}" "${KT_BIN_DIR}/lib/env_access.py" settle "${envdir}" \
+      --since "$((since - 600))" ${tool:+--tool "${tool}"} && return 0
+  ENV_ACCESS_PROBLEM="files this change wrote into ${envdir} cannot be read by everyone the env is shared with, so the tool will fail for them"
+  return 1
+}
+
+env_config_save() {   # TOOL ENVDIR — 1 when a declared file exists but cannot be copied
+  _env_config_save_files "$@" || return 1
+  [[ "${DRY_RUN:-0}" -eq 1 || -z "${2:-}" ]] || env_access_mark
+  return 0
+}
+
+env_config_restore() {   # TOOL ENVDIR — put back what a transaction replaced, then who can read it
+  _env_config_restore_files "$@"
+  [[ "${DRY_RUN:-0}" -eq 1 || -z "${2:-}" ]] || env_access_settle "${1:-}" "$2" || true
   return 0
 }
 

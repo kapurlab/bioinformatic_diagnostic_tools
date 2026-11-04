@@ -490,6 +490,13 @@ PYREC
   t_step=${SECONDS}
   _conda_install_set "${conda}" "${envdir}" "${specs[@]}" || _irc=$?
   env_config_restore "${tool}" "${envdir}"
+  # It installed, but not for everyone: the Ames 3.37 update (common.sh,
+  # env_access_settle). The run must not end "Done" over a tool only its
+  # updater can open.
+  if [[ -n "${ENV_ACCESS_PROBLEM}" ]]; then
+    FAILED+=("${tool}: ${ENV_ACCESS_PROBLEM} — repair: bin/bdtools access ${tool} --fix")
+    ENV_ACCESS_PROBLEM=""
+  fi
   if [[ ${_irc} -ne 0 ]]; then
     FAILED+=("${tool}: conda install failed after a successful solve — see ${solvelog}")
     return 0

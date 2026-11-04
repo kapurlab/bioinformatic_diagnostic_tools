@@ -1105,6 +1105,55 @@ command that builds the env. If the env it mentions finding through your own
 account is meant to be the site's, declare its base for everyone with
 `CONDA_BASE=<base>` in `sites/site.conf`, then re-render the card (Step 5).
 
+#### The env is found, but some of its files are unreadable to other users
+
+The env can be the right one and still not open for everyone. On the Ames HPC
+(2026-11-04), vSNP opened for the admin who had run the vsnp3 3.36 → 3.37
+package update, and for everyone else it died at startup with:
+
+```
+ImportError: libssl.so.3: cannot open shared object file: No such file or directory
+```
+
+The file was there. The update had run through a conda whose package cache was
+in that admin's home directory. `/home` and `/project` are separate NFS
+exports, so conda copied each new file into the shared env instead of linking
+it, and the copy kept the file's NFSv4 ACL. Every file the update installed
+granted the admin's home-directory group, where the rest of the env grants the
+cluster's users. Some facts that make this hard to spot:
+
+- `ls -l` shows the same `-rwx------+` on good and bad files, and plain
+  `getfacl` shows no entries. On NFSv4 the access is in `nfs4_getfacl`.
+- The loader reports a library it may not read as **"No such file"**, because
+  the last place it searched had none.
+- The same import can pass on a login node that has its own system copy of the
+  library. A login-node check proves nothing about the compute nodes.
+
+To check and repair, run this from the umbrella checkout, as the files' owner or
+an administrator:
+
+```bash
+bin/bdtools access vsnp_gui
+bin/bdtools access vsnp_gui --fix --dry-run
+bin/bdtools access vsnp_gui --fix
+```
+
+Without a tool name it checks every tool. The env's top directory defines who
+the env is shared with. `access` lists every file those principals cannot read,
+grouped by what the file grants instead and who owns it. `--fix` gives each one
+the exact ACL that the other files of its kind (directory, executable, other
+file) carry. On a filesystem without ACLs it adds the missing group/other bits
+instead. vSNP's reference list (`dependencies/reference_options_paths.txt` in the
+vsnp3 env) is checked like any other file: every vSNP user has to be able to
+read it and update it. Symlinks are not changed. A symlink that leads out of the
+tree to something the env's users cannot reach is listed as a note.
+`launch-check` now prints `FIX` for such a tool instead of `OK`.
+
+Every conda transaction bdtools runs now ends with the same check. Whatever the
+transaction wrote that the env's readers cannot read is repaired on the spot. A
+package update that cannot repair it fails with the command to run, rather
+than ending "Done".
+
 ### Moving an install the compute nodes cannot see
 
 If the suite was built where only the login node can see it, here is what can be

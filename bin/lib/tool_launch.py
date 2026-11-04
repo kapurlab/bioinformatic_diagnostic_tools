@@ -1021,6 +1021,22 @@ def check(tools=None, out=sys.stdout):
             out.write("--   %s\n" % exc)       # not installed here: not this site's problem
             continue
         scope = "site" if plan["site_root"] else "personal install"
+        # Found is not the same as runnable by everyone: on Ames (2026-11-04)
+        # this line read OK while the env's libssl was readable by one admin's
+        # group only, and vSNP died at import for every other user. A few files
+        # a launch loads, not the tree (env_access.py; `bdtools access` walks
+        # all of it).
+        problem = ""
+        if plan["site_root"]:
+            try:
+                import env_access
+                problem = env_access.launch_problem(plan)
+            except Exception:  # a check that cannot run must not hide the line above it
+                problem = ""
+        if problem:
+            bad += 1
+            out.write("FIX  %s: %s\n" % (name, problem))
+            continue
         out.write("OK   %s: %s (%s; %s)\n" % (name, plan["env_dir"], plan["env_source"], scope))
     return bad
 

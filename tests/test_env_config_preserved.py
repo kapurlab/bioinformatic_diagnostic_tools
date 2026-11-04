@@ -13,9 +13,10 @@ unlink it and link the package's copy in its place, a hardlink into a fake
 package cache. What is pinned:
 
   * the machine's file comes back after the transaction as the SAME file — same
-    inode, so the same owner, group, permissions and ACLs: on the HPC people
-    deliberately have different access to it, and an update must not change
-    that — and the package cache's copy is left untouched;
+    inode, so the same owner, group, permissions and ACLs: a package update
+    does not decide who may read or edit it (who can is then checked like any
+    other file in the env, tests/test_env_access.py) — and the package cache's
+    copy is left untouched;
   * where the original cannot be kept (no hard link possible), a copy with the
     same contents and permissions goes back instead;
   * a file the transaction did not touch is left alone, and a legitimate edit

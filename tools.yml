@@ -38,7 +38,9 @@
 #             software — paths relative to the env. A package that ships one
 #             replaces it on every update, so bdtools keeps each through any
 #             conda operation on the env and puts the same file back after —
-#             owner, group and permissions unchanged. (optional)
+#             owner, group and permissions unchanged. Then, like every other
+#             file in the env, it must be readable by everyone the env is
+#             shared with (bin/lib/env_access.py). (optional)
 #   updates   whether bdtools may CHANGE this tool:
 #               install — offered in the dashboard, and `bdtools update` /
 #                         `update-packages` will act on it

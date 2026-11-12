@@ -98,7 +98,9 @@ complete_one() {   # complete_one TOOL SWEEP(0|1)
   info "  env:  ${envdir}"
   info "  spec: ${spec}"
   local dir; dir="$(tool_dir "${tool}")"
-  local conda; conda="$(detect_conda)" || { FAILED+=("${tool}: conda/mamba not found"); return 0; }
+  # The site's conda, else the one that built this env, else any (common.sh).
+  local conda; conda="$(conda_for_env "${envdir}")" || {
+    FAILED+=("${tool}: conda/mamba not found — declare the site's CONDA_BASE in sites/site.conf"); return 0; }
   say_conda "${conda}"
   local t_tool=${SECONDS} t_step
 

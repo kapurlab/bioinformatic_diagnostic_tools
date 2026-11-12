@@ -58,7 +58,7 @@ ENVDIR="$(tool_env_prefix "${TOOL}")"
 [[ -n "${ENVDIR}" && -d "${ENVDIR}" ]] || die "${TOOL} has no env this machine can see (looked for ${DIR}/env and a conda env named '$(manifest_get "${TOOL}" env 2>/dev/null || echo '?')')
        Build one:  bin/bdtools install ${TOOL}"
 
-CONDA="$(detect_conda)" || die "conda/mamba not found."
+CONDA="$(conda_for_env "${ENVDIR}")" || die "conda/mamba not found — declare the site's CONDA_BASE in sites/site.conf."
 
 # Replay on the platform the env was BUILT for. An explicit URL list pins the
 # packages, but conda still refuses or substitutes when the running subdir

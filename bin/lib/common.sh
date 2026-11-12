@@ -509,13 +509,59 @@ open_url() {
 }
 
 # Detect a usable conda/mamba base; prefer mamba (conda's classic solver hangs).
+# The conda base a SITE builds its envs with, or nothing: the card's
+# BDTOOLS_SITE_CONDA_BASE, else CONDA_BASE in the repo's own sites/site.conf —
+# the two places, in that order, site_paths.site_conda_base() reads for launches.
+# Never <BDTOOLS_HOME>/site.conf (one user's record) and never a CONDA_BASE merely
+# exported by the caller's shell (unset before the file is sourced).
+site_conda_base() {
+  [[ -n "${BDTOOLS_SITE_CONDA_BASE:-}" ]] && { printf '%s\n' "${BDTOOLS_SITE_CONDA_BASE}"; return 0; }
+  (
+    set +eu
+    unset CONDA_BASE
+    # shellcheck disable=SC1091
+    [[ -f "${REPO_DIR}/sites/site.conf" ]] && { source "${REPO_DIR}/sites/site.conf" >/dev/null 2>&1 || true; }
+    printf '%s\n' "${CONDA_BASE:-}"
+  )
+}
+
+# The conda that built an env, read from the env's own conda-meta/history
+# ("# cmd: <base>/bin/conda create ..."), or nothing. Changing an env with the
+# conda that made it is the safe default, and the history names it even on a
+# site whose config does not.
+env_creator_conda() {
+  local hist="$1/conda-meta/history" exe base
+  [[ -r "${hist}" ]] || return 1
+  exe="$(sed -n 's/^# cmd: \([^ ]*\).*/\1/p' "${hist}" | head -1)"
+  [[ -n "${exe}" ]] || return 1
+  base="${exe%%/bin/*}"; base="${base%%/condabin/*}"; base="${base%%/lib/python*}"
+  [[ "${base}" != "${exe}" && -x "${base}/bin/conda" ]] || return 1
+  echo "${base}/bin/conda"
+}
+
+# The conda to change an existing env with: the site's, else the one that built
+# the env, else whatever detect_conda finds.
+conda_for_env() {
+  local site; site="$(site_conda_base 2>/dev/null || true)"
+  [[ -n "${site}" && -x "${site}/bin/conda" ]] && { echo "${site}/bin/conda"; return 0; }
+  env_creator_conda "$1" || detect_conda
+}
+
 # Resolve a real conda/mamba BINARY (never a shell function). conda's shell init
 # defines `conda` as a function that isn't visible to child scripts (e.g. a
 # tool's deploy/install.sh), and `command -v conda` then prints just "conda",
 # which is useless as a path. So probe explicit overrides, CONDA_EXE, and the
 # common install bases, and only accept a `command -v` result if it's executable.
+#
+# A SITE's declared conda comes first (site_conda_base). Launches already use it
+# (2c5430b); the update buttons did not, and they run in a dashboard session with
+# no conda on PATH and no CONDA_EXE. On USDA SciComp (2026-11-12) "Update tool
+# environments" for kraken_id_parse_gui failed "conda/mamba not found" while the
+# site's conda, declared in sites/site.conf, launched vSNP fine.
 detect_conda() {
-  local base="${CONDA_BASE:-}" b p
+  local base="${CONDA_BASE:-}" b p site
+  site="$(site_conda_base 2>/dev/null || true)"
+  [[ -n "${site}" && -x "${site}/bin/conda" ]] && { echo "${site}/bin/conda"; return 0; }
   [[ -n "${base}" && -x "${base}/bin/conda" ]] && { echo "${base}/bin/conda"; return 0; }
   [[ -n "${CONDA_EXE:-}" && -x "${CONDA_EXE}" ]] && { echo "${CONDA_EXE}"; return 0; }
   # This probe list is PINNED to tool_launch.py:_conda_bases() — same entries,

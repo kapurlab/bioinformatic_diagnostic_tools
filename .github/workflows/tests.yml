@@ -24,7 +24,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        # ubuntu pinned, not -latest: when -latest became 26.04 (Nov 2026)
+        # setup-python had no 3.9 build for it, so the floor step failed and
+        # the Linux tests went unrun. 24.04 is supported into 2029.
+        os: [ubuntu-24.04, macos-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:

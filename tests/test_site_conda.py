@@ -64,8 +64,11 @@ class SiteConda(unittest.TestCase):
             f"SITE_ROOT=/nowhere\nCONDA_BASE={site_base}\n")
         return site_base
 
-    def test_nothing_declared_and_no_conda_anywhere_fails(self):
-        self.assertEqual(self.sh("detect_conda")[0], 1)
+    def test_nothing_declared_means_no_site_conda(self):
+        # The machine may have a conda of its own (GitHub's runner does), so
+        # assert what the site lookup decides, not that no conda exists.
+        self.assertEqual(self.sh("site_conda_base")[1], "")
+        self.assertNotEqual(self.sh("detect_conda")[1], self.site_conda)
 
     def test_the_sites_declared_conda_is_found_with_nothing_on_path(self):
         self.declare(self.site_conda)
@@ -88,7 +91,7 @@ class SiteConda(unittest.TestCase):
         (self.bdhome / "site.conf").write_text(
             f"CONDA_BASE={Path(self.personal).parent.parent}\n")
         self.assertEqual(self.sh("site_conda_base")[1], "")
-        self.assertEqual(self.sh("detect_conda")[0], 1)
+        self.assertNotEqual(self.sh("detect_conda")[1], self.personal)
 
     def test_an_envs_history_names_the_conda_that_built_it(self):
         env = Path(self.tmp.name) / "tools/kraken_id_parse_gui/env"

@@ -360,7 +360,9 @@ update_one_tool() {
   done
   info "  env: ${envdir}"
 
-  local conda; conda="$(detect_conda)" || { FAILED+=("${tool}: conda not found"); return 0; }
+  # The site's conda, else the one that built this env, else any (common.sh).
+  local conda; conda="$(conda_for_env "${envdir}")" || {
+    FAILED+=("${tool}: conda not found — declare the site's CONDA_BASE in sites/site.conf"); return 0; }
   CONDA_BIN="${conda}"
   say_conda "${conda}"
 

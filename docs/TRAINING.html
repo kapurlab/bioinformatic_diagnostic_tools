@@ -676,7 +676,7 @@ everything the one above it does, and more.</p>
 <tr>
 <td><strong>Kraken + Krona only</strong></td>
 <td>Kraken2 DB</td>
-<td>Krona chart + the top-taxon verdict. No target taxon needed.</td>
+<td>Krona chart, the top-taxon verdict and a short report. No target taxon needed.</td>
 <td>a few min/sample</td>
 </tr>
 <tr>
@@ -709,7 +709,7 @@ vSNP3, so this one will be visible there too.)</li>
 <li><strong>Inputs → SRA Download</strong> → paste both accessions → <strong>Download</strong>.</li>
 <li>Expand the project and <strong>check</strong> both samples.</li>
 <li>In <strong>Configure &amp; Run</strong>, choose the <strong>Kraken + Krona only</strong> mode card. Leave
-<strong>Target Taxon</strong> alone — this mode doesn't use it.</li>
+<strong>Target name</strong> alone — this mode doesn't use it.</li>
 <li>Confirm <strong>Kraken2 DB path</strong> is filled in (it is, if <code>setup-databases</code> ran).</li>
 <li>Click <strong>▶ Run selected (2)</strong>.</li>
 </ol>
@@ -724,20 +724,28 @@ vSNP3, so this one will be visible there too.)</li>
 </thead>
 <tbody>
 <tr>
-<td><strong>Top taxon</strong> / <strong>%</strong></td>
-<td>The highest-scoring <strong>species-rank</strong> row of the Kraken report, and its share of reads.</td>
+<td><strong>Mode</strong></td>
+<td>Which run mode produced the row: Krona only, Parsed reads or Full ID.</td>
 </tr>
 <tr>
-<td><strong>Runner-up</strong></td>
-<td>The second species, with its share — <em>this is your contamination column.</em></td>
+<td><strong>Kraken: most reads</strong></td>
+<td>The species or species group (e.g. <em>M. tuberculosis complex</em>) holding the most reads, and its share. Below it, <em>then …</em>: the biggest call from a <strong>different</strong> lineage — <em>this is your contamination line.</em></td>
 </tr>
 <tr>
-<td><strong>Status</strong></td>
+<td><strong>Target reads</strong></td>
+<td>Parse and BLAST modes: the share of reads extracted for the target name, the read count, and the target.</td>
+</tr>
+<tr>
+<td><strong>Identification (BLAST)</strong></td>
+<td>BLAST mode: the organism the assembly matched best, and its share of the assembled bases.</td>
+</tr>
+<tr>
+<td><strong>QC</strong></td>
 <td>pass / review / fail, with the reason behind the chip.</td>
 </tr>
 <tr>
 <td><strong>Open</strong></td>
-<td><strong>📊 Krona</strong> — the interactive chart. (<strong>📄 Report</strong> appears for the parse and BLAST modes; a Kraken-only run stops at the chart.)</td>
+<td><strong>📊 Krona</strong> — the interactive chart — and <strong>📄 Report</strong>, the run report (every mode).</td>
 </tr>
 <tr>
 <td><strong>Files</strong></td>
@@ -756,8 +764,12 @@ contaminant is a wedge that has no business being there.</p>
 isolate looks like this: one big wedge, a thin rim of noise.</li>
 <li><strong><code>SRR1173725</code></strong> — a busier chart: the target is there, but it shares the
 space. What else shows up is the likely reason vSNP3 maps this one poorly, and
-the <strong>Runner-up</strong> column names the biggest of them.</li>
+the <em>then …</em> line under <strong>Kraken: most reads</strong> names the biggest of them.</li>
 </ul>
+<p><strong>Open the 📄 Report</strong> for either sample. Its first page is the answer: the most
+abundant taxon (or, in BLAST mode, the identification), the key numbers, what is
+in the sample, and a <strong>Needs attention</strong> box that lists anything to check before
+using the result — or says <em>Nothing flagged</em>.</p>
 <blockquote>
 <p>🔎 <strong>Teaching point — read the complex, not the species.</strong> For MTBC the
 <em>species</em> row is misleading: <em>M. tuberculosis</em>, <em>M. bovis</em>, <em>M. orygis</em> and the
@@ -777,11 +789,13 @@ itself, a failed run.</p>
 <ol>
 <li>Same project. Uncheck <code>SRR28623786</code> and leave <strong><code>SRR1173725</code></strong> checked, then
 choose the <strong>Kraken + parse reads</strong> mode card.</li>
-<li>In <strong>Target Taxon</strong>, select <strong><code>Mycobacterium tuberculosis complex</code></strong>. The
-dropdown is a shared list — if the taxon you need isn't there, type it into
-<strong>Add a new taxon to the list…</strong> and click <strong>+ Add</strong>. It must match the name
-Kraken reports <strong>exactly</strong>; new entries are saved to this install's
-<code>config/taxa.yaml</code> and show up in the vSNP GUI too.</li>
+<li>In <strong>Target name</strong>, select <strong><code>Mycobacterium tuberculosis complex</code></strong>. If the
+name you need isn't in the list, click <strong>Manage…</strong>: it lists the names Kraken
+reported in this project's runs — click one, then <strong>Save</strong> — or type a name
+(it must match the Kraken report <strong>exactly</strong>; the box says whether Kraken
+reported it). Saved names are yours: they live in
+<code>~/.config/kraken_id_parse_gui/target_names.yaml</code>, survive tool updates, show
+up in the vSNP GUI's Kraken dialog too, and can be removed from <strong>Manage…</strong>.</li>
 <li>Click <strong>▶ Run selected (1)</strong>.</li>
 </ol>
 <p><strong>What you get</strong>, in <code>&lt;project&gt;/kraken/&lt;sample&gt;/</code>:</p>

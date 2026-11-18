@@ -384,7 +384,7 @@ everything the one above it does, and more.
 
 | Run mode | Needs | Leaves you with | Roughly |
 |---|---|---|---|
-| **Kraken + Krona only** | Kraken2 DB | Krona chart + the top-taxon verdict. No target taxon needed. | a few min/sample |
+| **Kraken + Krona only** | Kraken2 DB | Krona chart, the top-taxon verdict and a short report. No target taxon needed. | a few min/sample |
 | **Kraken + parse reads** | + a **target taxon** | the target's reads as `FASTQ.gz`, a statistics workbook and a run report | a few min more |
 | **Kraken + parse + BLAST** | + a **BLAST DB** | assembly, a BLAST species call, coverage charts, the full report | budget most of an hour |
 
@@ -408,7 +408,7 @@ with. Reading them side by side is the whole point of this module.*
 3. **Inputs → SRA Download** → paste both accessions → **Download**.
 4. Expand the project and **check** both samples.
 5. In **Configure & Run**, choose the **Kraken + Krona only** mode card. Leave
-   **Target Taxon** alone — this mode doesn't use it.
+   **Target name** alone — this mode doesn't use it.
 6. Confirm **Kraken2 DB path** is filled in (it is, if `setup-databases` ran).
 7. Click **▶ Run selected (2)**.
 
@@ -418,10 +418,12 @@ The **Results** table gives you the verdict per sample:
 
 | Column | What it tells you |
 |---|---|
-| **Top taxon** / **%** | The highest-scoring **species-rank** row of the Kraken report, and its share of reads. |
-| **Runner-up** | The second species, with its share — *this is your contamination column.* |
-| **Status** | pass / review / fail, with the reason behind the chip. |
-| **Open** | **📊 Krona** — the interactive chart. (**📄 Report** appears for the parse and BLAST modes; a Kraken-only run stops at the chart.) |
+| **Mode** | Which run mode produced the row: Krona only, Parsed reads or Full ID. |
+| **Kraken: most reads** | The species or species group (e.g. *M. tuberculosis complex*) holding the most reads, and its share. Below it, *then …*: the biggest call from a **different** lineage — *this is your contamination line.* |
+| **Target reads** | Parse and BLAST modes: the share of reads extracted for the target name, the read count, and the target. |
+| **Identification (BLAST)** | BLAST mode: the organism the assembly matched best, and its share of the assembled bases. |
+| **QC** | pass / review / fail, with the reason behind the chip. |
+| **Open** | **📊 Krona** — the interactive chart — and **📄 Report**, the run report (every mode). |
 | **Files** | Expands to the run's output files — everything lands in `<project>/kraken/<sample>/`. |
 
 **Open the 📊 Krona chart.** It is a zoomable ring: the centre holds all the
@@ -436,7 +438,12 @@ contaminant is a wedge that has no business being there.
   isolate looks like this: one big wedge, a thin rim of noise.
 - **`SRR1173725`** — a busier chart: the target is there, but it shares the
   space. What else shows up is the likely reason vSNP3 maps this one poorly, and
-  the **Runner-up** column names the biggest of them.
+  the *then …* line under **Kraken: most reads** names the biggest of them.
+
+**Open the 📄 Report** for either sample. Its first page is the answer: the most
+abundant taxon (or, in BLAST mode, the identification), the key numbers, what is
+in the sample, and a **Needs attention** box that lists anything to check before
+using the result — or says *Nothing flagged*.
 
 > 🔎 **Teaching point — read the complex, not the species.** For MTBC the
 > *species* row is misleading: *M. tuberculosis*, *M. bovis*, *M. orygis* and the
@@ -456,11 +463,13 @@ Now clean up `SRR1173725` so vSNP3 can use it.
 
 1. Same project. Uncheck `SRR28623786` and leave **`SRR1173725`** checked, then
    choose the **Kraken + parse reads** mode card.
-2. In **Target Taxon**, select **`Mycobacterium tuberculosis complex`**. The
-   dropdown is a shared list — if the taxon you need isn't there, type it into
-   **Add a new taxon to the list…** and click **+ Add**. It must match the name
-   Kraken reports **exactly**; new entries are saved to this install's
-   `config/taxa.yaml` and show up in the vSNP GUI too.
+2. In **Target name**, select **`Mycobacterium tuberculosis complex`**. If the
+   name you need isn't in the list, click **Manage…**: it lists the names Kraken
+   reported in this project's runs — click one, then **Save** — or type a name
+   (it must match the Kraken report **exactly**; the box says whether Kraken
+   reported it). Saved names are yours: they live in
+   `~/.config/kraken_id_parse_gui/target_names.yaml`, survive tool updates, show
+   up in the vSNP GUI's Kraken dialog too, and can be removed from **Manage…**.
 3. Click **▶ Run selected (1)**.
 
 **What you get**, in `<project>/kraken/<sample>/`:

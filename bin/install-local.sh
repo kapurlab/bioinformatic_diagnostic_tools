@@ -1421,6 +1421,20 @@ build() {
     # pin (Linux, no env yet, noarch-only env), so splicing costs nothing.
     BDTOOLS_ARCH_PREFIX="$(arch_prefix "$(resolve_env_prefix)")"
     export BDTOOLS_ARCH_PREFIX
+    # Hand the tool's installer this machine's site roots, as install-server.sh
+    # does. An installer that stages a database or a reference library (a
+    # pathogen add-on's deploy/build_library.sh) builds under BDTOOLS_DB_ROOT;
+    # without it a local install could only guess, and the guess (~/databases)
+    # is another install's tree on any machine that has two. site_paths is the
+    # one resolver (env var, then <BDTOOLS_HOME>/db-root, then site.conf); an
+    # explicit export by the caller still wins.
+    export BDTOOLS_HOME
+    export BDTOOLS_TOOLS_ROOT="${BDTOOLS_TOOLS_ROOT:-$(dirname "${DIR}")}"
+    if [[ -z "${BDTOOLS_DB_ROOT:-}" ]]; then
+      BDTOOLS_DB_ROOT="$("${PYBIN}" -c 'import sys; sys.path.insert(0, sys.argv[1]); import site_paths; print(site_paths.db_root(sys.argv[2]))' \
+        "${REPO_DIR}/bin/lib" "${REPO_DIR}" 2>/dev/null || true)"
+      [[ -n "${BDTOOLS_DB_ROOT}" ]] && export BDTOOLS_DB_ROOT
+    fi
     # It runs conda itself, outside _conda_step, so bracket it the same way.
     local _cfg_env; _cfg_env="$(resolve_env_prefix)"
     env_config_save "${TOOL}" "${_cfg_env}" || die "${TOOL}: not changing its env without a copy of the file above"
@@ -1443,6 +1457,10 @@ build() {
   fi
   enforce_package_pins
   enforce_env_constraints
+  # A pathogen add-on's reference library, built once its env exists.
+  if tool_is_addon "${TOOL}"; then
+    build_addon_library "${DIR}" "${TOOL}" || die "${TOOL}: reference library not built"
+  fi
 }
 
 # Where a NEW env for this tool will be created: a delegated installer that
@@ -1735,6 +1753,8 @@ arch_prefix() {
 }
 
 launch() {
+  # An add-on has no server of its own (docs/BUILDING_AN_ADDON.md).
+  tool_is_addon "${TOOL}" && die "${TOOL} is an add-on for $(manifest_get "${TOOL}" addon_for), not a tool that runs on its own: launch $(manifest_get "${TOOL}" addon_for) instead."
   local py envbin; py="$(resolve_python)"; envbin="$(dirname "${py}")"
   # The env's architecture pin, computed ONCE at the top so that EVERY run of
   # the env's interpreter inside launch() carries it — not just the final exec.
@@ -1783,7 +1803,10 @@ launch() {
 import json, os
 from pathlib import Path
 site = os.environ["VSNP_GUI_SITE_ROOT"]
-cfgp = Path.home() / ".config" / "vsnp_gui" / "config.json"
+# Where vsnp_gui's own config.py reads it: $XDG_CONFIG_HOME, else ~/.config.
+# Hard-coding ~/.config here repaired the wrong file for a session that moved
+# XDG_CONFIG_HOME (a second install, a test sandbox) and rewrote the real one.
+cfgp = Path(os.environ.get("XDG_CONFIG_HOME", "").strip() or (Path.home() / ".config")) / "vsnp_gui" / "config.json"
 derived = {
     "vsnp3_path": f"{site}/tools/vsnp3",
     "vsnp3_reference_options_root": f"{site}/refs/vsnp3/reference_options",
@@ -1853,7 +1876,7 @@ except Exception: print("")' 2>/dev/null)"
     export "${_sv}"
   done < <(printf '%s' "${_tl_show}" | "${PYBIN}" -c 'import json,sys
 KEYS = ("BDTOOLS_DB_ROOT", "BDTOOLS_SHARED_PROJECTS_ROOT",
-        "BDTOOLS_SITE_ROOT", "BDTOOLS_TOOLS_ROOT")
+        "BDTOOLS_SITE_ROOT", "BDTOOLS_TOOLS_ROOT", "BDTOOLS_DEFAULT_PATHOGEN")
 try:
     ov = json.load(sys.stdin)["env_overrides"]
 except Exception:

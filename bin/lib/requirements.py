@@ -222,5 +222,92 @@ REQUIREMENTS = {
 }
 
 
+def _addon_manifest(name):
+    """The add-on's own addon.json (docs/BUILDING_AN_ADDON.md), or {}.
+
+    Read from the checkout bdtools resolves for it, so doctor grades the
+    add-on that is installed, against what that version declares."""
+    import json
+    import os
+    try:
+        import tool_launch
+        d = tool_launch.tool_dir(name)
+        with open(os.path.join(d, "addon.json"), encoding="utf-8") as fh:
+            return json.load(fh)
+    except Exception:  # noqa: BLE001 — a missing or unreadable manifest is a doctor finding elsewhere
+        return {}
+
+
+def _addons_for(consumer):
+    """[(add-on tool name, its addon.json)] for every manifest add-on of `consumer`."""
+    try:
+        import tool_launch
+        import manifest
+        _v, tools = manifest.parse(tool_launch._MANIFEST)
+    except Exception:  # noqa: BLE001
+        return []
+    out = []
+    for t in tools:
+        targets = t.get("addon_for") or []
+        targets = targets if isinstance(targets, list) else [targets]
+        if consumer in targets:
+            out.append((t.get("name", ""), _addon_manifest(t.get("name", ""))))
+    return [(n, m) for n, m in out if n]
+
+
+def _addon_requirements(name):
+    """A pathogen add-on: no web layer (its consumer runs each hook with the
+    add-on env's python), the programs its manifest says the hooks call, and
+    its reference library under <db root>/addons/<id> — the place its
+    deploy/build_library.sh builds it (BDTOOLS_DB_ROOT, handed over by both
+    installers)."""
+    man = _addon_manifest(name)
+    req = man.get("requires") or {}
+    addon_id = man.get("id") or name.replace("_addon", "")
+    lib = man.get("library") or {}
+    spec = {
+        "modules": list(req.get("modules") or []),
+        "binaries": list(req.get("binaries") or []),
+        "fix": "bin/bdtools install %s --fresh   # rebuilds the add-on env, then its library" % name,
+    }
+    markers = list(lib.get("markers") or [])
+    if markers:
+        spec["databases"] = [{
+            "label": "%s reference library" % (man.get("name") or addon_id),
+            # Add-ons keep no config.json, so this key is never written and the
+            # library is graded where the installer builds it.
+            "config_key": "library_dir",
+            "kind": "dir_marker",
+            "markers": markers,
+            "default_under": ("db_root", "addons/%s" % addon_id),
+            "fix": "bin/bdtools install %s   # builds the library" % name,
+        }]
+    return spec
+
+
 def for_tool(name):
-    return REQUIREMENTS.get(name, {"modules": _WEB, "binaries": []})
+    spec = REQUIREMENTS.get(name)
+    if spec is None:
+        try:
+            import tool_launch
+            if tool_launch.is_addon(name):
+                return _addon_requirements(name)
+        except Exception:  # noqa: BLE001
+            pass
+        return {"modules": _WEB, "binaries": []}
+    addons = _addons_for(name)
+    if not addons:
+        return spec
+    # Every add-on of this tool is an optional sibling: the tool runs without
+    # it, and a project that names that pathogen cannot.
+    spec = dict(spec)
+    sibs = list(spec.get("sibling_tools") or [])
+    opt = dict(spec.get("optional_siblings") or {})
+    for addon, man in addons:
+        if addon not in sibs:
+            sibs.append(addon)
+        opt.setdefault(addon, "projects that name the %s pathogen cannot run until it is installed"
+                       % (man.get("name") or addon))
+    spec["sibling_tools"] = sibs
+    spec["optional_siblings"] = opt
+    return spec

@@ -41,6 +41,10 @@ ENV_DB_ROOT = "BDTOOLS_DB_ROOT"
 ENV_TOOLS_ROOT = "BDTOOLS_TOOLS_ROOT"
 ENV_SITE_ROOT = "BDTOOLS_SITE_ROOT"
 ENV_HOME = "BDTOOLS_HOME"
+# The pathogen add-on a site's new projects start with (site.conf
+# DEFAULT_PATHOGEN). Not a path: an add-on id such as "fmdv". Unset means new
+# projects name no pathogen, which is how every site worked before add-ons.
+ENV_DEFAULT_PATHOGEN = "BDTOOLS_DEFAULT_PATHOGEN"
 
 _SITE_FILE = "site.conf"
 _DB_ROOT_FILE = "db-root"
@@ -207,6 +211,21 @@ def db_root(repo_dir=None) -> Path:
     return Path.home() / "databases"
 
 
+def default_pathogen(repo_dir=None):
+    """The add-on id new projects start with here, or None.
+
+    The env var wins (a card or a wrapper exporting it), then the site's own
+    DEFAULT_PATHOGEN in site.conf (<repo>/sites/site.conf, overridden by
+    <BDTOOLS_HOME>/site.conf, as for every other key). Only the id's shape is
+    checked here; whether that add-on is installed is the consumer's question,
+    and it says so in the project form rather than refusing to start."""
+    import re
+    val = os.environ.get(ENV_DEFAULT_PATHOGEN, "").strip()
+    if not val:
+        val = str(site_config(repo_dir).get("DEFAULT_PATHOGEN", "") or "").strip()
+    return val if val and re.fullmatch(r"[a-z][a-z0-9_]{0,31}", val) else None
+
+
 def site_root(repo_dir=None):
     """The deployment's top-level shared root, or None if this isn't a site install.
 
@@ -274,6 +293,9 @@ def as_env(repo_dir=None) -> dict:
     site = site_root(repo_dir)
     if site is not None:
         env[ENV_SITE_ROOT] = str(site)
+    pathogen = default_pathogen(repo_dir)
+    if pathogen is not None:
+        env[ENV_DEFAULT_PATHOGEN] = pathogen
     return env
 
 

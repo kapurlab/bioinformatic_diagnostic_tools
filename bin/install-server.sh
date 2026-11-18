@@ -278,8 +278,10 @@ phase_preflight() {
     else
       info "--with-dev given but ${TOOL} declares no dev_apps — production card(s) only"
     fi
+  elif tool_is_addon "${TOOL}"; then
+    ok "${TOOL} is an add-on for $(manifest_get "${TOOL}" addon_for): no card of its own (its consumer runs it)"
   else
-    ok "production card(s) only: ${OOD_APPS[*]} (dev cards hidden; use --with-dev to add them)"
+    ok "production card(s) only: ${OOD_APPS[*]+${OOD_APPS[*]}} (dev cards hidden; use --with-dev to add them)"
   fi
   [[ -d /etc/ood/config ]] && ok "OOD core present (/etc/ood/config)" \
     || warn "OOD core not detected — institutional sites have it; bare-metal: run ood-core/bootstrap_ood_core.sh"
@@ -398,6 +400,10 @@ phase_toolchain() {
       warn "  (for vsnp_gui) use vsnp_gui/deploy/install_ood.sh, which builds the shared vsnp3 env."
     fi
   fi
+  # A pathogen add-on's reference library, under this site's database root.
+  if tool_is_addon "${TOOL}"; then
+    build_addon_library "${DIR}" "${TOOL}" || VERIFY_FAILED=1
+  fi
   # --rebuild: the tool installers disagree about an existing env (mlst's updates
   # it from the spec, the others skip it), so a newly declared package reached
   # some sites and not others. The spec is the same statement either way; apply
@@ -432,7 +438,9 @@ phase_app() {
   need_writable "${SYS_APPS_DIR}" app
   log "app — render OOD card(s) into ${APP_DST_BASE}"
   local app src dst f
-  for app in "${OOD_APPS[@]}"; do
+  # ${arr[@]+...}: an add-on declares no card, and an empty array under set -u
+  # is an "unbound variable" error on bash < 4.4 (RHEL 7 ships 4.2).
+  for app in ${OOD_APPS[@]+"${OOD_APPS[@]}"}; do
     src="${DIR}/ood/apps/${app}"
     dst="${APP_DST_BASE}/${app}"
     [[ -d "${src}" ]] || { warn "missing app source ${src} — skipping"; continue; }
@@ -487,7 +495,11 @@ print("%s (%s)" % (plan["env_dir"], plan["env_source"]))
 PY
 )" || rc=$?
   case ${rc} in
-    0) ok "every user's session launches ${TOOL} from ${out}";;
+    0) if tool_is_addon "${TOOL}"; then
+         ok "every user's $(manifest_get "${TOOL}" addon_for) session runs ${TOOL}'s hooks from ${out}"
+       else
+         ok "every user's session launches ${TOOL} from ${out}"
+       fi;;
     3) warn "${out}"
        if [[ ${DRY_RUN} -eq 1 ]]; then
          warn "  (dry run: reported only — the real run exits non-zero here)"
@@ -525,10 +537,18 @@ phase_verify() {
   fi
   assert_pinned_source
   [[ -x "${DIR}/env/bin/python" ]] && ok "env python present" || warn "no ${DIR}/env/bin/python (toolchain not built?)"
+  if tool_is_addon "${TOOL}"; then
+    # No server to launch and no frontend: what has to be true is that its env
+    # resolves (the consumer runs its hooks from it) — check_site_launch asks
+    # the same resolver, which accepts an add-on without a web stack.
+    check_site_launch
+    info "${TOOL} is an add-on for $(manifest_get "${TOOL}" addon_for); no frontend or card to check."
+    return
+  fi
   check_site_launch
   [[ -f "${DIR}/frontend/dist/index.html" ]] && ok "frontend built" || warn "frontend/dist missing"
   local app
-  for app in "${OOD_APPS[@]}"; do
+  for app in ${OOD_APPS[@]+"${OOD_APPS[@]}"}; do
     [[ -f "${APP_DST_BASE}/${app}/manifest.yml" ]] && ok "card installed: ${app}" || warn "card missing: ${app}"
   done
   info "Final manual check: launch the card in OOD and confirm the GUI loads through /rnode."

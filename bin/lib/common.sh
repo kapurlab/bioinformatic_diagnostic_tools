@@ -104,6 +104,47 @@ manifest_names()         { _need_python; "${PYBIN}" "${MANIFEST_PY}" "${MANIFEST
 manifest_get()           { _need_python; "${PYBIN}" "${MANIFEST_PY}" "${MANIFEST}" get "$1" "$2"; }
 manifest_set()           { _need_python; "${PYBIN}" "${MANIFEST_PY}" "${MANIFEST}" set "$1" "$2" "$3"; }
 manifest_has() { manifest_names | grep -qxF "$1"; }
+# A pathogen add-on (tools.yml `addon_for:`) is installed and updated like any
+# tool but has no web app and no card: its consumer runs its hooks. Everything
+# that renders a card or starts a server asks this first. Mirrors
+# tool_launch.is_addon.
+tool_is_addon() { [[ -n "$(manifest_get "$1" addon_for 2>/dev/null || true)" ]]; }
+
+# A pathogen add-on's reference library (docs/BUILDING_AN_ADDON.md). After the
+# add-on's env is built, its deploy/build_library.sh runs with that env first
+# on PATH and is told where to build: <db root>/addons/<id>, the db root being
+# BDTOOLS_DB_ROOT or, failing that, what site_paths resolves (the one resolver
+# every launch uses). The path is recorded in <addon>/.library_path, which is
+# where vsnp_gui looks first. Idempotent by contract: the add-on's script
+# leaves a built library alone unless its own version marker says otherwise.
+build_addon_library() {   # build_addon_library <tool dir> <tool name>
+  local dir="$1" tool="$2" id dbroot lib
+  [[ -f "${dir}/deploy/build_library.sh" ]] || return 0
+  id="$("${PYBIN:-python3}" -c 'import json, sys; print(json.load(open(sys.argv[1]))["id"])' \
+        "${dir}/addon.json" 2>/dev/null)" \
+    || { warn "${tool}: addon.json is missing or has no id; its library was not built"; return 1; }
+  dbroot="${BDTOOLS_DB_ROOT:-}"
+  if [[ -z "${dbroot}" ]]; then
+    dbroot="$("${PYBIN:-python3}" -c 'import sys; sys.path.insert(0, sys.argv[1]); import site_paths; print(site_paths.db_root(sys.argv[2]))' \
+              "${REPO_DIR}/bin/lib" "${REPO_DIR}" 2>/dev/null || true)"
+  fi
+  [[ -n "${dbroot}" ]] || { warn "${tool}: no database root is configured; its library was not built (set BDTOOLS_DB_ROOT or run bdtools setup-databases)"; return 1; }
+  lib="${dbroot}/addons/${id}"
+  if [[ "${DRY_RUN:-0}" -eq 1 ]]; then
+    echo "  [dry-run] build ${tool}'s reference library -> ${lib}"
+    return 0
+  fi
+  mkdir -p "${lib}" || { warn "${tool}: cannot create ${lib}"; return 1; }
+  log "building ${tool}'s reference library -> ${lib}"
+  if ( cd "${dir}" && PATH="${dir}/env/bin:${PATH}" BDTOOLS_ADDON_LIBRARY="${lib}" \
+         bash deploy/build_library.sh "${lib}" ); then
+    printf '%s\n' "${lib}" > "${dir}/.library_path"
+    ok "${tool} library ready: ${lib}"
+  else
+    warn "${tool}: building its reference library failed (see above). Re-run: bin/bdtools install ${tool}"
+    return 1
+  fi
+}
 
 # ---- what bdtools is allowed to CHANGE -------------------------------------
 # tools.yml's `updates:` field, defaulting to the safe answer. An env rebuild

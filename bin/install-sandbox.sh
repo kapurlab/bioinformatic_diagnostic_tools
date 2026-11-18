@@ -253,7 +253,7 @@ resolve_env() {
 APP_ENV="$(resolve_env)"
 
 # 3. sandbox.env for the OOD card to source.
-CFG_DIR="${HOME}/.config/${TOOL}"
+CFG_DIR="${XDG_CONFIG_HOME:-${HOME}/.config}/${TOOL}"   # as tool_launch._sandbox_env reads it
 log "writing ${CFG_DIR}/sandbox.env"
 run mkdir -p "${CFG_DIR}"
 if [[ ${DRY_RUN} -eq 0 ]]; then

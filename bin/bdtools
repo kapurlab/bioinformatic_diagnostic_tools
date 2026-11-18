@@ -51,6 +51,10 @@
 #                   [--fix] [--dry-run] shared with read every file in them? --fix
 #                                       gives each file they cannot read the access
 #                                       its siblings have (exit 1 if any is left)
+#   bdtools new-addon <id> --name N    start a pathogen add-on (vsnp_gui) from the
+#                                       template: manifest, env, library, hooks, CI
+#   bdtools addon-check <id|path>      check an add-on against vsnp_gui's add-on
+#                                       contract (docs/BUILDING_AN_ADDON.md)
 #   bdtools diagnose [tool ...]         dump EVERYTHING about how a tool
 #                                       resolves and runs, into one file to send
 #   bdtools lint    [tool ...]          (maintainer) flag dependency drift in repos
@@ -365,6 +369,11 @@ print(" ".join(sorted({t["tool"] for t in data
 cmd_local() {
   [[ $# -ge 1 ]] || die "usage: bdtools local <tool> [--port N] [--no-browser]"
   manifest_has "$1" || die "unknown tool: $1"
+  # An add-on has no server. --print-python (how the dashboards ask whether a
+  # tool's env is built) still answers for it; only a launch is refused.
+  if tool_is_addon "$1" && [[ " $* " != *" --print-python "* ]]; then
+    die "$1 is an add-on for $(manifest_get "$1" addon_for), not a tool that runs on its own: launch $(manifest_get "$1" addon_for) and pick the pathogen in a project."
+  fi
   # build-if-needed, then launch (the build steps are idempotent). Forward the
   # rest of the args (--port, --no-browser, ...) to the launcher.
   "${KT_BIN_DIR}/install-local.sh" --run-only "$@"
@@ -991,6 +1000,8 @@ main() {
     setup-databases)    cmd_setup_databases "$@";;
     check-paths)        cmd_check_paths "$@";;
     launch-check)       _need_python; "${PYBIN}" "${KT_BIN_DIR}/lib/tool_launch.py" check "$@";;
+    new-addon)          _need_python; "${PYBIN}" "${KT_BIN_DIR}/lib/addon_tools.py" new-addon "$@";;
+    addon-check)        _need_python; "${PYBIN}" "${KT_BIN_DIR}/lib/addon_tools.py" addon-check "$@";;
     access)             _need_python; "${PYBIN}" "${KT_BIN_DIR}/lib/env_access.py" tools "$@";;
     doctor)             cmd_doctor "$@";;
     diagnose)           cmd_diagnose "$@";;

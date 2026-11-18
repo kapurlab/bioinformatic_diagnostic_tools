@@ -73,7 +73,7 @@ def _host_allowed(header):
 # (bin/ood_dashboard/app.py) so the two can never drift apart.
 sys.path.insert(0, str(BIN_DIR / "lib"))
 from suite_common import (  # noqa: E402
-    BLURB, CAVEAT, pretty, free_port, port_open, early_exit_message, list_tools, update_scope,
+    BLURB, CAVEAT, pretty, free_port, port_open, early_exit_message, list_tools, update_scope, addons_of,
     tool_python, readiness_map, check_tool_updates, check_bdtools_update,
     write_dashboard_state, remove_dashboard_state, suite_update_command,
     clean_log_line,
@@ -105,13 +105,21 @@ class Suite:
         ready = readiness_map()
         pkgs = package_map(use_network=False)
         tools = []
+        addons = addons_of()
         for name in list_tools():
             installed = tool_python(name) is not None
             r = ready.get(name)
+            blurb = BLURB.get(name, "")
+            installed_addons = [
+                "%s %s" % (a, tool_checkout_version(a) or "")
+                for a in addons.get(name, []) if tool_python(a) is not None]
+            if installed_addons:
+                blurb = (blurb + " " if blurb else "") + "Pathogen add-ons: %s." % ", ".join(
+                    x.strip() for x in installed_addons)
             tools.append({
                 "name": name,
                 "label": pretty(name),
-                "blurb": BLURB.get(name, ""),
+                "blurb": blurb,
                 "caveat": CAVEAT.get(name, ""),
                 "installed": installed,
                 # The versions actually in use: GUI release + analysis packages.

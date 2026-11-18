@@ -61,9 +61,39 @@ SPEC = {
 }
 
 
+def addon_for(tool):
+    """The tools `tool` plugs into (tools.yml `addon_for:`), or [] for a tool.
+
+    A pathogen add-on (docs/BUILDING_AN_ADDON.md) is installed, pinned, updated
+    and graded like any tool, but it has no web app: its consumer (vsnp_gui)
+    runs its hooks from the add-on's own env. Everything that would START a
+    tool asks this first and refuses an add-on."""
+    try:
+        _v, tools = manifest.parse(_MANIFEST)
+    except Exception:
+        return []
+    for t in tools:
+        if t.get("name") == tool:
+            v = t.get("addon_for") or []
+            return [x for x in (v if isinstance(v, list) else [v]) if x]
+    return []
+
+
+def is_addon(tool):
+    return bool(addon_for(tool))
+
+
+# An add-on is its checkout plus an env: no backend/, no uvicorn, nothing on
+# PYTHONPATH (its consumer runs each hook with the add-on env's own python).
+ADDON_SPEC = {"workdir": ".", "app": None, "pythonpath": [], "path_prepend": []}
+
+
 def _spec(tool):
     s = dict(DEFAULTS)
     s.update(SPEC.get(tool, {}))
+    if is_addon(tool):
+        s.update(ADDON_SPEC)
+        s["addon"] = True
     return s
 
 
@@ -278,7 +308,11 @@ def _sandbox_env(tool):
 
     Written by install-sandbox.sh so a $HOME checkout/env can live anywhere.
     Returns (app_dir, app_env) with empty strings when unset/absent."""
-    path = os.path.expanduser("~/.config/%s/sandbox.env" % tool)
+    # $XDG_CONFIG_HOME first, as the tools themselves read their config: a
+    # session that moved XDG_CONFIG_HOME (a test sandbox, a second install)
+    # must not pick up the real ~/.config sandbox override.
+    base = os.environ.get("XDG_CONFIG_HOME", "").strip() or os.path.expanduser("~/.config")
+    path = os.path.join(base, tool, "sandbox.env")
     app_dir = app_env = ""
     try:
         with open(path) as fh:
@@ -384,7 +418,7 @@ def _web_ready(env_dir):
     return True
 
 
-def _site_env(tool, root, d, spec, env_name):
+def _site_env(tool, root, d, spec, env_name):  # noqa: C901
     """(env_dir, source, tried) from SITE state only; env_dir "" if none serves.
 
     Candidates, in order: the shared sibling env (<root>/vsnp3), the tool's own
@@ -401,7 +435,7 @@ def _site_env(tool, root, d, spec, env_name):
     for source, cand in cands:
         if not os.path.isfile(os.path.join(cand, "bin", "python")):
             tried.append("%s (no python)" % cand)
-        elif not _web_ready(cand):
+        elif not spec.get("addon") and not _web_ready(cand):
             tried.append("%s (python, but no uvicorn/fastapi in its site-packages)" % cand)
         else:
             return cand, source, tried
@@ -811,12 +845,20 @@ def resolve(tool, port, host="127.0.0.1"):
             if _k in env:
                 env_overrides[_k] = env[_k]
 
-    argv = _arch_prefix(env_dir) + [python, "-m", "uvicorn", spec["app"],
-                                    "--host", host, "--port", str(port),
-                                    "--log-level", "info"]
+    if spec.get("addon"):
+        # Not a server: nothing to start. The plan still carries the env, the
+        # python and the arch prefix, which is what versions, update-packages,
+        # complete-env, access, doctor and the consumer's sibling map need.
+        argv = []
+    else:
+        argv = _arch_prefix(env_dir) + [python, "-m", "uvicorn", spec["app"],
+                                        "--host", host, "--port", str(port),
+                                        "--log-level", "info"]
     return {
         "tool": tool,
         "argv": argv,
+        "launchable": not spec.get("addon"),
+        "addon_for": addon_for(tool),
         "cwd": os.path.join(d, spec["workdir"]),
         "env": env,
         "env_overrides": env_overrides,
@@ -956,7 +998,7 @@ def reproduce_command(plan):
     # to reproduce.
     for k in ("PYTHONPATH", "CONDA_PREFIX",
               "BDTOOLS_HOME", "BDTOOLS_TOOLS_ROOT", "BDTOOLS_DB_ROOT",
-              "BDTOOLS_SHARED_PROJECTS_ROOT",
+              "BDTOOLS_SHARED_PROJECTS_ROOT", "BDTOOLS_DEFAULT_PATHOGEN",
               "VSNP_GUI_SITE_ROOT", "VSNP_GUI_SHARED_PROJECTS_ROOT"):
         if k in ov:
             assigns.append("%s=%s" % (k, shlex.quote(ov[k])))
@@ -1051,6 +1093,10 @@ def _cli():
     if "--host" in sys.argv:
         host = sys.argv[sys.argv.index("--host") + 1]
     plan = resolve(tool, int(port), host=host)
+    if action in ("cmd", "repro") and not plan.get("launchable", True):
+        sys.exit("%s is an add-on for %s, not a tool that runs on its own; open %s instead."
+                 % (tool, ", ".join(plan.get("addon_for") or []) or "another tool",
+                    " or ".join(plan.get("addon_for") or []) or "its consumer"))
     # stderr, so `cmd`/`repro` output stays machine-consumable by the bash shim.
     for w in plan.get("warnings") or []:
         sys.stderr.write("WARNING: %s\n" % w)

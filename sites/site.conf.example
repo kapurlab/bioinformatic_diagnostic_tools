@@ -73,3 +73,11 @@ OOD_VERSION=3.1
 # layout differs from ${SITE_ROOT}/projects and ${SITE_ROOT}/databases.
 #SHARED_PROJECTS_ROOT=${SITE_ROOT}/projects
 #DB_ROOT=${SITE_ROOT}/databases
+
+# ---- Pathogen add-ons (optional) ---------------------------------------------
+# The add-on new vsnp_gui projects start with, by id (e.g. fmdv). A site that
+# works on one pathogen sets it so every new project opens in that workflow;
+# a user can still choose another pathogen, or none, per project. Unset: new
+# projects name no pathogen. Exported to the tools as BDTOOLS_DEFAULT_PATHOGEN.
+# See docs/BUILDING_AN_ADDON.md.
+#DEFAULT_PATHOGEN=fmdv

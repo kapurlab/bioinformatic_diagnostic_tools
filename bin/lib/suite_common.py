@@ -170,8 +170,39 @@ def remove_dashboard_state(path):
         pass
 
 
+def addons_of():
+    """{consumer: [add-on tool name, ...]} from tools.yml `addon_for:`.
+
+    A pathogen add-on is installed and updated like any tool but has no server
+    and no card; dashboards list it on its consumer's card instead, and an
+    update to it has to stop its consumer (see update_scope)."""
+    out = {}
+    try:
+        import sys
+        if _HERE not in sys.path:
+            sys.path.insert(0, _HERE)
+        import manifest
+        _v, tools = manifest.parse(os.environ.get("BDTOOLS_MANIFEST", os.path.join(REPO_DIR, "tools.yml")))
+    except Exception:  # noqa: BLE001
+        return out
+    for t in tools:
+        targets = t.get("addon_for") or []
+        for c in (targets if isinstance(targets, list) else [targets]):
+            if c and t.get("name"):
+                out.setdefault(c, []).append(t["name"])
+    return out
+
+
+def addon_names():
+    return {a for names in addons_of().values() for a in names}
+
+
 def list_tools():
-    """Tool names from `bdtools list` (first column, skipping header/footer)."""
+    """Tool names from `bdtools list` (first column, skipping header/footer).
+
+    Add-ons are left out: every caller starts, probes or draws a card for each
+    name, and an add-on is none of those (see addons_of)."""
+    addons = addon_names()
     try:
         out = subprocess.run([BDTOOLS, "list"], cwd=REPO_DIR,
                              capture_output=True, text=True, timeout=30).stdout
@@ -183,7 +214,7 @@ def list_tools():
         if not line or line.startswith("TOOL") or line.startswith("suite_version"):
             continue
         tok = line.split()[0]
-        if tok and not tok.endswith(":"):
+        if tok and not tok.endswith(":") and tok not in addons:
             names.append(tok)
     return names
 
@@ -620,7 +651,10 @@ def update_scope(target, running):
         scope = target
     if scope == "all":
         return set(running), {"*"}
-    return {scope}, {scope}
+    # An add-on's env is run by its consumer's server (each project hook), so
+    # changing it under a running consumer swaps the env out from under a job.
+    consumers = {c for c, adds in addons_of().items() if scope in adds}
+    return {scope} | consumers, {scope} | consumers
 
 
 def check_tool_updates():

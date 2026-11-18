@@ -245,17 +245,28 @@ class Suite:
         # describe + conda-meta), no network, so this stays cheap enough to run on
         # every discovery pass. The channel comparison is the update check's job.
         packages = sc.package_map(use_network=False)
+        # Pathogen add-ons are not cards: they have no server. Each one is
+        # listed on its consumer's card instead (docs/BUILDING_AN_ADDON.md).
+        addons = sc.addons_of()
+        addon_set = {a for names in addons.values() for a in names}
         for t in tools:
             name = t.get("name")
-            if not name:
+            if not name or name in addon_set:
                 continue
             try:
                 tool_launch.resolve(name, 0)  # cheap: checks backend dir + a python
                 installed = True
             except Exception:
                 installed = False
+            blurb = BLURB.get(name, "")
+            installed_addons = [
+                "%s %s" % (a, sc.tool_checkout_version(a) or "")
+                for a in addons.get(name, []) if sc.tool_python(a) is not None]
+            if installed_addons:
+                blurb = (blurb + " " if blurb else "") + "Pathogen add-ons: %s." % ", ".join(
+                    x.strip() for x in installed_addons)
             out.append({"name": name, "label": pretty(name),
-                        "blurb": BLURB.get(name, ""), "caveat": CAVEAT.get(name, ""),
+                        "blurb": blurb, "caveat": CAVEAT.get(name, ""),
                         "installed": installed,
                         "version": sc.tool_checkout_version(name) if installed else "",
                         "packages": [

@@ -880,6 +880,12 @@ addEventListener('storage',e=>{if(e.key===THEME_KEY)applyTheme(preferredTheme(),
  button:disabled,button:disabled:hover,button.open:disabled,button.open:disabled:hover,
  .updates button.u:disabled,.updates button.u:disabled:hover,.sessexp button:disabled{
    background:var(--disabled-bg);color:var(--disabled-ink);cursor:not-allowed}
+ /* Questions the page draws itself (askOnPage), in place of confirm()/alert(). */
+ .askback{position:fixed;inset:0;background:var(--overlay);display:flex;align-items:center;justify-content:center;z-index:1000;padding:16px}
+ .askbox{background:var(--card);color:var(--ink);border:1px solid var(--line);border-radius:14px;padding:20px 24px;width:100%;max-width:520px;max-height:calc(100vh - 32px);overflow:auto;box-shadow:0 8px 40px rgba(0,0,0,.3)}
+ .askbox h2{margin:0 0 8px;font-size:17px}
+ .askbox p{margin:0 0 16px;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.5;font-size:14px}
+ .askrow{display:flex;gap:8px;justify-content:flex-end}
 </style></head><body>
 <div class="wrap">
 <header><h1><span class="ttl">Bioinformatic Diagnostic Tools</span> <span class="tag">bdtools</span></h1></header>
@@ -1002,6 +1008,43 @@ async function ensureControl(){
   if(!r.ok) throw new Error('could not obtain dashboard control token');
   const d=await r.json(); controlToken=d.control_token||''; bootId=d.boot_id||'';
   return controlToken;
+}
+// Questions the page draws itself, in place of confirm() / alert(). A browser
+// may decline to show those and then answers "cancelled" without showing
+// anything, so Update, Restart and Shut down quietly did nothing and their
+// errors said nothing (2026-11-18). Questions queue and show one at a time.
+// askOnPage({message, okLabel}) -> true/false; {notice:true} -> OK only.
+const askQueue=[];
+function askOnPage({title='',message='',okLabel='OK',cancelLabel='Cancel',notice=false}={}){
+  return new Promise(resolve=>{
+    askQueue.push({title,message:String(message),okLabel,cancelLabel,notice,resolve});
+    if(askQueue.length===1) showAsk();
+  });
+}
+function showAsk(){
+  const a=askQueue[0]; if(!a) return;
+  const back=document.createElement('div'); back.className='askback';
+  const box=document.createElement('div'); box.className='askbox';
+  box.setAttribute('role',a.notice?'alertdialog':'dialog'); box.setAttribute('aria-modal','true');
+  if(a.title){ const h=document.createElement('h2'); h.textContent=a.title; box.appendChild(h); }
+  const p=document.createElement('p'); p.textContent=a.message; box.appendChild(p);
+  const row=document.createElement('div'); row.className='askrow';
+  const ok=document.createElement('button'); ok.textContent=a.okLabel; row.appendChild(ok);
+  let cancel=null;
+  if(!a.notice){ cancel=document.createElement('button'); cancel.textContent=a.cancelLabel; row.appendChild(cancel); }
+  box.appendChild(row); back.appendChild(box); document.body.appendChild(back);
+  function onKey(e){ if(e.key==='Escape'){ e.preventDefault(); done(false); } }
+  function done(v){
+    document.removeEventListener('keydown',onKey,true);
+    back.remove(); askQueue.shift();
+    a.resolve(a.notice?true:!!v);
+    showAsk();
+  }
+  document.addEventListener('keydown',onKey,true);
+  ok.onclick=()=>done(true);
+  if(cancel) cancel.onclick=()=>done(false);
+  back.addEventListener('mousedown',e=>{ if(e.target===back && !a.notice) done(false); });
+  ok.focus();
 }
 async function controlFetch(url,options={}){
   const token=await ensureControl();
@@ -1523,7 +1566,7 @@ async function applyUpdates(target,btn){
           : updateModeG==='sync'
             ? "Deploy tool updates now? This moves this site's shared checkouts to their latest code (no environment rebuild)."
             : 'Install tool updates now? This rebuilds environments and may take several minutes.';
-  if(!confirm(ask)) return;
+  if(!(await askOnPage({message:ask,okLabel:'Update'}))) return;
   document.querySelectorAll('.updates button').forEach(b=>b.disabled=true);
   runPanel();
   const log=document.getElementById('ulog'); if(log){ log.textContent='Starting…\\n'; }
@@ -1631,7 +1674,7 @@ function overlay(title,msg,doneGlyph){
   document.getElementById('overlay').style.display='flex';
 }
 async function shutdownDash(){
-  if(!confirm(
+  if(!(await askOnPage({okLabel:'Shut down',message:
     "Shut the dashboard completely down?\\n\\n"+
     "This stops every idle tool server AND the dashboard itself — the "+
     "“bin/bdtools dashboard” command in your terminal will exit. Use this when "+
@@ -1639,35 +1682,35 @@ async function shutdownDash(){
     "until it finishes or you stop it in that tool.\\n\\n"+
     "A web page cannot start it back up, so to reopen it you'll go to a terminal, open the "+
     "bioinformatic_diagnostic_tools folder, and run:\\n"+
-    "    bin/bdtools dashboard")) return;
+    "    bin/bdtools dashboard"}))) return;
   try{
     const r=await controlFetch('./api/shutdown',{method:'POST'});
     if(!r.ok){
       const j=await r.json();
-      alert(describeBlock(j));
+      askOnPage({notice:true,message:describeBlock(j)});
       return;
     }
-  }catch(e){ alert(String(e)); return; }
+  }catch(e){ askOnPage({notice:true,message:String(e)}); return; }
   overlay('Dashboard shut down',
     'Everything has stopped. You can close this tab.<br><br>'+
     'To start it again, open a terminal in the bioinformatic_diagnostic_tools folder and run '+
     '<code>bin/bdtools dashboard</code>.','⏻');
 }
 async function restartDash(){
-  if(!confirm(
+  if(!(await askOnPage({okLabel:'Restart',message:
     "Restart the dashboard?\\n\\n"+
     "This stops idle tool servers and relaunches the dashboard so any updated "+
     "code takes effect. It comes back on this same web address within a few "+
     "seconds and this page will reconnect on its own. Active analyses safely block "+
-    "restart until they finish or are stopped in their tool.")) return;
+    "restart until they finish or are stopped in their tool."}))) return;
   try{
     const r=await controlFetch('./api/restart',{method:'POST'});
     if(!r.ok){
       const j=await r.json();
-      alert(describeBlock(j));
+      askOnPage({notice:true,message:describeBlock(j)});
       return;
     }
-  }catch(e){ alert(String(e)); return; }
+  }catch(e){ askOnPage({notice:true,message:String(e)}); return; }
   overlay('Restarting the dashboard…',
     'Stopping idle tool servers and reloading updated code. This page will reconnect automatically.');
   // The server exits, the terminal supervisor relaunches it on the same port; poll

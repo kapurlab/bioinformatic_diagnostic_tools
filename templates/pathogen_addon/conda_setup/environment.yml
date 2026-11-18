@@ -1,0 +1,9 @@
+# The add-on's own env: every program its hooks call, and nothing borrowed
+# from vsnp3's env. bdtools builds it at <checkout>/env and pins the analysis
+# packages tools.yml lists for this add-on (packages: [...]) exactly.
+name: __ADDON_TOOL__
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=3.12

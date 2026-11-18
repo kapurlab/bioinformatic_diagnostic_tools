@@ -1,0 +1,59 @@
+{
+  "contract": 1,
+  "id": "__ADDON_ID__",
+  "tool": "__ADDON_TOOL__",
+  "name": "__ADDON_NAME__",
+  "version": "0.1.0",
+  "consumer": "vsnp_gui",
+  "description": "__ADDON_NAME__ add-on for vsnp_gui: per-sample reference choice, a Results row and report per sample, and a run report.",
+  "env": "__ADDON_TOOL__",
+  "sample_naming": "folder",
+  "requires": {
+    "binaries": [],
+    "modules": []
+  },
+  "library": {
+    "markers": [
+      "LIBRARY_VERSION",
+      "reference_options",
+      "scopes.json"
+    ],
+    "reference_options": "reference_options",
+    "vcf_db_folders": "vcf_db_folders"
+  },
+  "scopes": {
+    "file": "scopes.json",
+    "label": "Scope",
+    "default": "all"
+  },
+  "hooks": {
+    "choose_reference": "hooks/choose_reference.py",
+    "after_sample": "hooks/after_sample.py",
+    "after_run": "hooks/after_run.py"
+  },
+  "actions": [
+    {
+      "id": "summary_table",
+      "label": "Summary table",
+      "description": "One table of every sample's add-on results.",
+      "command": "actions/summary_table.py",
+      "params": []
+    }
+  ],
+  "qc_thresholds": {},
+  "columns": [
+    {
+      "key": "reference",
+      "label": "Reference"
+    },
+    {
+      "key": "mean_depth",
+      "label": "Depth",
+      "unit": "x"
+    }
+  ],
+  "reports": {
+    "sample": "report.html",
+    "run": "run_report.html"
+  }
+}

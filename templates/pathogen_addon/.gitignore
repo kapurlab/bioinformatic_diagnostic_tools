@@ -1,0 +1,5 @@
+env/
+library/
+.library_path
+__pycache__/
+*.pyc

@@ -1,0 +1,34 @@
+# Every push: build the add-on env and library, then run vsnp_gui's contract
+# check (app.addon_check) over the fixture project. A release tag must be green.
+name: contract
+on: [push, pull_request]
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: addon }
+      - uses: actions/checkout@v4
+        with:
+          repository: kapurlab/vsnp_gui
+          ref: ${{ vars.VSNP_GUI_REF || 'main' }}
+          path: vsnp_gui
+      - uses: conda-incubator/setup-miniconda@v3
+        with:
+          miniforge-version: latest
+          auto-activate-base: true
+      - name: Build the add-on env and library
+        shell: bash -el {0}
+        run: |
+          conda env create -p addon/env -f addon/conda_setup/environment.yml
+          cd addon && PATH="$PWD/env/bin:$PATH" bash deploy/build_library.sh "$PWD/library"
+          echo "$PWD/library" > .library_path
+      - name: Add-on unit tests
+        shell: bash -el {0}
+        run: addon/env/bin/python addon/tests/test_hooks.py
+      - name: Contract check (vsnp_gui app.addon_check)
+        shell: bash -el {0}
+        run: |
+          python -m pip install --quiet openpyxl fastapi pydantic
+          export XDG_CONFIG_HOME="$RUNNER_TEMP/xdg" VSNP_GUI_SITE_ROOT="$RUNNER_TEMP/site"
+          PYTHONPATH=vsnp_gui/backend python -m app.addon_check "$PWD/addon"

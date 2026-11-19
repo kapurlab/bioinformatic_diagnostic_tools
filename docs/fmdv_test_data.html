@@ -362,6 +362,47 @@ GenBank gives the record.</p>
   counts. Build a tree for any of them, one serotype at a time, as in the starter set.</li>
 </ol>
 
+<h3>The VP1 trees</h3>
+<p>Each tree takes the project's samples of one serotype and surrounds them with records drawn from
+that serotype's GenBank VP1 set &mdash; the backbone lineages plus the nearest neighbours of the samples
+themselves. Build them one at a time; the panel is pale while another job runs. Measured here on a
+laptop, where <code>raxmlHPC</code> is single-threaded:</p>
+<div class="scroll"><table>
+  <thead><tr><th>Serotype</th><th>Samples</th><th>Context from GenBank</th><th>Leaves in the tree</th><th>Time</th></tr></thead>
+  <tbody>
+    <tr><td>SAT3</td><td>7</td><td>89</td><td>96</td><td>4 min</td></tr>
+    <tr><td>C</td><td>6</td><td>148</td><td>154</td><td>6 min</td></tr>
+    <tr><td>Asia1</td><td>10</td><td>171</td><td>181</td><td>8 min</td></tr>
+    <tr><td>SAT2</td><td>9</td><td>199</td><td>208</td><td>10 min</td></tr>
+    <tr><td>A, SAT1, O</td><td>12, 15, 18</td><td colspan="3" class="muted">larger again &mdash; a tree grows with the samples it holds and with how many records that serotype has in GenBank</td></tr>
+  </tbody>
+</table></div>
+<p>Every sample of the serotype appears in its tree: the SAT3 tree, for instance, carries all seven
+SAT3 samples among its 96 leaves. A sample reported <b>untyped</b> has no VP1 to place and is left out,
+which is the other way to notice the three crosses above.</p>
+
+<h3>The genome SNP tables</h3>
+<p>A Step 2 comparison is per reference, so in a project like this one it compares the samples that
+landed on one lineage genome and says so. On the <span class="ui">Genome SNPs: build</span> tab choose a
+reference, click <span class="ui">Build comparison set</span>, then <span class="ui">Run</span>. The three
+largest groups here:</p>
+<div class="scroll"><table>
+  <thead><tr><th>Reference</th><th>Samples compared</th><th>Positions in the table</th></tr></thead>
+  <tbody>
+    <tr><td class="acc">ASIA1-ASIA-Sindh-08_KM268898</td><td>8</td><td>565</td></tr>
+    <tr><td class="acc">SAT1-I_KM268899</td><td>7</td><td>1,215</td></tr>
+    <tr><td class="acc">SAT3-II_AY593851</td><td>4</td><td>755</td></tr>
+  </tbody>
+</table></div>
+<div class="note">
+  <b class="lbl">It will refuse to mix references</b>
+  Asking for a comparison while samples from other references are still in the set is refused, by name:
+  <i>&ldquo;This run would compare 69 VCFs called against a different reference than the project's
+  ASIA1-ASIA-Sindh-08_KM268898&hellip;&rdquo;</i> That is the point of the build step &mdash; positions called
+  against different genomes do not mean the same thing. Build the set for one reference and the run
+  goes through in seconds.
+</div>
+
 <div class="note see">
   <b class="lbl">The score</b>
   <b>74/77 samples are called as the serotype their own submitter recorded.</b> The three that are not

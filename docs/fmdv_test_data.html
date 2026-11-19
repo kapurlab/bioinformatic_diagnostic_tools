@@ -129,7 +129,7 @@ tools folder:</p>
 <p>These four are the set the release was tested with. They are deliberately mixed: nanopore reads,
 Illumina reads, and two finished genomes from GenBank, so one run exercises every way into the tool.</p>
 
-<table>
+<div class="scroll"><table>
   <thead><tr><th>Accession</th><th>What it is</th><th>Goes in by</th><th>Size</th></tr></thead>
   <tbody>
     <tr><td class="acc">SRR34371563</td><td>Nanopore reads, serotype SAT1. Isolate TAN/27/2012, Tanzania. The run NanoFMDV publishes.</td><td><span class="ui">SRA</span> tab</td><td>51 MB</td></tr>
@@ -137,7 +137,7 @@ Illumina reads, and two finished genomes from GenBank, so one run exercises ever
     <tr><td class="acc">EU448369</td><td>A finished genome, serotype O. O1/BFS 1860/UK/67 — the 1967 United Kingdom outbreak virus.</td><td><span class="ui">Sequences</span> tab</td><td>8 kB</td></tr>
     <tr><td class="acc">HM625673</td><td>A finished genome, serotype O. O/K/48/2005, Kenya. Stands in for a consensus sent by another laboratory.</td><td><span class="ui">Sequences</span> tab</td><td>7 kB</td></tr>
   </tbody>
-</table>
+</table></div>
 
 <div class="copybar">
   <button class="copy" type="button" data-copy="SRR34371563&#10;SRR18685705" data-done="Copied 2 ✓">⧉ Copy the 2 SRA numbers</button>
@@ -193,7 +193,7 @@ Illumina reads, and two finished genomes from GenBank, so one run exercises ever
 </ol>
 
 <h3>What you should get</h3>
-<table>
+<div class="scroll"><table>
   <thead><tr><th>Sample</th><th>Read type</th><th>QC</th><th>Reference chosen</th><th>Serotype · lineage</th><th>Nearest GenBank VP1</th></tr></thead>
   <tbody>
     <tr><td class="acc">SRR34371563</td><td>ONT</td><td>PASS</td><td class="acc">SAT1-I_KM268899</td><td>SAT1 · I</td><td>MT602086.1 at 100%</td></tr>
@@ -201,7 +201,7 @@ Illumina reads, and two finished genomes from GenBank, so one run exercises ever
     <tr><td class="acc">EU448369</td><td>Simulated</td><td>N/A</td><td class="acc">O-EURO-SA-O1_AY593837</td><td>O · EURO-SA/O1</td><td>JX869188, United Kingdom 1968, at 100%</td></tr>
     <tr><td class="acc">HM625673</td><td>Simulated</td><td>N/A</td><td class="acc">O-EA-2_MH053318</td><td>O · EA-2</td><td>HM625673, Kenya 2005, at 100%</td></tr>
   </tbody>
-</table>
+</table></div>
 
 <div class="note see">
   <b class="lbl">The one to look at</b>
@@ -395,7 +395,7 @@ biological samples: serotypes A, O and Asia1 from cell culture (CC), epithelium 
 These behave like field samples — their reads sit 15% or more from the nearest library genome, only 15
 to 55% of the reads are FMDV at all, and there is 1 to 5% crosstalk between barcodes.</p>
 
-<table>
+<div class="scroll"><table>
   <thead><tr><th>Run</th><th>Submitter's label</th><th>Platform</th><th>Reads</th><th>Size</th></tr></thead>
   <tbody>
     <tr><td class="acc">SRR13498127</td><td>FMDV_A_CC_30hr</td><td>MinION</td><td>861,428</td><td>442 MB</td></tr>
@@ -411,7 +411,7 @@ to 55% of the reads are FMDV at all, and there is 1 to 5% crosstalk between barc
     <tr><td class="acc">SRR13498117</td><td>FMDV_O_CC_MiSeq</td><td>Illumina MiSeq</td><td>475,082</td><td>99 MB</td></tr>
     <tr><td class="acc">SRR13498125</td><td>FMDV_ASIA1_CC_MiSeq</td><td>Illumina MiSeq</td><td>28,149</td><td>6 MB</td></tr>
   </tbody>
-</table>
+</table></div>
 
 <div class="copybar">
   <button class="copy" type="button" data-done="Copied 9 ✓" data-copy="SRR13498127&#10;SRR13498128&#10;SRR13498124&#10;SRR13498119&#10;SRR13498120&#10;SRR13498118&#10;SRR13498122&#10;SRR13498123&#10;SRR13498121">⧉ Copy the 9 MinION runs</button>
@@ -439,7 +439,7 @@ reference chooser on three of the same biological samples.</p>
 <h2>Useful genomes to import as sequences</h2>
 <p>These go in through the <span class="ui">Sequences</span> tab, as samples or as context
 (comparators in the tree and the typing).</p>
-<table>
+<div class="scroll"><table>
   <thead><tr><th>Accession</th><th>What it is</th><th>Why import it</th></tr></thead>
   <tbody>
     <tr><td class="acc">MT602086</td><td>SAT1, TAN/27/2012, Tanzania</td><td>The published genome of the same isolate as SRR34371563 — the direct check</td></tr>
@@ -447,13 +447,13 @@ reference chooser on three of the same biological samples.</p>
     <tr><td class="acc">KM268899</td><td>SAT1 topotype I</td><td>The library's SAT1-I reference itself</td></tr>
     <tr><td class="acc">EU448369</td><td>O1/BFS 1860/UK/67</td><td>A second serotype, so the project holds more than one reference</td></tr>
   </tbody>
-</table>
+</table></div>
 <div class="copybar">
   <button class="copy" type="button" data-done="Copied 4 ✓" data-copy="MT602086&#10;PV524918&#10;KM268899&#10;EU448369">⧉ Copy these 4</button>
 </div>
 
 <h2>If something goes wrong</h2>
-<table>
+<div class="scroll"><table>
   <thead><tr><th>What you see</th><th>What to do</th></tr></thead>
   <tbody>
     <tr><td>The reference list has no <b>FMDV mode</b> choice</td><td>vSNP3 is older than v0.4.154. Run <code>bin/bdtools update vsnp_gui</code>, then ↻ Restart.</td></tr>
@@ -467,7 +467,7 @@ reference chooser on three of the same biological samples.</p>
     <tr><td>A sample says <b>Error</b> in Step 1</td><td>Click <span class="ui">View log</span> beside it. To try again, tick <span class="ui">Force re-run</span> and Run.</td></tr>
     <tr><td>Anything else</td><td>In the tools folder, <code>bin/bdtools doctor vsnp_gui</code> lists what is wrong and the command that fixes it.</td></tr>
   </tbody>
-</table>
+</table></div>
 
 <footer>
   <p><b>Step-by-step version:</b> the

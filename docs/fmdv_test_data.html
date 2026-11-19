@@ -87,7 +87,7 @@
   tell whether your install is working.</p>
   <div class="facts">
     <div class="fact"><b>Starter set</b><span>4 samples · 80 MB · about 25 minutes, most of it a tree building</span></div>
-    <div class="fact"><b>All-serotype set</b><span>32 samples · 600 MB · all seven serotypes · about 10 minutes to Step 1 results</span></div>
+    <div class="fact"><b>Full set</b><span>77 samples · 939 MB · all seven serotypes · about 20 minutes to Step 1 results</span></div>
     <div class="fact"><b>Pirbright set</b><span>12 runs · 6.8 GB · a few hours</span></div>
     <div class="fact"><b>Checked</b><span>19 November 2026 · vSNP GUI v0.4.156 · vsnp3 3.37</span></div>
   </div>
@@ -225,120 +225,163 @@ Illumina reads, and two finished genomes from GenBank, so one run exercises ever
 <b>0 SNPs</b> from MT602086.1 and 6 from the reference, with the next genome more than 380 away.
 Without them the table holds your two samples only, and the steps are the same.</p>
 
-<h2 id="all-serotypes">The all-serotype set — 32 samples, every serotype</h2>
+<h2 id="all-serotypes">The full set &mdash; 77 samples, every serotype</h2>
 <p>The starter set proves the install. This one exercises the reference chooser and the typing across
-all seven serotypes: O, A, Asia1, C, SAT1, SAT2 and SAT3. The 32 samples land on 21 different
-lineage references. It is built the same
-way as the starter set, reads from the archive beside finished genomes from GenBank, so it goes in
-through the same two tabs. Use a new FMDV project for it (for example <code>FMDV_all_serotypes</code>).</p>
+all seven serotypes &mdash; O, A, Asia1, C, SAT1, SAT2 and SAT3 &mdash; on 45 public read sets and
+32 GenBank genomes. The 77 samples land on 34 different lineage references. It goes in through
+the same two tabs as the starter set, so nothing new has to be learned. Use a new FMDV project for it
+(for example <code>FMDV_all_serotypes</code>).</p>
 
 <div class="note">
   <b class="lbl">Where the samples come from</b>
   Public read sets exist for O, A, Asia1, SAT1 and SAT2. The archives hold no run labelled serotype C,
   and the only SAT3 reads are from a mixed SAT1/2/3 experiment, so those two serotypes are covered by
-  GenBank genomes only. None of the fifteen genomes is one of the
-  library's own 79 lineage genomes, so the chooser has to find the nearest one, not itself.
+  GenBank genomes only. None of the 32 genomes is one of the library's own 79 lineage genomes, so the
+  chooser has to find the nearest one rather than itself.
 </div>
 
-<h3>Seventeen read sets — the SRA tab</h3>
-<p>Fifteen Illumina pairs and two nanopore runs, 600 MB in all. On this page's test machine the download
-took 2 minutes. Each row gives the label the submitter put in the archive, then the answer the tool
-gave. The label is an independent answer key: the tool never sees it.</p>
+<h3>45 read sets &mdash; the SRA tab</h3>
+<p>939 MB in all: Illumina pairs, two nanopore runs and two Ion Torrent runs. On this page's test
+machine they downloaded in about three minutes. Each row gives the label the submitter put in the
+archive, then what the tool made of the reads. The tool never sees the label, so it is an independent
+answer key.</p>
 <div class="scroll"><table class="wide">
-  <thead><tr><th>Run</th><th>Submitter's label</th><th>Size</th><th>Reads</th><th>QC</th><th>Reference chosen</th><th>Serotype · lineage</th><th>Nearest GenBank VP1</th></tr></thead>
+  <thead><tr><th>Run</th><th>Submitter&rsquo;s label</th><th>Size</th><th>Reads</th><th>QC</th><th>Reference chosen</th><th>Called</th><th>Nearest GenBank VP1</th></tr></thead>
   <tbody>
-    <tr><td class="acc">SRR9901252</td><td>O/VIT/17-19073/2017 · O/CATHAY</td><td>31&nbsp;MB</td><td>Paired</td><td>PASS</td><td class="acc">O-CATHAY_AY593835</td><td>O · CATHAY</td><td>ON868623.1, O/VIT/17-19073/2017, at 100%</td></tr>
-    <tr><td class="acc">SRR11004874</td><td>O/IND/442/2005 · O/ME-SA/Ind2001b</td><td>27&nbsp;MB</td><td>Paired</td><td>PASS</td><td class="acc">O-ME-SA-Ind-2001-b_MN983155</td><td>O · ME-SA/IND-2001/B</td><td>MN983154, IND/442/2005, at 99.8%</td></tr>
-    <tr><td class="acc">SRR9335110</td><td>O/IND/C421/2014 · O/ME-SA/Ind2001d</td><td>32&nbsp;MB</td><td>Paired</td><td>REVIEW</td><td class="acc">O-ME-SA-Ind-2001-e_MG983720</td><td>O · ME-SA/IND-2001/D</td><td>MN095371, IND/C12230/2014, at 100%</td></tr>
-    <tr><td class="acc">SRR13498117</td><td>O/UKG/34/2001 · cell culture, MiSeq amplicons</td><td>61&nbsp;MB</td><td>Paired</td><td>REVIEW</td><td class="acc">O-ME-SA-PanAsia_HM008917</td><td>O · ME-SA/PANASIA</td><td>KR265075, United Kingdom, at 100%</td></tr>
-    <tr><td class="acc">SRR19450040</td><td>A/VIT/RAHO6F3/2013 · Type A, lineage Sea-97</td><td>12&nbsp;MB</td><td>Paired</td><td>REVIEW</td><td class="acc">A-ASIA-Sea-97_KJ933864</td><td>A · ASIA/SEA-97</td><td>OK205906.1, A/VIT/RAHO6F3/2013, at 100%</td></tr>
-    <tr><td class="acc">SRR13498126</td><td>A/TAI/17/2016 · cell culture, MiSeq amplicons</td><td>17&nbsp;MB</td><td>Paired</td><td>FAIL</td><td class="acc">A-ASIA-Sea-97_KJ933864</td><td>A · ASIA/SEA-97</td><td>LC564922.1, A/TAI/56/2016, at 98.9%</td></tr>
-    <tr><td class="acc">SRR17960074</td><td>Asia1/PAK/ICT/184-2/2012 · Asia 1</td><td>25&nbsp;MB</td><td>Paired</td><td>REVIEW</td><td class="acc">ASIA1-ASIA-Sindh-08_KM268898</td><td>Asia1 · ASIA/SINDH-08</td><td>OM471657.1, ASIA1/PAK/ICT/284-3/2012, at 100%</td></tr>
-    <tr><td class="acc">SRR13498125</td><td>ASIA1/IRN/49/2011 · cell culture, MiSeq amplicons</td><td>4&nbsp;MB</td><td>Paired</td><td>REVIEW</td><td class="acc">ASIA1-ASIA-Sindh-08_KM268898</td><td>Asia1 · ASIA/SINDH-08</td><td>OM471676.1, ASIA1/PAK/SGD/25/2011, at 100%</td></tr>
-    <tr><td class="acc">SRR13498118</td><td>ASIA1/IRN/49/2011 · MinION amplicons</td><td>187&nbsp;MB</td><td>ONT</td><td>PASS</td><td class="acc">ASIA1-ASIA-Sindh-08_KM268898</td><td>Asia1 · ASIA/SINDH-08</td><td>OM471676.1, ASIA1/PAK/SGD/25/2011, at 98.7%</td></tr>
-    <tr><td class="acc">SRR34371563</td><td>TAN/27/2012 · nanopore</td><td>53&nbsp;MB</td><td>ONT</td><td>PASS</td><td class="acc">SAT1-I_KM268899</td><td>SAT1 · I</td><td>MT602086.1, TAN/27/2012, at 100%</td></tr>
-    <tr><td class="acc">SRR18685705</td><td>8/Kenya/8Jan2016 · SAT1</td><td>26&nbsp;MB</td><td>Paired</td><td>PASS</td><td class="acc">SAT1-I_KM268899</td><td>SAT1 · I</td><td>MH882609, KEN/PRB8/2016, at 98.9%</td></tr>
-    <tr><td class="acc">SRR18685700</td><td>28/Kenya/11Jan2016 · SAT1</td><td>23&nbsp;MB</td><td>Paired</td><td>PASS</td><td class="acc">SAT1-I_KM268899</td><td>SAT1 · I</td><td>MH882588, KEN/PRB28/2016, at 99.1%</td></tr>
-    <tr><td class="acc">SRR18687404</td><td>36/Kenya/12Jan2016 · SAT1</td><td>4&nbsp;MB</td><td>Paired</td><td>PASS</td><td class="acc">SAT1-I_KM268899</td><td>SAT1 · I</td><td>MH882595, KEN/PRB38/2016, at 97.0%</td></tr>
-    <tr><td class="acc">SRR9939015</td><td>SAT1/CAR/2186/2016 · SAT1/X</td><td>16&nbsp;MB</td><td>Paired</td><td>PASS</td><td class="acc">SAT1-X_MN275121</td><td>SAT1 · X</td><td>MN275121, the library's SAT1-X genome, at 100%</td></tr>
-    <tr><td class="acc">SRR9939016</td><td>SAT1/CAR/2101/2016 · SAT1/X</td><td>4&nbsp;MB</td><td>Paired</td><td>PASS</td><td class="acc">SAT1-X_MN275121</td><td>SAT1 · X</td><td>MN275121, the library's SAT1-X genome, at 100%</td></tr>
-    <tr><td class="acc">SRR14585686</td><td>SAT2/NIG/PL/PKN/01/2017</td><td>32&nbsp;MB</td><td>Paired</td><td>PASS</td><td class="acc">SAT2-VII-Lib-12_MN103523</td><td>SAT2 · VII/LIB-12</td><td>MW715627.1, SAT2/NIG/PL/PKN/02/2017, at 100%</td></tr>
-    <tr><td class="acc">SRR9328470</td><td>BA/MG/8/14, Nigeria 2014 · SAT2</td><td>0.4&nbsp;MB</td><td>Paired</td><td>PASS</td><td class="acc">SAT2-VII-Lib-12_MN103523</td><td>SAT2 · VII-Lib-12</td><td>MN103523, the library's SAT2-VII/Lib-12 genome, at 100%</td></tr>
+    <tr><td class="acc">SRR9901256</td><td>O/VIT/19-005/2019 - O/CATHAY</td><td>19&nbsp;MB</td><td>Paired</td><td>PASS</td><td class="acc">O-CATHAY_AY593835</td><td>O &middot; CATHAY</td><td>MN250318 at 100%</td></tr>
+    <tr><td class="acc">SRR11004876</td><td>O/IND/121/2001 - O/ME-SA/Ind2001b</td><td>18&nbsp;MB</td><td>Paired</td><td>PASS</td><td class="acc">O-ME-SA-Ind-2001-b_MN983155</td><td>O &middot; ME-SA/IND-2001/B</td><td>MN983153 at 99.8%</td></tr>
+    <tr><td class="acc">SRR11004872</td><td>O/IND/35/2009 - O/ME-SA/Ind2001c</td><td>26&nbsp;MB</td><td>Paired</td><td>PASS</td><td class="acc">O-ME-SA-Ind-2001-c_MN983157</td><td>O &middot; ME-SA-Ind-2001-c</td><td>MN983157 at 99.8%</td></tr>
+    <tr><td class="acc">SRR11004877</td><td>O/IND/316/1997 - O/ME-SA/Ind2001a</td><td>54&nbsp;MB</td><td>Paired</td><td>PASS</td><td class="acc">O-ME-SA-Ind-2001-a_MN983152</td><td>O &middot; ME-SA-Ind-2001-a</td><td>MN983152 at 99.8%</td></tr>
+    <tr><td class="acc">SRR9335102</td><td>O/IND/U359/2013 - O/ME-SA/Ind2001d</td><td>4&nbsp;MB</td><td>Paired</td><td>PASS</td><td class="acc">O-ME-SA-Ind-2001-e_MG983720</td><td>O &middot; ME-SA/IND-2001/D</td><td>MN095363 at 100%</td></tr>
+    <tr><td class="acc">SRR17468779</td><td>O/NIG/PL/IDH/3/2017 - type O</td><td>8&nbsp;MB</td><td>Paired</td><td>REVIEW</td><td class="acc">O-WCSA-1_AY593834</td><td>O &middot; EA-3</td><td>OM022649.1 at 100%</td></tr>
+    <tr><td class="acc">SRR18752909</td><td>O/PAK/KCH/39/2011 - O</td><td>8&nbsp;MB</td><td>Paired</td><td>PASS</td><td class="acc">O-ME-SA-PanAsia-2-ANT-10_MH784405</td><td>O &middot; ME-SA/PANASIA-2/ANT-10</td><td>OM456141.1 at 100%</td></tr>
+    <tr><td class="acc">DRR163250</td><td>O/MYA/Yan/3/2016 (Ion Torrent)</td><td>6&nbsp;MB</td><td>ONT</td><td>PASS</td><td class="acc">O-ME-SA-Ind-2001-e_MG983720</td><td>O &middot; ME-SA/IND-2001/E</td><td>MG972521 at 99.5%</td></tr>
+    <tr><td class="acc">DRR408793</td><td>O/TAI/317-3/2016 (Ion Torrent)</td><td>4&nbsp;MB</td><td>ONT</td><td>PASS</td><td class="acc">O-ME-SA-Ind-2001-e_MG983720</td><td>O &middot; ME-SA/IND-2001/E</td><td>MG972584 at 99.5%</td></tr>
+    <tr><td class="acc">SRR3664019</td><td>O1BFS 1860 bovine 147 replicate 1</td><td>4&nbsp;MB</td><td>Paired</td><td>PASS</td><td class="acc">O-EURO-SA-O1_AY593837</td><td>O &middot; EURO-SA/O1</td><td>KR149710 at 100%</td></tr>
+    <tr><td class="acc">SRR9901252</td><td>O/VIT/17-19073/2017 - O/CATHAY</td><td>31&nbsp;MB</td><td>Paired</td><td>PASS</td><td class="acc">O-CATHAY_AY593835</td><td>O &middot; CATHAY</td><td>ON868623.1 at 100%</td></tr>
+    <tr><td class="acc">SRR11004874</td><td>O/IND/442/2005 - O/ME-SA/Ind2001b</td><td>27&nbsp;MB</td><td>Paired</td><td>PASS</td><td class="acc">O-ME-SA-Ind-2001-b_MN983155</td><td>O &middot; ME-SA/IND-2001/B</td><td>MN983154 at 99.8%</td></tr>
+    <tr><td class="acc">SRR9335110</td><td>O/IND/C421/2014 - O/ME-SA/Ind2001d</td><td>32&nbsp;MB</td><td>Paired</td><td>REVIEW</td><td class="acc">O-ME-SA-Ind-2001-e_MG983720</td><td>O &middot; ME-SA/IND-2001/D</td><td>MN095371 at 100%</td></tr>
+    <tr><td class="acc">SRR13498117</td><td>O/UKG/34/2001 - cell culture, MiSeq</td><td>61&nbsp;MB</td><td>Paired</td><td>REVIEW</td><td class="acc">O-ME-SA-PanAsia_HM008917</td><td>O &middot; ME-SA/PANASIA</td><td>KR265075 at 100%</td></tr>
+    <tr><td class="acc">SRR26264609</td><td>A/PAK/ICT/230-1/2012</td><td>6&nbsp;MB</td><td>Paired</td><td>FAIL</td><td class="acc">A-ASIA-Iran-05-SIS-10_KM268896</td><td>A &middot; ASIA/IRAN-05/HER-10</td><td>OM455475.1 at 99.4%</td></tr>
+    <tr><td class="acc">SRR18751130</td><td>A/PAK/ICT/149-4/2012 - A/Iran-05</td><td>18&nbsp;MB</td><td>Paired</td><td>REVIEW</td><td class="acc">A-ASIA-Iran-05-SIS-10_KM268896</td><td>A &middot; ASIA/IRAN-05/HER-10</td><td>OM455469.1 at 100%</td></tr>
+    <tr><td class="acc">SRR19450053</td><td>type A, lineage Sea-97 (Viet Nam)</td><td>3&nbsp;MB</td><td>Paired</td><td>REVIEW</td><td class="acc">A-ASIA-Sea-97_KJ933864</td><td>A &middot; </td><td>ON652972.1 at 98.9%</td></tr>
+    <tr><td class="acc">SRR7479104</td><td>A24 Cruzeiro, OPF 48 hpi</td><td>3&nbsp;MB</td><td>Paired</td><td>REVIEW</td><td class="acc">A-EURO-SA-A12_AY593752</td><td>A &middot; EURO-SA/A24</td><td>K03340 at 93.9%</td></tr>
+    <tr><td class="acc">SRR8096850</td><td>non-vaccinated bovine 14-110 - A</td><td>2&nbsp;MB</td><td>Paired</td><td>REVIEW</td><td class="acc">A-EURO-SA-A12_AY593752</td><td>A &middot; EURO-SA/A24</td><td>K03340 at 94.1%</td></tr>
+    <tr><td class="acc">SRR19450040</td><td>A/VIT/RAHO6F3/2013 - type A, Sea-97</td><td>12&nbsp;MB</td><td>Paired</td><td>REVIEW</td><td class="acc">A-ASIA-Sea-97_KJ933864</td><td>A &middot; ASIA/SEA-97</td><td>OK205906.1 at 100%</td></tr>
+    <tr><td class="acc">SRR13498126</td><td>A/TAI/17/2016 - cell culture, MiSeq</td><td>17&nbsp;MB</td><td>Paired</td><td>FAIL</td><td class="acc">A-ASIA-Sea-97_KJ933864</td><td>A &middot; ASIA/SEA-97</td><td>LC564922.1 at 98.9%</td></tr>
+    <tr><td class="acc">SRR26264611</td><td>Asia1/PAK/ICT/185-1/2012</td><td>6&nbsp;MB</td><td>Paired</td><td>FAIL</td><td class="acc">ASIA1-ASIA-Sindh-08_KM268898</td><td>Asia1 &middot; ASIA/SINDH-08</td><td>OM471657.1 at 99.5%</td></tr>
+    <tr><td class="acc">SRR17960044</td><td>Asia1/PAK/ICT/237-4/2012 - Asia 1</td><td>8&nbsp;MB</td><td>Paired</td><td>REVIEW</td><td class="acc">ASIA1-ASIA-Sindh-08_KM268898</td><td>Asia1 &middot; ASIA/SINDH-08</td><td>OM471649.1 at 100%</td></tr>
+    <tr><td class="acc">SRR17960054</td><td>Asia1/PAK/ICT/208-4/2012 - Asia 1</td><td>12&nbsp;MB</td><td>Paired</td><td>PASS</td><td class="acc">ASIA1-ASIA-Sindh-08_KM268898</td><td>Asia1 &middot; ASIA/SINDH-08</td><td>OM471649.1 at 100%</td></tr>
+    <tr><td class="acc">SRR17960074</td><td>Asia1/PAK/ICT/184-2/2012</td><td>25&nbsp;MB</td><td>Paired</td><td>REVIEW</td><td class="acc">ASIA1-ASIA-Sindh-08_KM268898</td><td>Asia1 &middot; ASIA/SINDH-08</td><td>OM471657.1 at 100%</td></tr>
+    <tr><td class="acc">SRR13498125</td><td>ASIA1/IRN/49/2011 - cell culture, MiSeq</td><td>4&nbsp;MB</td><td>Paired</td><td>REVIEW</td><td class="acc">ASIA1-ASIA-Sindh-08_KM268898</td><td>Asia1 &middot; ASIA/SINDH-08</td><td>OM471676.1 at 100%</td></tr>
+    <tr><td class="acc">SRR13498118</td><td>ASIA1/IRN/49/2011 - MinION amplicons</td><td>187&nbsp;MB</td><td>ONT</td><td>PASS</td><td class="acc">ASIA1-ASIA-Sindh-08_KM268898</td><td>Asia1 &middot; ASIA/SINDH-08</td><td>OM471676.1 at 98.7%</td></tr>
+    <tr><td class="acc">SRR9616682</td><td>KEN/K14/2014 - SAT1</td><td>19&nbsp;MB</td><td>Paired</td><td>PASS</td><td class="acc">SAT1-I_KM268899</td><td>SAT1 &middot; I</td><td>MN116689 at 99.2%</td></tr>
+    <tr><td class="acc">SRR9616680</td><td>KEN/K75/2016 - SAT1</td><td>28&nbsp;MB</td><td>Paired</td><td>PASS</td><td class="acc">SAT1-I_KM268899</td><td>SAT1 &middot; I</td><td>MN116691 at 93.9%</td></tr>
+    <tr><td class="acc">SRR18687392</td><td>36/Kenya/12Jan2016/2 - SAT1</td><td>4&nbsp;MB</td><td>Paired</td><td>PASS</td><td class="acc">SAT1-I_KM268899</td><td>SAT1 &middot; I</td><td>MH882595 at 97.0%</td></tr>
+    <tr><td class="acc">SRR9939017</td><td>SAT1/CAR/154/2016 - SAT1/X</td><td>12&nbsp;MB</td><td>Paired</td><td>REVIEW</td><td class="acc">SAT1-X_MN275121</td><td>SAT1 &middot; X</td><td>MN275121 at 100%</td></tr>
+    <tr><td class="acc">SRR9939018</td><td>SAT1/CAR/171/2016 - SAT1/X</td><td>7&nbsp;MB</td><td>Paired</td><td>PASS</td><td class="acc">SAT1-X_MN275121</td><td>SAT1 &middot; X</td><td>MN275121 at 100%</td></tr>
+    <tr><td class="acc">SRR34371563</td><td>TAN/27/2012 - nanopore</td><td>53&nbsp;MB</td><td>ONT</td><td>PASS</td><td class="acc">SAT1-I_KM268899</td><td>SAT1 &middot; I</td><td>MT602086.1 at 100%</td></tr>
+    <tr><td class="acc">SRR18685705</td><td>8/Kenya/8Jan2016 - SAT1</td><td>26&nbsp;MB</td><td>Paired</td><td>PASS</td><td class="acc">SAT1-I_KM268899</td><td>SAT1 &middot; I</td><td>MH882609 at 98.9%</td></tr>
+    <tr><td class="acc">SRR18685700</td><td>28/Kenya/11Jan2016 - SAT1</td><td>23&nbsp;MB</td><td>Paired</td><td>PASS</td><td class="acc">SAT1-I_KM268899</td><td>SAT1 &middot; I</td><td>MH882588 at 99.1%</td></tr>
+    <tr><td class="acc">SRR18687404</td><td>36/Kenya/12Jan2016 - SAT1</td><td>4&nbsp;MB</td><td>Paired</td><td>PASS</td><td class="acc">SAT1-I_KM268899</td><td>SAT1 &middot; I</td><td>MH882595 at 97.0%</td></tr>
+    <tr><td class="acc">SRR9939015</td><td>SAT1/CAR/2186/2016 - SAT1/X</td><td>16&nbsp;MB</td><td>Paired</td><td>PASS</td><td class="acc">SAT1-X_MN275121</td><td>SAT1 &middot; X</td><td>MN275121 at 100%</td></tr>
+    <tr><td class="acc">SRR9939016</td><td>SAT1/CAR/2101/2016 - SAT1/X</td><td>4&nbsp;MB</td><td>Paired</td><td>PASS</td><td class="acc">SAT1-X_MN275121</td><td>SAT1 &middot; X</td><td>MN275121 at 100%</td></tr>
+    <tr><td class="acc">SRR9616681</td><td>KEN/K137/2014 - SAT2</td><td>29&nbsp;MB</td><td>Paired</td><td>PASS</td><td class="acc">SAT2-IV_KM268900</td><td>SAT2 &middot; IV</td><td>MN116692 at 100%</td></tr>
+    <tr><td class="acc">SRR18750851</td><td>61/Kenya/13Jan2016/13 - SAT2</td><td>2&nbsp;MB</td><td>Paired</td><td>PASS</td><td class="acc">SAT2-IV_KM268900</td><td>SAT2 &middot; IV</td><td>MH882641 at 99.1%</td></tr>
+    <tr><td class="acc">SRR18750744</td><td>36/Kenya/12Jan2016/6 - SAT2</td><td>3&nbsp;MB</td><td>Paired</td><td>PASS</td><td class="acc">SAT2-IV_KM268900</td><td>SAT2 &middot; IV</td><td>MH882627 at 99.5%</td></tr>
+    <tr><td class="acc">SRR14585685</td><td>SAT2/NIG/PL/PKN/02/2017</td><td>34&nbsp;MB</td><td>Paired</td><td>PASS</td><td class="acc">SAT2-VII-Lib-12_MN103523</td><td>SAT2 &middot; VII/LIB-12</td><td>MW715627.1 at 100%</td></tr>
+    <tr><td class="acc">SRR14585683</td><td>SAT2/NIG/PL/WAS/03/2017</td><td>37&nbsp;MB</td><td>Paired</td><td>PASS</td><td class="acc">SAT2-VII-Lib-12_MN103523</td><td>SAT2 &middot; VII/LIB-12</td><td>MW715629.1 at 100%</td></tr>
+    <tr><td class="acc">SRR14585686</td><td>SAT2/NIG/PL/PKN/01/2017</td><td>32&nbsp;MB</td><td>Paired</td><td>PASS</td><td class="acc">SAT2-VII-Lib-12_MN103523</td><td>SAT2 &middot; VII/LIB-12</td><td>MW715627.1 at 100%</td></tr>
+    <tr><td class="acc">SRR9328470</td><td>BA/MG/8/14, Nigeria 2014 - SAT2</td><td>0.4&nbsp;MB</td><td>Paired</td><td>PASS</td><td class="acc">SAT2-VII-Lib-12_MN103523</td><td>SAT2 &middot; VII-Lib-12</td><td>MN103523 at 100%</td></tr>
   </tbody>
 </table></div>
 
 <div class="copybar">
-  <button class="copy" type="button" data-done="Copied 17 ✓" data-copy="SRR9901252&#10;SRR11004874&#10;SRR9335110&#10;SRR13498117&#10;SRR19450040&#10;SRR13498126&#10;SRR17960074&#10;SRR13498125&#10;SRR13498118&#10;SRR34371563&#10;SRR18685705&#10;SRR18685700&#10;SRR18687404&#10;SRR9939015&#10;SRR9939016&#10;SRR14585686&#10;SRR9328470">⧉ Copy the 17 SRA numbers</button>
+  <button class="copy" type="button" data-done="Copied 45 &#10003;" data-copy="SRR9901256&#10;SRR11004876&#10;SRR11004872&#10;SRR11004877&#10;SRR9335102&#10;SRR17468779&#10;SRR18752909&#10;DRR163250&#10;DRR408793&#10;SRR3664019&#10;SRR9901252&#10;SRR11004874&#10;SRR9335110&#10;SRR13498117&#10;SRR26264609&#10;SRR18751130&#10;SRR19450053&#10;SRR7479104&#10;SRR8096850&#10;SRR19450040&#10;SRR13498126&#10;SRR26264611&#10;SRR17960044&#10;SRR17960054&#10;SRR17960074&#10;SRR13498125&#10;SRR13498118&#10;SRR9616682&#10;SRR9616680&#10;SRR18687392&#10;SRR9939017&#10;SRR9939018&#10;SRR34371563&#10;SRR18685705&#10;SRR18685700&#10;SRR18687404&#10;SRR9939015&#10;SRR9939016&#10;SRR9616681&#10;SRR18750851&#10;SRR18750744&#10;SRR14585685&#10;SRR14585683&#10;SRR14585686&#10;SRR9328470">&#8681; Copy the 45 SRA numbers</button>
 </div>
 
-<h3>Fifteen genomes — the Sequences tab</h3>
-<p>Two or three per serotype. Paste the numbers, click <span class="ui">Preview</span>, check that every
-row says <b>genome</b> with VP1 located, then <span class="ui">Import 15 records</span>. Every one is
-badged <b>Simulated</b> and its quality check reads <b>N/A</b>.</p>
+<h3>32 genomes &mdash; the Sequences tab</h3>
+<p>Between two and seven per serotype. Paste the numbers, click <span class="ui">Preview</span>, check that
+every row says <b>genome</b> with VP1 located, then <span class="ui">Import 32 records</span>. Every one is
+badged <b>Simulated</b> afterwards and its quality check reads <b>N/A</b>.</p>
 <div class="scroll"><table class="wide">
-  <thead><tr><th>Accession</th><th>What it is</th><th>Reference chosen</th><th>Serotype · lineage</th><th>VP1 called</th><th>VP1 identity to its own record</th></tr></thead>
+  <thead><tr><th>Accession</th><th>What it is</th><th>Reference chosen</th><th>Called</th><th>VP1 called</th><th>VP1 identity</th></tr></thead>
   <tbody>
-    <tr><td class="acc">AJ539141</td><td>O/UKG/35/2001, the 2001 United Kingdom outbreak</td><td class="acc">O-ME-SA-PanAsia_HM008917</td><td>O · ME-SA/PANASIA</td><td>100%</td><td>nearest is KR265075, United Kingdom, at 100%</td></tr>
-    <tr><td class="acc">KU821591</td><td>O/ZAM14/2010, Zambia</td><td class="acc">O-EA-2_MH053318</td><td>O · EA-2</td><td>100%</td><td>100%</td></tr>
-    <tr><td class="acc">AY593751</td><td>A10 Holland, Netherlands 1942</td><td class="acc">A-EURO-SA-A12_AY593752</td><td>A · EURO-SA/A12</td><td>99.5%</td><td>99.5%</td></tr>
-    <tr><td class="acc">KC588943</td><td>A/Pocheon/001/KOR/2010, South Korea</td><td class="acc">A-ASIA-Sea-97_KJ933864</td><td>A · ASIA/SEA-97</td><td>100%</td><td>100%</td></tr>
-    <tr><td class="acc">AY593795</td><td>Asia1 PAK/1/54, Pakistan 1954</td><td class="acc">ASIA1-ASIA-G-IX_MN366244</td><td>Asia1 · ASIA</td><td>67.9%</td><td>89.1%</td></tr>
-    <tr><td class="acc">HQ631363</td><td>Asia1/1/YZ/CHA/06, China 2006</td><td class="acc">ASIA1-ASIA-G-IX_MN366244</td><td>Asia1 · ASIA</td><td>97%</td><td>97%</td></tr>
-    <tr><td class="acc">AY593805</td><td>C1 Oberbayern, Germany 1960</td><td class="acc">C-EURO-SA-C1_AY593804</td><td>C · EURO-SA/C1</td><td>100%</td><td>100%</td></tr>
-    <tr><td class="acc">AY593809</td><td>C5 Argentina 1969</td><td class="acc">C-EURO-SA-C3R_AY593807</td><td>C · EURO-SA/C3R</td><td>100%</td><td>100%</td></tr>
-    <tr><td class="acc">AJ133357</td><td>C-S8c1, Santa Pau, Spain 1970</td><td class="acc">C-NA_AM503966</td><td>C · EURO-SA/C1</td><td>100%</td><td>100%</td></tr>
-    <tr><td class="acc">AY593838</td><td>SAT1 BEC/1/48, Bechuanaland 1948</td><td class="acc">SAT1-III_AY593843</td><td>SAT1 · III</td><td>100%</td><td>100%</td></tr>
-    <tr><td class="acc">AY593847</td><td>SAT2 RHO/1/48, 1948</td><td class="acc">SAT2-III_MH053334</td><td>SAT2 · III</td><td>99.4%</td><td>98.3%</td></tr>
-    <tr><td class="acc">JX014256</td><td>SAT2 PAT/1/2012, Palestine 2012</td><td class="acc">SAT2-VII-Ghb-12_JX014255</td><td>SAT2 · VII/GHB-12</td><td>100%</td><td>100%</td></tr>
-    <tr><td class="acc">AY593853</td><td>SAT3 BEC/1/65, Bechuanaland 1965</td><td class="acc">SAT3-II_AY593851</td><td>SAT3 · II</td><td>100%</td><td>100%</td></tr>
-    <tr><td class="acc">KX375417</td><td>SAT3/ZIM/4/1981, Zimbabwe</td><td class="acc">SAT3-I_KM268901</td><td>SAT3 · I</td><td>100%</td><td>100%</td></tr>
-    <tr><td class="acc">MH053340</td><td>SAT3 MAL/3/76, Malawi 1976</td><td class="acc">SAT3-III_MH053352</td><td>SAT3 · III</td><td>50%</td><td>97.9%</td></tr>
+    <tr><td class="acc">PV805283</td><td>O BDSH_05, Bangladesh</td><td class="acc">O-ME-SA-PanAsia-2_HQ268524</td><td>O &middot; ME-SA/SA-2018</td><td>86.6%</td><td>99.8% to PQ110578.1</td></tr>
+    <tr><td class="acc">PQ654498</td><td>O UAE/15/2021</td><td class="acc">O-ME-SA-PanAsia-2_HQ268524</td><td>O &middot; ME-SA/SA-2018</td><td>100%</td><td>100% to OR425057.1</td></tr>
+    <tr><td class="acc">AJ539141</td><td>O/UKG/35/2001, the 2001 UK outbreak</td><td class="acc">O-ME-SA-PanAsia_HM008917</td><td>O &middot; ME-SA/PANASIA</td><td>100%</td><td>100% to KR265075</td></tr>
+    <tr><td class="acc">KU821591</td><td>O/ZAM14/2010, Zambia</td><td class="acc">O-EA-2_MH053318</td><td>O &middot; EA-2</td><td>100%</td><td>100%</td></tr>
+    <tr><td class="acc">PQ768019</td><td>A/IC69/2019</td><td class="acc">A-ASIA-G-VII_MK088171</td><td>A &middot; </td><td>94.0%</td><td>98.2% to OQ378374.1</td></tr>
+    <tr><td class="acc">PZ581631</td><td>A/BAU/TF/02/19</td><td class="acc">A-AFRICA-G-IV_MG725873</td><td>A &middot; AFRICA/G-IV</td><td>100%</td><td>99.8% to KX258055</td></tr>
+    <tr><td class="acc">PX864600</td><td>O Gha_19, Ghana</td><td class="acc">A-AFRICA-G-IV_MG725873</td><td><b>untyped</b> <span class="muted">(on an A reference)</span></td><td>0.0%</td><td>&mdash;</td></tr>
+    <tr><td class="acc">AY593751</td><td>A10 Holland, Netherlands 1942</td><td class="acc">A-EURO-SA-A12_AY593752</td><td>A &middot; EURO-SA/A12</td><td>99.5%</td><td>99.5%</td></tr>
+    <tr><td class="acc">KC588943</td><td>A/Pocheon/001/KOR/2010, South Korea</td><td class="acc">A-ASIA-Sea-97_KJ933864</td><td>A &middot; ASIA/SEA-97</td><td>100%</td><td>100%</td></tr>
+    <tr><td class="acc">OM471680</td><td>Asia1/PAK/SGD/179/2012, Pakistan</td><td class="acc">ASIA1-ASIA-Sindh-08_KM268898</td><td>Asia1 &middot; ASIA/SINDH-08</td><td>100%</td><td>100%</td></tr>
+    <tr><td class="acc">PZ574914</td><td>Asia1 PAK/32/2016, Pakistan</td><td class="acc">ASIA1-ASIA-Sindh-08_KM268898</td><td>Asia1 &middot; ASIA/SINDH-08</td><td>72.2%</td><td>99.8% to MT442809</td></tr>
+    <tr><td class="acc">AY593795</td><td>Asia1 PAK/1/54, Pakistan 1954</td><td class="acc">ASIA1-ASIA-G-IX_MN366244</td><td>Asia1 &middot; ASIA</td><td>67.9%</td><td>89.1%</td></tr>
+    <tr><td class="acc">HQ631363</td><td>Asia1/1/YZ/CHA/06, China 2006</td><td class="acc">ASIA1-ASIA-G-IX_MN366244</td><td>Asia1 &middot; ASIA</td><td>97.0%</td><td>97.0%</td></tr>
+    <tr><td class="acc">MH053310</td><td>C UGA/18/70, Uganda 1970</td><td class="acc">C-AFRICA_KM268897</td><td>C &middot; AFRICA</td><td>100%</td><td>100%</td></tr>
+    <tr><td class="acc">MH053308</td><td>C ETH/1/71, Ethiopia 1971</td><td class="acc">C-AFRICA_KM268897</td><td>C &middot; AFRICA</td><td>82.3%</td><td>100%</td></tr>
+    <tr><td class="acc">MG372729</td><td>C3 Indaial, Brazil</td><td class="acc">C-EURO-SA-C3I_AY593806</td><td>C &middot; EURO-SA-C3I</td><td>99.7%</td><td>99.7% to AY593806</td></tr>
+    <tr><td class="acc">AY593805</td><td>C1 Oberbayern, Germany 1960</td><td class="acc">C-EURO-SA-C1_AY593804</td><td>C &middot; EURO-SA/C1</td><td>100%</td><td>100%</td></tr>
+    <tr><td class="acc">AY593809</td><td>C5 Argentina 1969</td><td class="acc">C-EURO-SA-C3R_AY593807</td><td>C &middot; EURO-SA/C3R</td><td>100%</td><td>100%</td></tr>
+    <tr><td class="acc">AJ133357</td><td>C-S8c1, Santa Pau, Spain 1970</td><td class="acc">C-NA_AM503966</td><td>C &middot; EURO-SA/C1</td><td>100%</td><td>100%</td></tr>
+    <tr><td class="acc">PQ587566</td><td>SAT2 ETH/28/2022, Ethiopia</td><td class="acc">SAT1-VII_MH053324</td><td><b>untyped</b> <span class="muted">(on a SAT1 reference)</span></td><td>0.0%</td><td>&mdash;</td></tr>
+    <tr><td class="acc">PP432673</td><td>SAT2 SAT2/TUR/20/2023, Turkiye</td><td class="acc">SAT1-VII_MH053324</td><td><b>untyped</b> <span class="muted">(on a SAT1 reference)</span></td><td>0.0%</td><td>&mdash;</td></tr>
+    <tr><td class="acc">LC868350</td><td>SAT1 THI-QAR9, Iraq</td><td class="acc">SAT1-VII_MH053324</td><td>SAT1 &middot; VII</td><td>100%</td><td>98.9% to MH053324</td></tr>
+    <tr><td class="acc">AY593838</td><td>SAT1 BEC/1/48, Bechuanaland 1948</td><td class="acc">SAT1-III_AY593843</td><td>SAT1 &middot; III</td><td>100%</td><td>100%</td></tr>
+    <tr><td class="acc">AY593847</td><td>SAT2 RHO/1/48, 1948</td><td class="acc">SAT2-III_MH053334</td><td>SAT2 &middot; III</td><td>99.4%</td><td>98.3%</td></tr>
+    <tr><td class="acc">JX014256</td><td>SAT2 PAT/1/2012, Palestine 2012</td><td class="acc">SAT2-VII-Ghb-12_JX014255</td><td>SAT2 &middot; VII/GHB-12</td><td>100%</td><td>100%</td></tr>
+    <tr><td class="acc">MW355677</td><td>SAT3 SAR/9/79, South Africa 1979</td><td class="acc">SAT3-I_KM268901</td><td>SAT3 &middot; </td><td>93.4%</td><td>93.4%</td></tr>
+    <tr><td class="acc">MW355674</td><td>SAT3 BOT/209/67, Botswana 1967</td><td class="acc">SAT3-II_AY593851</td><td>SAT3 &middot; II</td><td>97.7%</td><td>97.7%</td></tr>
+    <tr><td class="acc">ON557390</td><td>SAT3 ZAM/3/2015, Zambia 2015</td><td class="acc">SAT3-II_AY593851</td><td>SAT3 &middot; II</td><td>100%</td><td>100%</td></tr>
+    <tr><td class="acc">MH053351</td><td>SAT3 ZIM/2/84, Zimbabwe 1984</td><td class="acc">SAT3-II_AY593851</td><td>SAT3 &middot; II</td><td>86.4%</td><td>95.7%</td></tr>
+    <tr><td class="acc">AY593853</td><td>SAT3 BEC/1/65, Bechuanaland 1965</td><td class="acc">SAT3-II_AY593851</td><td>SAT3 &middot; II</td><td>100%</td><td>100%</td></tr>
+    <tr><td class="acc">KX375417</td><td>SAT3/ZIM/4/1981, Zimbabwe</td><td class="acc">SAT3-I_KM268901</td><td>SAT3 &middot; I</td><td>100%</td><td>100%</td></tr>
+    <tr><td class="acc">MH053340</td><td>SAT3 MAL/3/76, Malawi 1976</td><td class="acc">SAT3-III_MH053352</td><td>SAT3 &middot; III</td><td>50.0%</td><td>97.9%</td></tr>
   </tbody>
 </table></div>
 
 <div class="copybar">
-  <button class="copy" type="button" data-done="Copied 15 ✓" data-copy="AJ539141&#10;KU821591&#10;AY593751&#10;KC588943&#10;AY593795&#10;HQ631363&#10;AY593805&#10;AY593809&#10;AJ133357&#10;AY593838&#10;AY593847&#10;JX014256&#10;AY593853&#10;KX375417&#10;MH053340">⧉ Copy the 15 GenBank numbers</button>
+  <button class="copy" type="button" data-done="Copied 32 &#10003;" data-copy="PV805283&#10;PQ654498&#10;AJ539141&#10;KU821591&#10;PQ768019&#10;PZ581631&#10;PX864600&#10;AY593751&#10;KC588943&#10;OM471680&#10;PZ574914&#10;AY593795&#10;HQ631363&#10;MH053310&#10;MH053308&#10;MG372729&#10;AY593805&#10;AY593809&#10;AJ133357&#10;PQ587566&#10;PP432673&#10;LC868350&#10;AY593838&#10;AY593847&#10;JX014256&#10;MW355677&#10;MW355674&#10;ON557390&#10;MH053351&#10;AY593853&#10;KX375417&#10;MH053340">&#8681; Copy the 32 GenBank numbers</button>
 </div>
 
 <h3>Run it and read the result</h3>
 <ol class="steps">
   <li><span class="ui">Grab into Step 1</span>, leave the three scope lists on <b>Auto</b>, and click
-  <span class="ui">Run</span>. The 32 samples took a little over 4 minutes on a laptop.</li>
+  <span class="ui">Run</span>. The 77 samples took about nine minutes on a laptop.</li>
   <li>In <b>Step 1 Results</b> click <span class="ui">Refresh</span>. You should count
-  <b>O 6, A 4, Asia1 5, C 3, SAT1 7, SAT2 4, SAT3 3</b>, and for the seventeen read sets
-  <b>11 PASS, 5 REVIEW, 1 FAIL</b>.</li>
+  <b>O 18 &middot; A 12 &middot; Asia1 10 &middot; C 6 &middot; SAT1 15 &middot; SAT2 9 &middot; SAT3 7</b>, and for the 45 read sets
+  <b>30 PASS, 12 REVIEW, 3 FAIL</b>.</li>
   <li>In <b>Step 2</b>, the <span class="ui">VP1</span> tab now lists all seven serotypes with those
   counts. Build a tree for any of them, one serotype at a time, as in the starter set.</li>
 </ol>
 
 <div class="note see">
-  <b class="lbl">The ones to look at</b>
-  <b>Every lineage a submitter named is the lineage the tool calls:</b> CATHAY, Ind-2001b, Ind-2001d,
-  Sea-97 and SAT1 topotype X.<br>
-  <b>Three read sets land at 100% on the published genome of the same isolate:</b>
-  <span class="acc">SRR34371563</span> on TAN/27/2012, <span class="acc">SRR19450040</span> on
-  A/VIT/RAHO6F3/2013 and <span class="acc">SRR9901252</span> on O/VIT/17-19073/2017. A fourth,
-  <span class="acc">SRR11004874</span>, is 99.8% to its own, IND/442/2005.<br>
-  <b>Two samples that came in by
-  different routes meet:</b> the Pirbright O reads (<span class="acc">SRR13498117</span>) and the genome of
-  O/UKG/35/2001 (<span class="acc">AJ539141</span>) are both nearest the same United Kingdom record,
-  KR265075, at 100%.
+  <b class="lbl">The score</b>
+  <b>74/77 samples are called as the serotype their own submitter recorded.</b> The three that are not
+  are the interesting ones, and the tool does not claim them: it reports them as <b>untyped</b>
+  (see below). Beyond the serotype, every lineage a submitter named is the lineage the tool calls &mdash;
+  CATHAY, Ind-2001a, Ind-2001b, Ind-2001c, Ind-2001d, Sea-97, Iran-05, Sindh-08 and SAT1 topotype X.
 </div>
 
 <div class="note warn">
   <b class="lbl">Results that are not a fault</b>
-  <b>The REVIEW and FAIL verdicts are real.</b> The three Pirbright MiSeq runs are amplicons that do not
-  span the whole genome (53 to 82% covered), and <span class="acc">SRR19450040</span> stops at 89%; two
-  runs are mostly host reads (<span class="acc">SRR9335110</span> maps 4%,
-  <span class="acc">SRR17960074</span> 14%). All of them are still typed correctly.<br>
+  <b>The REVIEW and FAIL verdicts are real.</b> The Pirbright MiSeq runs are amplicons that do not span
+  the whole genome, and several field runs are mostly host reads &mdash; <span class="acc">SRR9335110</span>
+  maps 4% of its reads, <span class="acc">SRR17960074</span> 14%. All of them are still typed correctly.<br>
+  <b>Three genomes are called as the wrong serotype, and the tool says it could not type them.</b>
+  <span class="acc">PP432673</span> (SAT2, T&uuml;rkiye) and <span class="acc">PQ587566</span> (SAT2,
+  Ethiopia) land on a SAT1 reference, and <span class="acc">PX864600</span> (O, Ghana) on an A reference.
+  All three are far from every genome in the library: about a quarter of their simulated reads do not map
+  at all, only around 72% of the genome is called, and <b>no read reaches VP1</b>, so the VP1 column reads
+  <b>0%</b> and the sample is reported <b>untyped</b>. When a row says untyped, the serotype beside it is
+  only the reference the reads landed on &mdash; it is not a call. That is what the edge of the library's
+  reach looks like, and it is the reason to read the VP1 column rather than the reference name.<br>
   <b>Four genomes read under 100% against their own record.</b>
   <span class="acc">AY593795</span>, <span class="acc">HQ631363</span>, <span class="acc">AY593847</span>
-  and <span class="acc">MH053340</span> are far from every genome in the library.
-  Their reads align poorly to the nearest reference, part of VP1 is left uncalled, and the consensus no
-  longer matches the record it was made from. That shows where the library's reach ends. The serotype
-  is right in every case.<br>
-  <b>One archive label is wrong.</b> The archive's strain field for <span class="acc">SRR34371563</span>
-  reads SAT2. The tool calls it SAT1, and so does the published genome of that isolate, MT602086.
+  and <span class="acc">MH053340</span> are far enough from the library that part of VP1 is left
+  uncalled; the serotype is right in every case.
 </div>
 
 <h2>The Pirbright set — twelve field-like runs</h2>

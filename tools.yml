@@ -133,7 +133,10 @@ tools:
     # package update used to reset it — Ames, 3.36 -> 3.37, 2026-11.
     env_config: [dependencies/reference_options_paths.txt]
     databases: [vsnp3_refs]
-    packages: [bioconda::vsnp3=3.36, bioconda::snp-dists=1.2.0]
+    # sra-tools: SRA Download's fast route (NCBI's S3 copy + fasterq-dump).
+    # Without fasterq-dump it falls back to ENA over curl, which can run at
+    # ~200 KB/s (the 26-sample training set took ~7 h that way, 2026-11-19).
+    packages: [bioconda::vsnp3=3.36, bioconda::snp-dists=1.2.0, bioconda::sra-tools=3.4.1]
 
   - name: amr_plus_gui
     repo: https://github.com/kapurlab/amr_plus_gui.git

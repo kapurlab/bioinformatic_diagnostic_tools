@@ -374,12 +374,22 @@ laptop, where <code>raxmlHPC</code> is single-threaded:</p>
     <tr><td>C</td><td>6</td><td>148</td><td>154</td><td>6 min</td></tr>
     <tr><td>Asia1</td><td>10</td><td>171</td><td>181</td><td>8 min</td></tr>
     <tr><td>SAT2</td><td>9</td><td>199</td><td>208</td><td>10 min</td></tr>
-    <tr><td>A, SAT1, O</td><td>12, 15, 18</td><td colspan="3" class="muted">larger again &mdash; a tree grows with the samples it holds and with how many records that serotype has in GenBank</td></tr>
+    <tr><td>A, SAT1, O</td><td>12, 15, 18</td><td colspan="3" class="muted">over an hour each on this laptop &mdash; see the note below</td></tr>
   </tbody>
 </table></div>
 <p>Every sample of the serotype appears in its tree: the SAT3 tree, for instance, carries all seven
 SAT3 samples among its 96 leaves. A sample reported <b>untyped</b> has no VP1 to place and is left out,
 which is the other way to notice the three crosses above.</p>
+
+<div class="note warn">
+  <b class="lbl">The big trees are slow on a Mac</b>
+  A tree grows with the samples it holds and with how many records that serotype has in GenBank, and
+  O and A are the largest sets in the library by far. The three biggest trees here each ran over an
+  hour, almost all of it in <code>raxmlHPC</code>, which has no multi-threaded build for Apple silicon
+  and so uses one core however many you give it. On a Linux server with a threaded RAxML the same
+  trees are much quicker. Start a big tree when you can leave it; the rest of the app stays usable, but
+  only one tree builds at a time.
+</div>
 
 <h3>The genome SNP tables</h3>
 <p>A Step 2 comparison is per reference, so in a project like this one it compares the samples that

@@ -173,6 +173,16 @@ class ReportTests(unittest.TestCase):
         self.assertIn("3.36", vsnp["status"])
         # The fixture pins 3.35 and 3.35 is installed: no drift.
         self.assertFalse(vsnp["pin_drift"])
+        self.assertEqual(vsnp["pin_relation"], "")
+
+    def test_pin_relation_says_which_way_an_env_is_off_its_pin(self):
+        self.assertEqual(PKG.pin_relation("3.37", "3.36"), "ahead")
+        self.assertEqual(PKG.pin_relation("3.16", "3.35"), "behind")
+        # Numeric, not string, order: 3.9 is behind 3.10.
+        self.assertEqual(PKG.pin_relation("3.9", "3.10"), "behind")
+        self.assertEqual(PKG.pin_relation("3.36", "3.36"), "")
+        self.assertEqual(PKG.pin_relation("", "3.36"), "")
+        self.assertEqual(PKG.pin_relation("3.36", ""), "")
 
     def test_a_tool_with_no_env_is_reported_not_installed(self):
         with mock.patch.object(PKG, "env_dir_for", return_value=""), \

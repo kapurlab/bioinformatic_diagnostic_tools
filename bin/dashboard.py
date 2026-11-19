@@ -126,7 +126,8 @@ class Suite:
                      # See the OOD dashboard's copy of this list: the site's
                      # validated pin, and whether this env is on it.
                      "pinned": p.get("pinned", ""),
-                     "pin_drift": p.get("pin_drift", False)}
+                     "pin_drift": p.get("pin_drift", False),
+                     "pin_relation": p.get("pin_relation", "")}
                     for p in (pkgs.get(name, []) if installed else [])
                 ],
                 # ready is None when readiness is unknown (doctor unavailable or
@@ -947,9 +948,15 @@ addEventListener('storage',e=>{if(e.key===THEME_KEY)applyTheme(preferredTheme(),
     <div>A newer release exists that this environment cannot take in place (a dependency conflict,
     or no build for this platform). The installed version is the correct, supported one here; the
     hold is deliberate and recorded, and is revisited when upstream resolves the conflict.</div>
-    <span class="vers"><span class="vdrift">≠ pinned 2.17.1</span></span>
-    <div>This environment is not on the validated version. The tool still runs; an administrator
-    should reconcile it (<code>bin/bdtools fix</code> shows the exact step).</div>
+    <span class="vers"><span class="vdrift">ahead of pin 3.36</span></span>
+    <div>This environment runs a newer release than the validated pin, usually from a package
+    update made on this machine whose pin never reached the shared manifest. The tool still runs.
+    Either record the newer release as the pin in the shared manifest, or return to the pin; the
+    badge's tooltip gives both commands.</div>
+    <span class="vers"><span class="vdrift">behind pin 2.17.1</span></span>
+    <div>This environment runs an older release than the validated pin, usually because it was
+    built before the pin moved. The tool still runs; rebuilding it reaches the pin, and the
+    badge's tooltip gives the command.</div>
     <span class="vers">no badge</span>
     <div>The installed version matches the validated pin — current, as this laboratory defines it.</div>
   </div>
@@ -1129,9 +1136,18 @@ function versionBlock(t){
     // vsnp3 3.16 sat behind a pin of 3.35 — the card showed "3.16" and nothing
     // said what it should have been. Shown even when the package is also held,
     // because "held" explains the newest release, not the missing pin.
-    const drift = p.pin_drift && p.pinned
-      ? `<span class="vdrift" title="tools.yml pins ${esc(p.pinned)}; this environment has ${esc(p.installed)}. Results here are not from the version this site validated. Rebuild the env to get the pin: bin/bdtools install ${esc(t.name)} --fresh">≠ pinned ${esc(p.pinned)}</span>`
-      : '';
+    // AHEAD and BEHIND have opposite remedies, so they get different words and
+    // different advice. An env ahead of its pin is usually a package update made
+    // on this machine whose pin never reached the shared tools.yml (a pull puts
+    // the shared pins back) — Ames ran vsnp3 3.37 under "≠ pinned 3.36", and the
+    // rebuild advice would have quietly downgraded it. A backend that predates
+    // pin_relation gets the old, undirected badge.
+    const rel = p.pin_drift && p.pinned ? (p.pin_relation || 'differs') : '';
+    const drift = rel === 'ahead'
+      ? `<span class="vdrift" title="tools.yml pins ${esc(p.pinned)}; this environment has the newer ${esc(p.installed)}, usually from a package update made on this machine whose pin never reached the shared tools.yml. To keep ${esc(p.installed)}: change the pin in the shared tools.yml, push, then run bin/bdtools pull here. To go back to ${esc(p.pinned)}: bin/bdtools update-packages ${esc(t.name)} --to ${esc(p.name)}=${esc(p.pinned)}">ahead of pin ${esc(p.pinned)}</span>`
+      : rel
+        ? `<span class="vdrift" title="tools.yml pins ${esc(p.pinned)}; this environment has ${esc(p.installed)}. Results here are not from the version this site validated. Rebuild the env to get the pin: bin/bdtools install ${esc(t.name)} --fresh">${rel === 'behind' ? 'behind pin' : '≠ pinned'} ${esc(p.pinned)}</span>`
+        : '';
     bits.push(`${esc(p.name)} ${esc(p.installed)}${up}${drift}`);
   }
   if(!bits.length) return '';

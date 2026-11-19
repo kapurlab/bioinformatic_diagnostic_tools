@@ -270,7 +270,8 @@ class Suite:
                              # never displayed, so an env that silently built at
                              # another version looked ordinary on the card.
                              "pinned": p.get("pinned", ""),
-                             "pin_drift": p.get("pin_drift", False)}
+                             "pin_drift": p.get("pin_drift", False),
+                             "pin_relation": p.get("pin_relation", "")}
                             for p in packages.get(name, [])
                         ] if installed else []})
         return out

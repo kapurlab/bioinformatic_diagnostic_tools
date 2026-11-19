@@ -353,6 +353,17 @@ def is_newer(candidate, current):
     return version_key(candidate) > version_key(current)
 
 
+def pin_relation(installed, pinned):
+    """'ahead' / 'behind' the pin, 'differs' when the two do not order, '' on it."""
+    if not installed or not pinned or installed == pinned:
+        return ""
+    if is_newer(installed, pinned):
+        return "ahead"
+    if is_newer(pinned, installed):
+        return "behind"
+    return "differs"
+
+
 # ----- the report ---------------------------------------------------------
 def report(tools=None, use_network=True):
     """One record per declared package.
@@ -462,6 +473,14 @@ def report(tools=None, use_network=True):
                 # surfacing: it is the difference between a reproducible install
                 # and a coincidence.
                 "pin_drift": bool(pinned and inst and pinned != inst),
+                # Which way it is off, because the two have opposite remedies.
+                # BEHIND (built before the pin moved): rebuild to reach the pin.
+                # AHEAD (a package update on this machine moved the env, and the
+                # pin it wrote into this checkout's tools.yml was put back by the
+                # next pull — Ames, vsnp3 3.37 over a 3.36 pin, 2026-11): the
+                # rebuild advice would quietly downgrade it, so the way out is to
+                # move the shared pin, or to go back on purpose.
+                "pin_relation": pin_relation(inst, pinned),
             })
     _save_cache(cache)
     return out
@@ -490,7 +509,9 @@ def main(argv):
     for tool, recs in by_tool(records).items():
         print(tool)
         for rec in recs:
-            drift = "  (pinned %s)" % rec["pinned"] if rec["pin_drift"] else ""
+            rel = rec.get("pin_relation", "")
+            drift = ("  (%s pin %s)" % (rel, rec["pinned"]) if rel in ("ahead", "behind")
+                     else "  (pinned %s)" % rec["pinned"] if rec["pin_drift"] else "")
             print("    %-22s installed=%-12s latest=%-12s %s%s" % (
                 "%s (%s)" % (rec["package"], rec["channel"]),
                 rec["installed"] or "—", rec["latest"] or "?",
@@ -499,6 +520,11 @@ def main(argv):
             # way out of it is written down.
             if rec.get("held_fix"):
                 print("        to take it: %s" % rec["held_fix"])
+            if rel == "ahead":
+                print("        to keep %s: pin it in the shared tools.yml, push, then "
+                      "`bin/bdtools pull` here" % rec["installed"])
+                print("        to go back: bin/bdtools update-packages %s --to %s=%s"
+                      % (tool, rec["package"], rec["pinned"]))
     return 0
 
 

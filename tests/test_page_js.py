@@ -410,6 +410,41 @@ class CardVersionTests(unittest.TestCase):
             "installed:'3.35',latest:'3.36',update_available:true,held:false}]}")
         self.assertIn("↑3.36", html)
 
+    def test_an_env_ahead_of_its_pin_is_never_told_to_rebuild(self):
+        # Ames, 2026-11: vsnp3 3.37 under a 3.36 pin showed "≠ pinned 3.36" with
+        # "install --fresh" as the remedy, which would have downgraded it.
+        html = self.render(
+            "{name:'vsnp_gui',installed:true,version:'v0.4.152',packages:[{name:'vsnp3',"
+            "installed:'3.37',latest:'3.37',update_available:false,held:false,"
+            "pinned:'3.36',pin_drift:true,pin_relation:'ahead'}]}")
+        self.assertIn("ahead of pin 3.36", html)
+        self.assertIn("bin/bdtools pull", html)
+        self.assertIn("bin/bdtools update-packages vsnp_gui --to vsnp3=3.36", html)
+        self.assertNotIn("--fresh", html)
+        self.assertNotIn("≠ pinned", html)
+
+    def test_an_env_behind_its_pin_is_told_to_rebuild(self):
+        html = self.render(
+            "{name:'vsnp_gui',installed:true,version:'v0.4.36',packages:[{name:'vsnp3',"
+            "installed:'3.16',latest:'3.37',update_available:true,held:false,"
+            "pinned:'3.35',pin_drift:true,pin_relation:'behind'}]}")
+        self.assertIn("behind pin 3.35", html)
+        self.assertIn("bin/bdtools install vsnp_gui --fresh", html)
+
+    def test_a_backend_without_the_direction_keeps_the_old_badge(self):
+        html = self.render(
+            "{name:'vsnp_gui',installed:true,version:'v0.4.36',packages:[{name:'vsnp3',"
+            "installed:'3.37',latest:'3.37',update_available:false,held:false,"
+            "pinned:'3.36',pin_drift:true}]}")
+        self.assertIn("≠ pinned 3.36", html)
+
+    def test_an_env_on_its_pin_carries_no_pin_badge(self):
+        html = self.render(
+            "{name:'vsnp_gui',installed:true,version:'v0.4.152',packages:[{name:'vsnp3',"
+            "installed:'3.37',latest:'3.37',update_available:false,held:false,"
+            "pinned:'3.37',pin_drift:false,pin_relation:''}]}")
+        self.assertNotIn("vdrift", html)
+
 
 @unittest.skipUnless(NODE, "node is required to run the headline split")
 class CardHeadlineTests(unittest.TestCase):
@@ -519,7 +554,8 @@ class PolicyPopoverTests(unittest.TestCase):
         # The full statement and the legend are still on the page, verbatim.
         self.assertIn("A pin is a quality control, not a limitation", page)
         self.assertIn('class="plegend"', page)
-        for badge in ("↑ 1.3.5", "held (2.17.1)", "≠ pinned 2.17.1", "no badge"):
+        for badge in ("↑ 1.3.5", "held (2.17.1)", "ahead of pin 3.36",
+                      "behind pin 2.17.1", "no badge"):
             self.assertIn(badge, page)
 
     def test_it_opens_on_hover_focus_and_click(self):

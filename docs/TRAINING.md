@@ -18,6 +18,8 @@ on its own, so you can jump to the tool you need.
 📊 **Slides:** [vSNP3 — the whole process](https://kapurlab.github.io/bioinformatic_diagnostic_tools/vsnp3_orientation_slides.html) covers Modules 4–5 at a glance.
 For hands-on practice in the vSNP3 GUI, [vSNP3 GUI training: find where two outbreaks came from](https://kapurlab.github.io/bioinformatic_diagnostic_tools/vsnp3_gui_training.html)
 is a step-by-step guide (an SOP), from the first install to reading the tree.
+For foot-and-mouth disease virus, [vSNP3 GUI training, FMDV mode: type four samples and place them](https://kapurlab.github.io/bioinformatic_diagnostic_tools/vsnp3_gui_fmdv_training.html)
+is the same kind of guide for Module 9.
 
 **What you will learn**
 
@@ -31,6 +33,7 @@ is a step-by-step guide (an SOP), from the first install to reading the tree.
 | 6 | **AMRFinderPlus** | Find antimicrobial-resistance genes in a bacterial isolate | *Pasteurella*, *E. coli* reads |
 | 7 | **MLST** | Assign a sequence type (ST) to an isolate | *Pasteurella* reads |
 | 8 | **kSNP** | Build a reference-free SNP tree from finished genomes | MTBC genome accessions |
+| 9 | **vSNP3 (FMDV mode)** | Type foot-and-mouth disease virus samples, place them on a VP1 tree, compare them genome-wide | FMDV reads (nanopore and Illumina) and GenBank genomes |
 
 > ⏱ **Time:** Modules 1, 3, 6, 7, 8 take ~10–30 min each — plus another hour if
 > you run Module 3's optional BLAST part. vSNP3 (Modules 4–5) takes longer
@@ -76,6 +79,7 @@ Most tools are ready to go. Three need a one-time database download:
 | **vSNP3** (Modules 4–5) | vSNP3 reference set | `bin/bdtools setup-databases vsnp-refs vsnp-deps` |
 | **AMRFinderPlus** (Module 6) | **AMRFinderPlus database** *(required — the conda package ships the program only)* | `bin/bdtools setup-databases amrfinder` |
 | **AMRFinderPlus** (Module 6) | Kraken2 DB *(only for automatic organism detection — optional)* | `bin/bdtools setup-databases kraken` |
+| **vSNP3, FMDV mode** (Module 9) | **FMDV reference library** *(required for Module 9 only; built on your machine in about five minutes)* | `bin/bdtools setup-databases fmdv` |
 
 Run those before the relevant module. The Kraken2 DB is shared: set it up once
 and both Kraken ID-Parse and AMRFinderPlus use it. If you skip it, AMRFinderPlus
@@ -1037,6 +1041,177 @@ Then the trees:
 
 ---
 
+## Module 9 — vSNP3, FMDV mode: type foot-and-mouth disease virus
+
+**What it does.** FMDV mode is a kind of vSNP3 project for foot-and-mouth
+disease virus. It answers three questions about a sample: **which serotype and
+lineage is it**, **what in GenBank is it closest to**, and, for samples that
+share a lineage, **how many SNPs apart are they**.
+
+**Why it needs its own mode.** Modules 4 and 5 used one reference genome for
+the whole project. That works for *M. bovis*, where every isolate is more than
+99% identical to the reference. FMDV is far more diverse: two lineages of the
+same serotype can differ at one base in five, and reads stop mapping long before
+that. So in FMDV mode **the reference is chosen for each sample**, from a
+library of 79 lineage genomes, by letting the sample's own reads vote on VP1
+(the capsid gene that serotype and lineage are defined on). After that choice,
+everything is the vSNP3 you already know.
+
+> 🧭 **Prefer a screenshot for every click?** [**vSNP3 GUI training, FMDV mode**](https://kapurlab.github.io/bioinformatic_diagnostic_tools/vsnp3_gui_fmdv_training.html)
+> walks through this same module one step per page, with what you should see
+> after each step.
+
+**Input.** Any of four, mixed freely in one project: a **MinKNOW run folder**
+(nanopore, one FASTQ per barcode), **FASTQ files** you already have, **public
+reads from SRA**, or a **sequence instead of reads** (a FASTA, a GenBank file, or
+an accession).
+
+### Before you begin — one-time setup
+
+FMDV mode reads a reference library that is built on your machine, once. With
+the machine online:
+
+```bash
+bin/bdtools setup-databases fmdv
+```
+
+It takes about five minutes and ends with `FMDV reference library ready`. Then
+restart vSNP3 from the dashboard (**↻ Restart**). If the command says the
+environment lacks `blastn`, run `bin/bdtools install vsnp_gui` first: it adds
+the two extra programs FMDV mode uses (BLAST+ and mafft), then try again.
+
+A lab that does not work on FMDV can skip all of this; ordinary vSNP3 projects
+never use the library.
+
+### The data
+
+Four public samples. Two are reads, two are finished genomes.
+
+```
+Accession	What it is	Goes in
+SRR34371563	Nanopore reads, serotype SAT1 (TAN/27/2012)	SRA tab
+SRR18685705	Illumina paired reads, serotype SAT1 (Kenya 2016)	SRA tab
+EU448369	GenBank genome, serotype O (O1/BFS 1860/UK/67)	Sequences tab
+HM625673	GenBank genome, serotype O (O/K/48/2005, Kenya)	Sequences tab
+```
+
+### Steps
+
+1. **Launch** **vSNP3**. In **Projects**, type a name (e.g. `FMDV_training`).
+   In the reference list beside it choose **FMDV mode (reference chosen per
+   sample)**, then click **Create**. Click the new project to select it.
+2. Look at **Inputs**. In an FMDV project it has four tabs: **MinKNOW run**,
+   **FASTQ files**, **Sequences**, **SRA**. Whatever tab the data comes in by,
+   it lands on the right under **Ready to run**.
+3. Click the **SRA** tab. Paste the two `SRR` accessions, one per line, and
+   click **Download**. Wait for **2 downloaded** (under a minute on a good
+   connection).
+4. Click the **Sequences** tab. Type the two GenBank accessions, one per line,
+   and click **Preview**. The preview shows what was found: each record is a
+   genome, VP1 has been located in it, and a note says the library already holds
+   it. Click **Import 2 records**.
+   - A genome is turned into **simulated reads** so that it can go through
+     Step 1 like any sample. It is badged **Simulated** from here on, so nobody
+     mistakes its numbers for a sequenced sample's.
+   - A FASTA or GenBank **file** works the same way: drop it on the same tab.
+5. **Ready to run** now lists four samples. Click **Grab into Step 1**.
+6. In **Step 1**, the reference block reads **FMDV mode: choose the lineage
+   reference per sample**. Leave the three scope lists on **Auto**. You do not
+   need to tick **Nanopore (ONT) reads**: long reads are detected per sample.
+   Click **Run**. Four samples take about a minute.
+7. In **Step 1 Results**, click **Refresh**.
+
+> 🧪 **Have a MinKNOW run?** On the **MinKNOW run** tab, paste the run folder
+> MinKNOW wrote (the one holding `fastq_pass/`) and click **Preview**. Each
+> barcode is listed with the name its `sample_sheet.csv` gives it (columns
+> `barcode,sample_id`; the tab has a template). Nothing is written until you
+> click **Import**. Each barcode becomes one FASTQ under **Ready to run**.
+
+### How to read Step 1 Results
+
+One row per sample. You should see:
+
+| Sample | QC | Read type | Reference | Serotype | Lineage | Topotype (VP1) |
+|---|---|---|---|---|---|---|
+| SRR34371563 | PASS | ONT | SAT1-I_KM268899 | SAT1 | I | SAT1 I |
+| SRR18685705 | PASS | Paired | SAT1-I_KM268899 | SAT1 | I | SAT1 I |
+| EU448369 | N/A | Simulated | O-EURO-SA-O1_AY593837 | O | EURO-SA/O1 | O EURO-SA/O1 |
+| HM625673 | N/A | Simulated | O-EA-2_MH053318 | O | EA-2 | O EA-2 |
+
+- **Reference** — the lineage genome this sample's reads chose. Different
+  samples in one project have different references; that is the point of the
+  mode.
+- **Serotype** and **Lineage** — the reads' vote. **Topotype (VP1)** — the
+  typing: the sample's own VP1 sequence compared against about nine thousand
+  GenBank VP1 records, named after the nearest annotated one.
+- **Identity** — how close the reads sit to the chosen reference. Low identity
+  with a correct serotype means "no close genome in the library", not a failed
+  run.
+- **QC** uses lines set for an 8 kb amplicon genome: genome covered, depth,
+  mapping rate. The two imported genomes read **N/A**, because depth and
+  coverage would only describe the simulation.
+- **Files** on a row holds the stats workbook, the alignment for **IGV**, and
+  the one-page **FMDV report** (HTML and PDF) for that sample.
+
+### Step 2 — VP1 first
+
+In an FMDV project the **Step 2** panel opens on a **VP1** tab, because
+serotype, topotype and lineage are all defined on VP1.
+
+1. The **VP1 typing** table repeats the calls: **4 of 4 typed**.
+2. Under **VP1 tree**, choose **SAT1 (2 samples)** and click **Build VP1
+   tree**. It aligns the samples' VP1 with the library's lineage panel and a
+   backbone of GenBank records, and builds a tree with 100 bootstraps: about
+   three minutes. Then do the same for **O (2 samples)**; the O tree is larger
+   (about 200 sequences) and takes longer, up to fifteen minutes on a laptop.
+3. **Step 2 Results** shows one tree run at a time, with five views:
+   - **Typing** — the call table, with report buttons per sample.
+   - **Tree** — the *neighbourhood tree*: your samples, their nearest records
+     and one record per other lineage, so every label can be read. The full
+     tree is one button away.
+   - **Neighbours** — for each sample, the records within 3% of its nearest,
+     with country, year and host.
+   - **Sites** — the VP1 positions that vary among the samples and their
+     neighbours, as nucleotides or amino acids.
+   - **Files** — the Newick tree and the alignment.
+
+You should find: **SRR34371563** identical on VP1 to **MT602086.1** (the
+published genome of the same isolate, TAN/27/2012); **SRR18685705** nearest
+**MH882609**, a Kenya 2016 record, at 98.9%; **EU448369** among the UK 1967–68
+O1 records at 100%; **HM625673** on itself, Kenya 2005, at 100%.
+
+### Step 2 — whole-genome SNPs within a lineage
+
+The second tab, **Genome SNPs: build**, is ordinary vSNP3 Step 2, for samples
+that landed on the **same** reference.
+
+1. In **Compare on reference**, choose **SAT1-I_KM268899 (2 samples)**. The
+   two O samples are on other references and are left out; the panel says so.
+2. Click **Build comparison set**, then **Run**.
+
+With only two samples the table is short. What gives it meaning is context: the
+other genomes of the serotype called against the same reference. A site that
+works on FMDV builds those once per reference (see `docs/FMDV_MODE.md` in the
+vsnp_gui repository, "Step 2 context"), and they then appear as tick boxes
+under **Reference databases**. With the SAT1 databases ticked, this run places
+SRR34371563 **0 SNPs** from MT602086.1 and 6 from the reference, with the next
+genome more than 380 SNPs away: the same virus, to within sequencing error.
+
+### The run report
+
+At the top of **Step 1 Results** and of the VP1 view, **FMDV run report**
+(HTML or PDF) is the page for the outbreak team: one paragraph saying which
+serotypes and lineages are present, one table of calls with the notes that
+change how a call is read, and the trees. The sample reports hold the detail.
+
+> 🔎 **Teaching point.** A serotype call from reads, a lineage call from VP1,
+> and a SNP distance are three different kinds of evidence. The first two place
+> a sample among everything known; only the third says two samples are the same
+> virus. FMDV mode gives them in that order because that is the order an
+> outbreak asks the questions in.
+
+---
+
 ## Wrap-up — what you've learned
 
 | You started with… | Tool | You produced… |
@@ -1049,6 +1224,7 @@ Then the trees:
 | Bacterial reads | AMRFinderPlus | A resistance-gene profile |
 | A bacterial isolate | MLST | A sequence type (ST) |
 | Genome accessions | kSNP | A reference-free SNP tree |
+| FMDV reads and genomes | vSNP3, FMDV mode | A serotype and lineage per sample, a VP1 tree, a SNP comparison |
 
 **The one pattern to remember:** *create a project → paste accessions → check
 samples → Run → read the Results.* Every tool in the suite follows it.

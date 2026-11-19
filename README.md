@@ -236,10 +236,25 @@ skipped. Restart a running tool afterward to pick up the new paths:
 | vSNP reference options | vsnp_gui | `<root>/vsnp3/reference_options` | [USDA-VS/vSNP_reference_options](https://github.com/USDA-VS/vSNP_reference_options) |
 | vsnp dependencies | vsnp_gui | `<root>/vsnp3/vsnp_dependencies` | [USDA-VS/vsnp3_test_dataset](https://github.com/USDA-VS/vsnp3_test_dataset) (`vsnp_dependencies/`) |
 | Step 2 VCF comparison DBs | vsnp_gui | `<root>/vsnp3/vcf_db_directories` (linked once into the GUI's VCF-DB root) | [kapurlab/vcf_db_directories](https://github.com/kapurlab/vcf_db_directories) |
+| FMDV reference library (~60 MB, **only when named**) | vsnp_gui, FMDV mode | `<root>/fmdv/fmdv_refs` (linked as `<site>/refs/fmdv`) | built on the machine by vsnp_gui's `bin/fmdv_library_build.sh`: the 79 lineage genomes and GenBank VP1 collection of [NanoFMDV](https://github.com/rjorton/nanofmdv), annotations from NCBI |
 
 Set up only some of them by naming which: `bin/bdtools setup-databases kraken vsnp-refs`
-(choices: `kraken blast amrfinder vsnp-refs vsnp-deps vcf-dbs`). Pick the location non-interactively
+(choices: `kraken blast amrfinder vsnp-refs vsnp-deps vcf-dbs fmdv`). Pick the location non-interactively
 with `--home`, `--shared`, or `--root DIR`.
+
+The FMDV library is the one database a plain `setup-databases` does **not**
+set up, because only labs that work on foot-and-mouth disease need it. Build
+it by name, once, with the machine online (about five minutes):
+
+```bash
+bin/bdtools setup-databases fmdv
+```
+
+It uses BLAST+ and mafft from vsnp_gui's own env, which `tools.yml` pins for
+vsnp_gui v0.4.154 and later; `bin/bdtools install vsnp_gui` adds them to an
+env built before that (on a shared site install, `bin/bdtools update-packages
+vsnp_gui`, or the dashboard's package update). A stock vSNP project (TB,
+Brucella, …) never reads it.
 
 The VCF comparison databases are seeded **once**: after the first run they are
 yours to curate — a folder you remove is never silently re-added, and a folder
@@ -945,12 +960,16 @@ for the light contract a tool repo must satisfy to be drivable from here.
 ## 🎓 Training
 
 - **All tools — [docs/TRAINING.md](docs/TRAINING.md).** The main training for the
-  whole suite: one hands-on module per tool (IRMA, GenoFLU, Kraken ID-Parse, vSNP3,
-  AMRFinderPlus, MLST, kSNP), using real public data. Start here. No command-line
+  whole suite: one hands-on module per tool (IRMA, GenoFLU, Kraken ID-Parse, vSNP3
+  with its FMDV mode, AMRFinderPlus, MLST, kSNP), using real public data. Start here. No command-line
   experience needed.
 - **vSNP3 only — [vSNP3 GUI training](https://kapurlab.github.io/bioinformatic_diagnostic_tools/vsnp3_gui_training.html).**
   A step-by-step guide for the vSNP3 GUI, from the first install to reading the
   tree, with a screenshot for every step. It opens in your browser.
+- **vSNP3, FMDV mode — [vSNP3 GUI training, FMDV mode](https://kapurlab.github.io/bioinformatic_diagnostic_tools/vsnp3_gui_fmdv_training.html).**
+  The same kind of guide for foot-and-mouth disease virus: four public samples
+  (nanopore reads, Illumina reads and two GenBank genomes) typed, placed on a VP1
+  tree and compared. Module 9 of the main training is the short version.
 
 ## 🪟 On Windows? Set up WSL2 first
 

@@ -24,6 +24,14 @@
 #   vcf-dbs       kapurlab vcf_db_directories     -> <root>/vsnp3/vcf_db_directories
 #                 (Step 2 VCF comparison DBs; seeded ONCE into the GUI's
 #                 vcf_db_folders root — later removals/additions are yours)
+#   fmdv          FMDV reference library          -> <root>/fmdv/fmdv_refs
+#                 (vsnp_gui's FMDV mode: 79 lineage genomes, their VP1 panel,
+#                 the GenBank VP1 sets for typing and trees. BUILT here, not
+#                 downloaded: vsnp_gui's bin/fmdv_library_build.sh fetches
+#                 NanoFMDV from GitHub and the annotations from NCBI, about
+#                 five minutes and 60 MB. ONLY WHEN NAMED: a lab that does not
+#                 work on foot-and-mouth disease has no use for it, so plain
+#                 `setup-databases` leaves it out.)
 #
 # Consumers wired automatically (a database is wired into EVERY tool that reads
 # it — amr_plus_gui has its own kraken_db key for organism detection, and a
@@ -33,6 +41,7 @@
 #   amrfinder     -> amr_plus_gui         (~/.config/amr_plus_gui/config.json)
 #   vsnp-*        -> vsnp_gui             (reference locations + config.json)
 #   vcf-dbs       -> vsnp_gui             (vcf_db_folders root, one-time)
+#   fmdv          -> vsnp_gui             (<site>/refs/fmdv, which FMDV mode reads)
 set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
 
@@ -73,13 +82,15 @@ while [[ $# -gt 0 ]]; do
     --shared)  LOC="shared"; shift;;
     --root)    ROOT="$2";    shift 2;;
     --dry-run) DRY_RUN=1; export DRY_RUN; shift;;
-    -h|--help) sed -n '2,35p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
-    kraken|blast|amrfinder|vsnp-refs|vsnp-deps|vcf-dbs) WANT+=("$1"); shift;;
+    -h|--help) sed -n '2,44p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
+    kraken|blast|amrfinder|vsnp-refs|vsnp-deps|vcf-dbs|fmdv) WANT+=("$1"); shift;;
     all) shift;;                       # explicit "all" == default
     -*)  die "unknown option: $1";;
-    *)   die "unknown database: $1 (kraken|blast|amrfinder|vsnp-refs|vsnp-deps|vcf-dbs|all)";;
+    *)   die "unknown database: $1 (kraken|blast|amrfinder|vsnp-refs|vsnp-deps|vcf-dbs|fmdv|all)";;
   esac
 done
+# "all" is every database every lab needs. fmdv is deliberately not in it: it
+# is built for the labs that run FMDV mode, by name (`setup-databases fmdv`).
 [[ ${#WANT[@]} -gt 0 ]] || WANT=(kraken blast amrfinder vsnp-refs vsnp-deps vcf-dbs)
 
 # ---- resolve the install root ---------------------------------------------
@@ -166,6 +177,7 @@ BLAST_DIR="${ROOT}/blast"
 BLAST_DB="${BLAST_DIR}/${BLAST_DBNAME}"
 VSNP_REFS="${ROOT}/vsnp3/reference_options"
 VSNP_DEPS="${ROOT}/vsnp3/vsnp_dependencies"
+FMDV_DEST="${ROOT}/fmdv/fmdv_refs"
 
 want() { local x; for x in "${WANT[@]}"; do [[ "$x" == "$1" ]] && return 0; done; return 1; }
 fetcher() { command -v curl >/dev/null 2>&1 && echo "curl" || { command -v wget >/dev/null 2>&1 && echo "wget"; }; }
@@ -478,6 +490,111 @@ fetch_vsnp_deps() {
   fi
 }
 
+# ---- FMDV reference library (vsnp_gui's FMDV mode) --------------------------
+# Built, not downloaded. NanoFMDV (Shaw et al. 2025) carries no licence file,
+# so neither this repo nor vsnp_gui redistributes its genomes; vsnp_gui's
+# builder fetches them from NanoFMDV's own repository and derives the library
+# with the tools in vsnp_gui's env (blastn, makeblastdb, sourmash). Same env
+# resolution as kraken_env_prefix: what a launch would pick, then what the
+# build recorded, then the in-checkout env.
+vsnp_env_prefix() {
+  local p
+  p="$(tool_env_prefix vsnp_gui 2>/dev/null || true)"
+  [[ -n "${p}" ]] && { printf '%s' "${p}"; return 0; }
+  p="$(recorded_env_prefix vsnp_gui 2>/dev/null || true)"
+  [[ -n "${p}" ]] && { printf '%s' "${p}"; return 0; }
+  p="$(tool_dir vsnp_gui)/env"
+  [[ -d "${p}" ]] && { printf '%s' "${p}"; return 0; }
+  return 0
+}
+
+FMDV_READY="no"
+fetch_fmdv() {
+  local dir builder envp tool missing=()
+  dir="$(tool_dir vsnp_gui)"
+  builder="${dir}/bin/fmdv_library_build.sh"
+  if [[ ! -f "${builder}" ]]; then
+    warn "FMDV library: the vsnp_gui at ${dir} has no bin/fmdv_library_build.sh (FMDV mode arrived in v0.4.154)."
+    info "  Move it to the pinned release, then run this again:"
+    info "      bin/bdtools update vsnp_gui && bin/bdtools setup-databases fmdv"
+    return 0
+  fi
+  envp="$(vsnp_env_prefix)"
+  if [[ -z "${envp}" || ! -x "${envp}/bin/python" ]]; then
+    warn "FMDV library: vsnp_gui has no environment on this machine yet, and the build needs its tools."
+    info "      bin/bdtools install vsnp_gui && bin/bdtools setup-databases fmdv"
+    return 0
+  fi
+  for tool in blastn makeblastdb sourmash; do
+    [[ -x "${envp}/bin/${tool}" ]] || missing+=("${tool}")
+  done
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    warn "FMDV library: ${envp} lacks ${missing[*]} (tools.yml pins mafft and blast for vsnp_gui since v0.4.154)."
+    info "  Bring the env to its pins, then run this again:"
+    info "      bin/bdtools install vsnp_gui && bin/bdtools setup-databases fmdv"
+    return 0
+  fi
+  log "building the FMDV reference library -> ${FMDV_DEST}"
+  info "  NanoFMDV from GitHub, annotations from NCBI: about five minutes. A second run only fills in what is missing."
+  if [[ ${DRY_RUN} -eq 1 ]]; then
+    echo "  [dry-run] ${builder} --lib ${FMDV_DEST}   (PATH=${envp}/bin first)"
+    FMDV_READY="yes"   # so the link it would make is shown too
+    return 0
+  fi
+  mkdir -p "${FMDV_DEST}"
+  if PATH="${envp}/bin:${PATH}" FMDV_PYTHON="${envp}/bin/python" bash "${builder}" --lib "${FMDV_DEST}"; then
+    FMDV_READY="yes"
+    ok "FMDV reference library ready: ${FMDV_DEST}"
+  else
+    warn "FMDV library: the build stopped before it finished (its own message is above)."
+    info "  Nothing else was changed. Run it again when the cause is fixed:  bin/bdtools setup-databases fmdv"
+  fi
+}
+
+# vsnp_gui reads the library from <site>/refs/fmdv (config.py fmdv_reflib_default),
+# beside the vsnp3 references: the local site tree when there is one, else the
+# declared SITE_ROOT. A link, like reference_options, so the launch context
+# finds it and no path is frozen into anyone's config.json.
+wire_fmdv() {
+  want fmdv || return 0
+  # Only a library the build finished is linked: a half-built one linked into
+  # the site would have the GUI offer FMDV mode and fail inside it.
+  [[ "${FMDV_READY}" == "yes" ]] || return 0
+  local site="${BDTOOLS_HOME}/vsnp3-site" refs=""
+  if [[ -d "${site}" ]]; then
+    refs="${site}/refs"
+  else
+    local sroot; sroot="$("${PYBIN:-python3}" - "${KT_BIN_DIR}/lib" "${REPO_DIR}" <<'PY' 2>/dev/null || true
+import sys
+sys.path.insert(0, sys.argv[1])
+import site_paths
+root = site_paths.site_root(sys.argv[2])
+print(root or "")
+PY
+)"
+    [[ -n "${sroot}" ]] && refs="${sroot}/refs"
+  fi
+  if [[ -z "${refs}" ]]; then
+    warn "FMDV library: no local vsnp site and no SITE_ROOT declared, so nothing links it into the GUI."
+    info "  Point the GUI at it by hand: \"fmdv_reflib\": \"${FMDV_DEST}\" in ~/.config/vsnp_gui/config.json"
+    return 0
+  fi
+  local link="${refs}/fmdv"
+  if [[ ${DRY_RUN} -eq 1 ]]; then echo "  [dry-run] ln -sfn ${FMDV_DEST} ${link}"; return 0; fi
+  if [[ -d "${link}" && ! -L "${link}" ]]; then
+    if [[ "$(cd "${link}" && pwd -P)" == "$(cd "${FMDV_DEST}" && pwd -P)" ]]; then
+      ok "vsnp_gui: FMDV library is ${link}"
+    else
+      warn "FMDV library: ${link} is a folder of its own, not a link, and was left alone."
+      info "  The GUI reads that folder. The library just built is at ${FMDV_DEST}."
+    fi
+    return 0
+  fi
+  mkdir -p "${refs}" 2>/dev/null || { warn "FMDV library: cannot create ${refs} (re-run as the account that owns the site)"; return 0; }
+  ln -sfn "${FMDV_DEST}" "${link}" || { warn "FMDV library: cannot write ${link} (re-run as the account that owns the site)"; return 0; }
+  ok "vsnp_gui: ${link} -> ${FMDV_DEST}"
+}
+
 # ---- wire the GUIs --------------------------------------------------------
 wire_kraken() {
   local args=()
@@ -578,10 +695,12 @@ want blast     && fetch_blast
 want amrfinder && fetch_amrfinder
 want vsnp-refs && fetch_vsnp_refs
 want vsnp-deps && fetch_vsnp_deps
+want fmdv      && fetch_fmdv
 wire_kraken
 wire_amr
 wire_vsnp
 wire_vcf_dbs
+wire_fmdv
 
 echo
 ok "Database setup complete (root: ${ROOT})."

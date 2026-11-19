@@ -557,6 +557,11 @@ class PolicyPopoverTests(unittest.TestCase):
         for badge in ("↑ 1.3.5", "held (2.17.1)", "ahead of pin 3.36",
                       "behind pin 2.17.1", "no badge"):
             self.assertIn(badge, page)
+        # Where a pin lives, and that `fix` is not the way to move one: Ames
+        # moved vsnp3 on one machine, a pull put the old pin back, and
+        # `fix --apply` was the first thing tried.
+        self.assertIn("records the new pin in the shared manifest", page)
+        self.assertIn("(it never changes a version)", page)
 
     def test_it_opens_on_hover_focus_and_click(self):
         page = load_page()

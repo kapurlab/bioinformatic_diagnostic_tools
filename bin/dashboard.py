@@ -938,8 +938,9 @@ addEventListener('storage',e=>{if(e.key===THEME_KEY)applyTheme(preferredTheme(),
   <p>Every analysis package in this suite runs at a <b>version pin</b> — the exact release this
   laboratory has validated, recorded in the suite manifest. Nothing updates itself: the versions
   that produced your previous results stay in place until an administrator deliberately moves
-  them, validates the change, and records the new pin. Each tool card above states the versions
-  in use, so what produced a result is always in view.</p>
+  them, validates the change, and records the new pin in the shared manifest. A pin changed on
+  one machine only is undone by that machine's next pull. Each tool card above states the
+  versions in use, so what produced a result is always in view.</p>
   <div class="plegend">
     <span class="vers"><span class="vnew">↑ 1.3.5</span></span>
     <div>A newer release has been published upstream. Informational only — it is adopted when the
@@ -962,7 +963,8 @@ addEventListener('storage',e=>{if(e.key===THEME_KEY)applyTheme(preferredTheme(),
   </div>
   <p class="pfoot">A pin is a quality control, not a limitation: every machine in the laboratory
   producing the same result from the same versions outranks running the newest release. Routine
-  health checks: <code>bin/bdtools doctor</code> · safe automated repairs: <code>bin/bdtools fix</code>.</p>
+  health checks: <code>bin/bdtools doctor</code> · safe automated repairs: <code>bin/bdtools fix</code>
+  (it never changes a version).</p>
   </section>
 </div></div>
 <div class="host" id="host" style="display:none"></div>

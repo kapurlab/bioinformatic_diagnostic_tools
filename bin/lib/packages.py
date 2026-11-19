@@ -409,6 +409,7 @@ def report(tools=None, use_network=True):
                     and tried.get("gate", 1) < GATE_VERSION):
                 tried = {}
             blocked_version = tried.get("version", "")
+            missing_target = ""
             newer = is_newer(latest, inst) if inst else False
             # Why it is held, and what (if anything) would change that. Carried on
             # the record rather than left in the CLI's log, because the dashboard
@@ -419,7 +420,24 @@ def report(tools=None, use_network=True):
             if not env:
                 status = "not installed"
             elif not inst:
-                status = "declared but missing from the env"
+                # The env exists and lacks a package tools.yml declares: a pin
+                # added after the env was built (blast and mafft for vsnp_gui
+                # v0.4.154). `update-packages` adds it at the pin, and the
+                # dashboard has to OFFER that: reported as a status only, with
+                # nothing to click, it left FMDV mode half-working on a site
+                # whose code was current (Ames HPC, 2026-11-19). Not offered
+                # again once this machine has shown it cannot take it.
+                missing_target = pinned or latest
+                if missing_target and missing_target == blocked_version:
+                    why = (tried.get("reason") or "").strip()
+                    status = (f"missing from the env ({missing_target} was tried here "
+                              f"and cannot be installed)")
+                    held_reason = (f"{missing_target} was tried on this machine and could "
+                                   f"not be installed" + (f": {why}" if why else "."))
+                    missing_target = ""
+                else:
+                    status = (f"missing from the env: add {missing_target}"
+                              if missing_target else "declared but missing from the env")
             elif newer and latest and latest == blocked_version:
                 status = (f"held at {inst} (newer: {latest} was tried here and "
                           f"cannot be installed)")
@@ -462,7 +480,11 @@ def report(tools=None, use_network=True):
                 "pinned": pinned,
                 "installed": inst,
                 "latest": latest,
-                "update_available": bool(newer),
+                # A missing package is an update too: the same button adds it.
+                "update_available": bool(newer or missing_target),
+                # What that button would install when the package is absent
+                # (the pin), "" when it is present or cannot be added here.
+                "missing_target": missing_target,
                 "held": is_held,
                 "held_reason": held_reason,
                 "held_fix": held_fix,

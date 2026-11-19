@@ -774,5 +774,121 @@ class PackageRecordShapeTests(unittest.TestCase):
             self.assertEqual(SC.package_update_records(), [])
 
 
+class MissingDeclaredPackageTests(unittest.TestCase):
+    """A package tools.yml declares and the env lacks is ADDED, at the pin.
+
+    Ames HPC, 2026-11-19. vsnp_gui v0.4.154 pinned blast, mafft and sra-tools;
+    the site env predated them, and a site gets code by `sync`, which never
+    touches an env. `bdtools update-packages vsnp_gui` then printed, for each of
+    the three, "vsnp_gui: not installed here - skipping" and ended "nothing to
+    install", while FMDV mode's sequence import said blastn was missing.
+
+    The cause was the record line. It was tab-separated and read with
+    IFS=$'\t'; a tab is IFS whitespace, so `read` folded the empty `installed`
+    field away and the env path slid out of `env`. Only a MISSING package has
+    an empty field in the middle, so only the packages this command existed to
+    add were skipped. And the dashboard never offered them at all: a missing
+    package was a status string with update_available False.
+    """
+
+    def setUp(self):
+        self.script = (ROOT / "bin/update-packages.sh").read_text(encoding="utf-8")
+
+    def _fn(self, name):
+        start = self.script.index(f"\n{name}() {{") + 1
+        return self.script[start:self.script.index("\n}\n", start) + 3]
+
+    def _bash(self, body, **env):
+        import subprocess
+        return subprocess.run(["bash", "-c", "set -euo pipefail\n" + body],
+                              capture_output=True, text=True, env={**os.environ, **env})
+
+    def _sep(self):
+        line = [l for l in self.script.splitlines() if l.startswith("REC_SEP=")]
+        self.assertEqual(len(line), 1, "REC_SEP is set once, at top level")
+        return line[0] + "\n"
+
+    def test_a_missing_package_keeps_its_env_through_the_record_line(self):
+        import sys
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = Path(tmp) / "fake_packages.py"
+            fake.write_text(
+                "def report(tools):\n"
+                "    base = dict(channel='bioconda', env='/site/tools/vsnp3', held=False, held_reason='')\n"
+                "    return [dict(base, package='vsnp3', installed='3.37', latest='3.37', pinned='3.37'),\n"
+                "            dict(base, package='blast', installed='', latest='2.18.0', pinned='2.17.0')]\n")
+            body = (self._sep() + self._fn("records_for") + self._fn("_want_version") + r"""
+while IFS="${REC_SEP}" read -r pkg channel installed latest pinned env hold reason; do
+  echo "${pkg}|${installed}|${latest}|${pinned}|${env}|${hold}|$(_want_version "${installed}" "${latest}" "${pinned}")"
+done < <(records_for vsnp_gui)
+""")
+            out = self._bash(body, PYBIN=sys.executable, PKG_PY=str(fake))
+        self.assertEqual(out.returncode, 0, out.stderr)
+        lines = out.stdout.splitlines()
+        self.assertEqual(lines[0], "vsnp3|3.37|3.37|3.37|/site/tools/vsnp3||3.37")
+        # The one that went wrong: installed is empty, and env is STILL the env.
+        self.assertEqual(lines[1], "blast||2.18.0|2.17.0|/site/tools/vsnp3||2.17.0")
+
+    def test_the_update_loop_reads_with_the_same_separator(self):
+        self.assertIn('while IFS="${REC_SEP}" read -r pkg channel installed latest pinned env hold reason',
+                      self.script)
+        self.assertNotIn("IFS=$'\\t' read", self.script,
+                         "a tab-separated read folds empty fields away")
+        self.assertIn('\\x1f".join(', self._fn("records_for"))
+
+    def test_a_missing_package_is_added_at_the_pin_and_others_move_to_the_newest(self):
+        fn = self._fn("_want_version")
+        got = lambda *a: self._bash(fn + "_want_version " + " ".join(f'"{x}"' for x in a)).stdout
+        self.assertEqual(got("", "2.18.0", "2.17.0"), "2.17.0")   # missing: the pin
+        self.assertEqual(got("2.16.0", "2.18.0", "2.17.0"), "2.18.0")  # present: newest
+        self.assertEqual(got("", "2.18.0", ""), "2.18.0")          # missing, nothing pinned
+
+    def _report(self, unsat=None):
+        with tempfile.TemporaryDirectory() as tmp:
+            meta = Path(tmp) / "conda-meta"
+            meta.mkdir()
+            for f in ("vsnp3-3.37-pyhdfd78af_0.json", "snp-dists-1.2.0-h577a1d6_0.json",
+                      "sra-tools-3.4.1-h4304569_0.json", "mafft-7.526-h4bc722e_0.json"):
+                (meta / f).write_text("{}")
+            newest = {"blast": "2.18.0"}
+            with mock.patch.object(PKG, "env_dir_for", return_value=tmp), \
+                 mock.patch.object(PKG, "latest_version",
+                                   side_effect=lambda ch, name, **k: newest.get(name, "")), \
+                 mock.patch.object(PKG, "unsatisfiable_here", return_value=unsat or {}), \
+                 mock.patch.object(PKG, "_save_cache", lambda cache: None):
+                recs = {r["package"]: r for r in PKG.report(["vsnp_gui"])}
+        # The banner's view of the same records (suite_common reads them through
+        # its own package_report, so it is handed these).
+        with mock.patch.object(SC, "package_report", return_value=list(recs.values())):
+            banner = {r["package"]: r for r in SC.package_update_records()}
+        return recs, banner
+
+    def test_the_dashboard_offers_a_missing_package_at_its_pin(self):
+        recs, banner = self._report()
+        blast = recs["blast"]
+        pin = blast["pinned"]
+        self.assertTrue(pin, "tools.yml pins blast for vsnp_gui")
+        self.assertEqual(blast["installed"], "")
+        self.assertTrue(blast["update_available"], "a missing package must be offered")
+        self.assertEqual(blast["missing_target"], pin)
+        self.assertIn(pin, blast["status"])
+        # Present packages are unchanged by this: nothing newer, nothing offered.
+        self.assertFalse(recs["mafft"]["update_available"])
+        self.assertEqual(recs["mafft"]["missing_target"], "")
+        # The banner names the pin as the target, not the newest release.
+        self.assertEqual(banner["blast"]["installed"], "—")
+        self.assertEqual(banner["blast"]["latest"], pin)
+
+    def test_a_missing_package_this_machine_cannot_take_is_not_offered_again(self):
+        pin = dict((n, v) for _, n, v in PKG.declared(PKG.manifest.parse(PKG.MANIFEST)[1])["vsnp_gui"])["blast"]
+        _, specs = None, PKG.declared(PKG.manifest.parse(PKG.MANIFEST)[1])
+        unsat = {"vsnp_gui/blast": {"version": pin, "reason": "conflicts with this environment",
+                                    "pins": PKG.pins_for("vsnp_gui", specs), "gate": PKG.GATE_VERSION}}
+        recs, _ = self._report(unsat)
+        self.assertFalse(recs["blast"]["update_available"])
+        self.assertEqual(recs["blast"]["missing_target"], "")
+        self.assertIn("cannot be installed", recs["blast"]["status"])
+
+
 if __name__ == "__main__":
     unittest.main()

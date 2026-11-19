@@ -180,20 +180,42 @@ CHANGED=0
 # Everything packages.py already knows: which env actually runs this tool, what is
 # installed in it, and what the channel has. Asking it (rather than re-deriving)
 # keeps the CLI and the dashboard from ever disagreeing about what needs updating.
-records_for() {  # records_for <tool> -> TSV: pkg channel installed latest pinned env held reason
+# The separator between the fields of one record, written by records_for and
+# read by update_one_tool. It was a tab, and a tab is IFS WHITESPACE: `read`
+# folds a run of them into one, so an EMPTY field vanishes and every field
+# after it moves left. The one record with an empty field in the middle is a
+# declared package the env does not have (installed = ""): its env path slid
+# out of `env`, and the loop said "not installed here - skipping" about the
+# very packages it existed to add. Ames HPC, 2026-11-19: vsnp_gui's env lacked
+# blast, mafft and sra-tools (pinned for v0.4.154, after that env was built),
+# and `update-packages vsnp_gui` skipped all three and ended "nothing to
+# install". The unit separator is not whitespace, so empty fields stay put.
+REC_SEP=$'\037'
+
+records_for() {  # records_for <tool> -> pkg channel installed latest pinned env held reason, REC_SEP between
   "${PYBIN}" - "${PKG_PY}" "$1" <<'PY'
 import importlib.util, sys
 spec = importlib.util.spec_from_file_location("bdtools_packages", sys.argv[1])
 mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
 for rec in mod.report([sys.argv[2]]):
     # The reason travels with the record so the CLI and the dashboard badge give
-    # the same answer. Whitespace-collapsed because it is a TSV field and conda's
-    # headline can carry newlines.
+    # the same answer. Whitespace-collapsed because it is one field of a line and
+    # conda's headline can carry newlines.
     reason = " ".join((rec.get("held_reason") or "").split())
-    print("\t".join([rec["package"], rec["channel"], rec["installed"],
-                     rec["latest"], rec["pinned"], rec["env"],
-                     "held" if rec.get("held") else "", reason]))
+    print("\x1f".join([rec["package"], rec["channel"], rec["installed"],
+                        rec["latest"], rec["pinned"], rec["env"],
+                        "held" if rec.get("held") else "", reason]))
 PY
+}
+
+# _want_version <installed> <latest> <pinned> - the version a plain run moves a
+# package to. Normally the newest on the channel. A declared package the env
+# LACKS is added at the version tools.yml pins: that is the version the release
+# that needs it was checked with, it is what every other install of the tool
+# has, and (being the pin) it skips the cross-platform solves. Newest only when
+# nothing is pinned.
+_want_version() {
+  if [[ -z "$1" && -n "$3" ]]; then printf '%s' "$3"; else printf '%s' "$2"; fi
 }
 
 # The one-line reason a solve failed, out of conda's ~200-line dependency tree.
@@ -305,11 +327,11 @@ update_one_tool() {
   # env: each solve sees the others at their OLD versions, so a set that is only
   # jointly satisfiable is rejected one member at a time.
   local hold reason
-  while IFS=$'\t' read -r pkg channel installed latest pinned env hold reason; do
+  while IFS="${REC_SEP}" read -r pkg channel installed latest pinned env hold reason; do
     [[ -n "${pkg}" ]] || continue
     any=1
     [[ -n "${env}" ]] && envdir="${env}"
-    local want="${latest}"
+    local want; want="$(_want_version "${installed}" "${latest}" "${pinned}")"
     if [[ -n "${TO}" ]]; then
       [[ "${TO%%=*}" == "${pkg}" ]] || continue
       want="${TO#*=}"

@@ -94,8 +94,11 @@ class PinnedSetSkipsTheGate(unittest.TestCase):
             conda.write_text("#!/bin/sh\necho 'Total: 2.6 MB'\nexit 0\n")
             conda.chmod(0o755)
             gate = Path(tmp) / "gate"
-            body = (_fn("_pin_env_subdir") + _fn("update_one_tool") + f'''
-records_for() {{ printf 'kraken2\\tbioconda\\t2.17.1\\t2.17.2\\t{pinned}\\t{env}\\n'; }}
+            # The record line as update-packages.sh writes it: fields joined by
+            # REC_SEP (the unit separator), not tabs.
+            body = ("REC_SEP=$'\\037'\n" + _fn("_pin_env_subdir") + _fn("_want_version")
+                    + _fn("update_one_tool") + f'''
+records_for() {{ printf 'kraken2\\037bioconda\\0372.17.1\\0372.17.2\\037{pinned}\\037{env}\\037\\037\\n'; }}
 require_updatable() {{ return 0; }}
 tool_dir() {{ echo "{tmp}"; }}
 detect_conda() {{ echo "{conda}"; }}

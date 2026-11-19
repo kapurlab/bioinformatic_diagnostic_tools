@@ -106,9 +106,13 @@ tools folder:</p>
   have: BLAST+ (<code>blastn</code>) and <code>mafft</code>. Without <code>blastn</code> the command above
   stops, and the <span class="ui">Sequences</span> tab says <b>Nothing can be imported yet</b>. Add them
   with <code>bin/bdtools update vsnp_gui</code> on your own computer. On a shared install an
-  administrator runs these two instead, which add only the missing programs:
-  <div class="cmd" style="margin:8px 0 6px"><code>bin/bdtools update-packages vsnp_gui --to blast=2.17.0</code><button class="copy-cmd" type="button">Copy</button></div>
-  <div class="cmd" style="margin:0"><code>bin/bdtools update-packages vsnp_gui --to mafft=7.526</code><button class="copy-cmd" type="button">Copy</button></div>
+  administrator runs these two instead. The first brings the tools list up to date, which matters:
+  before 19 November 2026 the second one skipped a missing program and said there was nothing to install.
+  <div class="cmd" style="margin:8px 0 6px"><code>bin/bdtools pull</code><button class="copy-cmd" type="button">Copy</button></div>
+  <div class="cmd" style="margin:0 0 6px"><code>bin/bdtools update-packages vsnp_gui</code><button class="copy-cmd" type="button">Copy</button></div>
+  It should list <code>blast none -&gt; 2.17.0</code>, <code>mafft none -&gt; 7.526</code> and
+  <code>sra-tools none -&gt; 3.4.1</code>, then install them. Nothing needs restarting for the
+  <span class="ui">Sequences</span> tab: click <span class="ui">Preview</span> again.
 </div>
 
 <div class="note">

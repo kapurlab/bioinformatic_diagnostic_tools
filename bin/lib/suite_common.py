@@ -453,7 +453,9 @@ def package_update_records():
             "label": f"{pretty(rec['tool'])} — {rec['package']}",
             "tool_label": pretty(rec["tool"]),
             "installed": rec["installed"] or "—",
-            "latest": rec["latest"] or "—",
+            # A package the env lacks is added at the pin, not at the newest
+            # release, so the pin is what the banner names as the target.
+            "latest": rec.get("missing_target") or rec["latest"] or "—",
             "update_available": rec["update_available"] and not report_only,
             "newer_exists": rec["update_available"],
             "report_only": report_only,

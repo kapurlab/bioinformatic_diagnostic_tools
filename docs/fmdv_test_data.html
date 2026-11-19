@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FMDV mode: test data for a new project</title>
+<meta name="description" content="The public samples the FMDV mode of vSNP3 was tested with, how to download them into a new project, and what each one should come back as.">
+<style>
+  :root{
+    --ink:#16212b; --ink-2:#55646f; --hair:#dfe5ea; --bg:#ffffff; --surface:#f6f8f9;
+    --accent:#0f766e; --accent-soft:#e6f2f0; --do:#b4530a; --do-soft:#fdf1e6;
+    --see:#1f7a3d; --see-soft:#e9f5ec; --warn:#9a6700; --warn-soft:#fdf6e3;
+    --red:#b3261e; --mono:"SFMono-Regular",Menlo,Consolas,"Liberation Mono",monospace;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --ink:#e6edf3; --ink-2:#9aa8b4; --hair:#2b3942; --bg:#10181e; --surface:#17222a;
+      --accent:#4db6ac; --accent-soft:#16302e; --do:#e8923f; --do-soft:#2b1f12;
+      --see:#5fbf7f; --see-soft:#13291a; --warn:#d8ab3a; --warn-soft:#2a2213;
+      --red:#f28b82;
+    }
+  }
+  *{box-sizing:border-box}
+  body{margin:0; background:var(--bg); color:var(--ink);
+    font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
+  .wrap{max-width:960px; margin:0 auto; padding:40px 16px 72px}
+  header{border-bottom:3px solid var(--accent); padding-bottom:18px; margin-bottom:28px}
+  .kicker{font:600 12px/1 var(--mono); letter-spacing:.14em; text-transform:uppercase; color:var(--accent); margin:0 0 10px}
+  h1{font-size:30px; line-height:1.2; margin:0 0 10px; letter-spacing:-.01em}
+  h2{font-size:21px; margin:38px 0 12px; padding-top:14px; border-top:1px solid var(--hair); letter-spacing:-.01em}
+  h3{font-size:16px; margin:22px 0 8px}
+  p,li{margin:0 0 10px}
+  ul,ol{margin:0 0 14px; padding-left:22px}
+  li{margin-bottom:6px}
+  .lede{font-size:17px; color:var(--ink-2); margin:0}
+  .facts{display:flex; gap:10px; flex-wrap:wrap; margin-top:16px}
+  .fact{flex:1 1 180px; background:var(--surface); border:1px solid var(--hair); border-radius:8px; padding:10px 12px}
+  .fact b{display:block; font:600 11px/1 var(--mono); letter-spacing:.1em; text-transform:uppercase; color:var(--accent); margin-bottom:5px}
+  .fact span{font-size:14px; color:var(--ink-2)}
+  table{width:100%; border-collapse:collapse; margin:0 0 14px; font-size:14px}
+  th,td{text-align:left; padding:7px 9px; border-bottom:1px solid var(--hair); vertical-align:top}
+  th{font-size:12px; letter-spacing:.04em; text-transform:uppercase; color:var(--ink-2); font-weight:600}
+  tbody tr:nth-child(even){background:var(--surface)}
+  code,.acc{font-family:var(--mono); font-size:.92em}
+  .acc{white-space:nowrap}
+  .ui{display:inline-block; background:var(--surface); border:1px solid var(--hair); border-radius:4px;
+    padding:0 5px; font-size:.9em; font-weight:600; white-space:nowrap}
+  .copybar{display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:0 0 14px}
+  button.copy{font:600 14px/1 inherit; cursor:pointer; color:#fff; background:var(--accent);
+    border:1px solid var(--accent); border-radius:6px; padding:9px 14px}
+  button.copy:hover{filter:brightness(1.08)}
+  button.copy.done{background:var(--see); border-color:var(--see)}
+  .cmd{display:flex; align-items:stretch; border:1px solid var(--hair); border-radius:8px; overflow:hidden; margin:0 0 14px}
+  .cmd code{flex:1; min-width:0; padding:10px 12px; background:var(--surface); overflow-wrap:anywhere}
+  .cmd code::before{content:"$ "; color:var(--ink-2)}
+  .cmd button{font:600 13px/1 inherit; cursor:pointer; border:0; border-left:1px solid var(--hair);
+    background:var(--bg); color:var(--ink); padding:0 14px}
+  .cmd button.done{background:var(--see); color:#fff}
+  .note{border-left:4px solid var(--accent); background:var(--accent-soft); border-radius:0 6px 6px 0;
+    padding:10px 14px; margin:0 0 14px; font-size:14.5px}
+  .note b.lbl{display:block; font:600 11px/1 var(--mono); letter-spacing:.1em; text-transform:uppercase;
+    color:var(--accent); margin-bottom:5px}
+  .note.warn{border-color:var(--warn); background:var(--warn-soft)} .note.warn b.lbl{color:var(--warn)}
+  .note.do{border-color:var(--do); background:var(--do-soft)} .note.do b.lbl{color:var(--do)}
+  .note.see{border-color:var(--see); background:var(--see-soft)} .note.see b.lbl{color:var(--see)}
+  ol.steps{counter-reset:s; list-style:none; padding-left:0}
+  ol.steps>li{counter-increment:s; position:relative; padding-left:38px; margin-bottom:14px}
+  ol.steps>li::before{content:counter(s); position:absolute; left:0; top:1px; width:26px; height:26px;
+    border-radius:50%; background:var(--accent); color:#fff; font:600 13px/26px var(--mono); text-align:center}
+  footer{margin-top:44px; padding-top:14px; border-top:1px solid var(--hair); font-size:13px; color:var(--ink-2)}
+  a{color:var(--accent)}
+  @media print{ button{display:none !important} body{font-size:11pt} .wrap{padding:0} }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <p class="kicker">vSNP3 · FMDV mode</p>
+  <h1>Test data for a new FMDV project</h1>
+  <p class="lede">Every sample here is public. Paste the accession numbers into vSNP3 and it downloads
+  them for you — nothing is handled by hand. Each one has a known answer, printed beside it, so you can
+  tell whether your install is working.</p>
+  <div class="facts">
+    <div class="fact"><b>Starter set</b><span>4 samples · 80 MB · about 25 minutes, most of it a tree building</span></div>
+    <div class="fact"><b>Full set</b><span>13 samples · 6.8 GB · a few hours</span></div>
+    <div class="fact"><b>Checked</b><span>19 November 2026 · vSNP GUI v0.4.155 · vsnp3 3.37</span></div>
+  </div>
+</header>
+
+<h2>Before you start</h2>
+<p>FMDV mode needs its reference library built once on the machine. With the machine online, in the
+tools folder:</p>
+<div class="cmd"><code>bin/bdtools setup-databases fmdv</code><button class="copy-cmd" type="button">Copy</button></div>
+<p>It takes about five minutes and ends with <code>FMDV reference library ready</code>. Then click
+<span class="ui">↻ Restart</span> on the vSNP3 card so it finds the library. If the command says the
+environment lacks <code>blastn</code>, run <code>bin/bdtools update vsnp_gui</code> first and try again.</p>
+
+<div class="note">
+  <b class="lbl">Make the project first</b>
+  In <b>Projects</b>, type a name (for example <code>FMDV_test</code>), choose
+  <span class="ui">FMDV mode (reference chosen per sample)</span> in the list beside it, then
+  <span class="ui">Create</span>. Click the new card to open it. Without FMDV mode the reference is
+  fixed for the whole project, which is wrong for FMDV.
+</div>
+
+<h2>The starter set — four samples, four ways in</h2>
+<p>These four are the set the release was tested with. They are deliberately mixed: nanopore reads,
+Illumina reads, and two finished genomes from GenBank, so one run exercises every way into the tool.</p>
+
+<table>
+  <thead><tr><th>Accession</th><th>What it is</th><th>Goes in by</th><th>Size</th></tr></thead>
+  <tbody>
+    <tr><td class="acc">SRR34371563</td><td>Nanopore reads, serotype SAT1. Isolate TAN/27/2012, Tanzania. The run NanoFMDV publishes.</td><td><span class="ui">SRA</span> tab</td><td>51 MB</td></tr>
+    <tr><td class="acc">SRR18685705</td><td>Illumina paired reads, serotype SAT1. Kenya, 2016.</td><td><span class="ui">SRA</span> tab</td><td>28 MB</td></tr>
+    <tr><td class="acc">EU448369</td><td>A finished genome, serotype O. O1/BFS 1860/UK/67 — the 1967 United Kingdom outbreak virus.</td><td><span class="ui">Sequences</span> tab</td><td>8 kB</td></tr>
+    <tr><td class="acc">HM625673</td><td>A finished genome, serotype O. O/K/48/2005, Kenya. Stands in for a consensus sent by another laboratory.</td><td><span class="ui">Sequences</span> tab</td><td>7 kB</td></tr>
+  </tbody>
+</table>
+
+<div class="copybar">
+  <button class="copy" type="button" data-copy="SRR34371563&#10;SRR18685705" data-done="Copied 2 ✓">⧉ Copy the 2 SRA numbers</button>
+  <button class="copy" type="button" data-copy="EU448369&#10;HM625673" data-done="Copied 2 ✓">⧉ Copy the 2 GenBank numbers</button>
+</div>
+
+<h3>How to bring them in</h3>
+<ol class="steps">
+  <li><b>The two read sets.</b> In <b>Inputs</b>, click the <span class="ui">SRA</span> tab. Paste the two
+  SRA numbers, one per line, and click <span class="ui">Download</span>. It takes under a minute on a
+  good connection and ends with <b>2 downloaded</b>.</li>
+
+  <li><b>The two genomes.</b> Click the <span class="ui">Sequences</span> tab. Paste the two GenBank
+  numbers and click <span class="ui">Preview</span>. Each row should say <b>genome</b> with its length,
+  and VP1 located inside it. Click <span class="ui">Import 2 records</span>.
+  <div class="note" style="margin-top:8px">
+    <b class="lbl">A genome becomes reads</b>
+    vSNP3 writes perfect paired reads from the sequence so it can go through Step 1 like any sample.
+    The depth is <b>100×</b> by default, and the <span class="ui">Read depth</span> box beside the
+    preview changes it. The sample is badged <b>Simulated</b> everywhere afterwards and its quality
+    check reads <b>N/A</b>, because depth and coverage would only describe the simulation.
+  </div>
+  </li>
+
+  <li><b>A file instead of an accession.</b> A FASTA or GenBank file from a colleague works the same
+  way: drop it on the same tab, or use <span class="ui">Choose Files</span>, then
+  <span class="ui">Preview</span>. You can change the name before importing.
+  <div class="note see" style="margin-top:8px">
+    <b class="lbl">Not only FMDV</b>
+    Since v0.4.155 the <span class="ui">Sequences</span> tab is in every project. A published genome
+    or an assembly can be imported into a TB, Brucella or any other project the same way, and it joins
+    Step 2 beside your own samples. Outside FMDV mode nothing is typed: the record is simply a sample
+    with reads.
+  </div>
+  </li>
+
+  <li><b>Run them.</b> <span class="ui">Grab into Step 1</span>, then in <b>Step 1</b> leave the three
+  scope lists on <b>Auto</b> and click <span class="ui">Run</span>. Four samples take about a minute.
+  Do not tick <span class="ui">Nanopore (ONT) reads</span> — long reads are detected per sample.</li>
+
+  <li><b>Read the answer.</b> In <b>Step 1 Results</b> click <span class="ui">Refresh</span>, then
+  compare with the table below.</li>
+</ol>
+
+<h3>What you should get</h3>
+<table>
+  <thead><tr><th>Sample</th><th>Read type</th><th>QC</th><th>Reference chosen</th><th>Serotype · lineage</th><th>Nearest GenBank VP1</th></tr></thead>
+  <tbody>
+    <tr><td class="acc">SRR34371563</td><td>ONT</td><td>PASS</td><td class="acc">SAT1-I_KM268899</td><td>SAT1 · I</td><td>MT602086.1 at 100%</td></tr>
+    <tr><td class="acc">SRR18685705</td><td>Paired</td><td>PASS</td><td class="acc">SAT1-I_KM268899</td><td>SAT1 · I</td><td>MH882609, Kenya 2016, at 98.9%</td></tr>
+    <tr><td class="acc">EU448369</td><td>Simulated</td><td>N/A</td><td class="acc">O-EURO-SA-O1_AY593837</td><td>O · EURO-SA/O1</td><td>JX869188, United Kingdom 1968, at 100%</td></tr>
+    <tr><td class="acc">HM625673</td><td>Simulated</td><td>N/A</td><td class="acc">O-EA-2_MH053318</td><td>O · EA-2</td><td>HM625673, Kenya 2005, at 100%</td></tr>
+  </tbody>
+</table>
+
+<div class="note see">
+  <b class="lbl">The one to look at</b>
+  <b>SRR34371563</b> is 100% identical on VP1 to <b>MT602086.1</b> — the published genome of the same
+  isolate, TAN/27/2012. The reads came out of the archive and the genome came out of GenBank by two
+  different routes, and the tool put them on top of each other. That is the check that matters.
+</div>
+
+<h3>Then the trees and the SNP table</h3>
+<ol class="steps">
+  <li>In <b>Step 2</b>, on the <span class="ui">VP1</span> tab, choose <span class="ui">SAT1 (2 samples)</span>
+  and click <span class="ui">Build VP1 tree</span> (about 4 minutes). Then do the same for
+  <span class="ui">O (2 samples)</span> — that tree is larger, up to 15 minutes.</li>
+  <li>In <b>Step 2 Results</b>, the <span class="ui">Neighbours</span> view should put <b>EU448369</b>
+  among United Kingdom records from 1967 and 1968, its nearest at 100%.</li>
+  <li>On the <span class="ui">Genome SNPs: build</span> tab, choose
+  <span class="ui">SAT1-I_KM268899 (2 samples)</span>, click <span class="ui">Build comparison set</span>,
+  then <span class="ui">Run</span>. The two O samples are on other references and are left out, as the
+  panel says.</li>
+</ol>
+<p>With this reference's databases built (see <code>docs/FMDV_MODE.md</code> in the vsnp_gui repository,
+“Step 2 context”), that comparison is 49 sequences over 2,729 positions, and SRR34371563 comes out
+<b>0 SNPs</b> from MT602086.1 and 6 from the reference, with the next genome more than 380 away.
+Without them the table holds your two samples only, and the steps are the same.</p>
+
+<h2>The full set — Pirbright's twelve runs</h2>
+<p>For a harder test, BioProject <span class="acc">PRJNA693428</span> holds twelve runs over six
+biological samples: serotypes A, O and Asia1 from cell culture (CC), epithelium (EPI) and oral swab (OS).
+These behave like field samples — their reads sit 15% or more from the nearest library genome, only 15
+to 55% of the reads are FMDV at all, and there is 1 to 5% crosstalk between barcodes.</p>
+
+<table>
+  <thead><tr><th>Run</th><th>Submitter's label</th><th>Platform</th><th>Reads</th><th>Size</th></tr></thead>
+  <tbody>
+    <tr><td class="acc">SRR13498127</td><td>FMDV_A_CC_30hr</td><td>MinION</td><td>861,428</td><td>442 MB</td></tr>
+    <tr><td class="acc">SRR13498128</td><td>FMDV_O_CC_30hr</td><td>MinION</td><td>615,523</td><td>520 MB</td></tr>
+    <tr><td class="acc">SRR13498124</td><td>FMDV_ASIA1_CC_30hr</td><td>MinION</td><td>509,793</td><td>551 MB</td></tr>
+    <tr><td class="acc">SRR13498119</td><td>FMDV_A_EPI_30hr</td><td>MinION</td><td>441,113</td><td>187 MB</td></tr>
+    <tr><td class="acc">SRR13498120</td><td>FMDV_O_EPI_30hr</td><td>MinION</td><td>456,711</td><td>173 MB</td></tr>
+    <tr><td class="acc">SRR13498118</td><td>FMDV_ASIA1_EPI_30hr</td><td>MinION</td><td>560,280</td><td>212 MB</td></tr>
+    <tr><td class="acc">SRR13498122</td><td>FMDV_A_OS_30hr</td><td>MinION</td><td>3,892,000</td><td>2,121 MB</td></tr>
+    <tr><td class="acc">SRR13498123</td><td>FMDV_O_OS_30hr</td><td>MinION</td><td>3,892,000</td><td>2,121 MB</td></tr>
+    <tr><td class="acc">SRR13498121</td><td>FMDV_ASIA1_OS_30hr</td><td>MinION</td><td>751,220</td><td>379 MB</td></tr>
+    <tr><td class="acc">SRR13498126</td><td>FMDV_A_CC_MiSeq</td><td>Illumina MiSeq</td><td>129,770</td><td>27 MB</td></tr>
+    <tr><td class="acc">SRR13498117</td><td>FMDV_O_CC_MiSeq</td><td>Illumina MiSeq</td><td>475,082</td><td>99 MB</td></tr>
+    <tr><td class="acc">SRR13498125</td><td>FMDV_ASIA1_CC_MiSeq</td><td>Illumina MiSeq</td><td>28,149</td><td>6 MB</td></tr>
+  </tbody>
+</table>
+
+<div class="copybar">
+  <button class="copy" type="button" data-done="Copied 9 ✓" data-copy="SRR13498127&#10;SRR13498128&#10;SRR13498124&#10;SRR13498119&#10;SRR13498120&#10;SRR13498118&#10;SRR13498122&#10;SRR13498123&#10;SRR13498121">⧉ Copy the 9 MinION runs</button>
+  <button class="copy" type="button" data-done="Copied 3 ✓" data-copy="SRR13498126&#10;SRR13498117&#10;SRR13498125">⧉ Copy the 3 MiSeq runs</button>
+</div>
+
+<p>Paste them into the <span class="ui">SRA</span> tab the same way. The nine MinION runs are 6.7 GB
+and take a while to download; the three MiSeq runs are small and serve as an independent check of the
+reference chooser on three of the same biological samples.</p>
+
+<div class="note warn">
+  <b class="lbl">Two of these runs are the same data</b>
+  <span class="acc">SRR13498122</span> (labelled A) and <span class="acc">SRR13498123</span> (labelled O)
+  report exactly the same read count, the same base count, and the same hashes in the SRA run table.
+  That is visible in the metadata before anything is downloaded. Whatever the tool says about those two,
+  do not read a match between them as evidence of anything.
+</div>
+
+<div class="note">
+  <b class="lbl">The labels are not the answer</b>
+  The library names carry the submitter's serotype. They are metadata, not evidence. Keep them to one
+  side and compare them with the call the pipeline makes — that comparison is the test.
+</div>
+
+<h2>Useful genomes to import as sequences</h2>
+<p>These go in through the <span class="ui">Sequences</span> tab, as samples or as context
+(comparators in the tree and the typing).</p>
+<table>
+  <thead><tr><th>Accession</th><th>What it is</th><th>Why import it</th></tr></thead>
+  <tbody>
+    <tr><td class="acc">MT602086</td><td>SAT1, TAN/27/2012, Tanzania</td><td>The published genome of the same isolate as SRR34371563 — the direct check</td></tr>
+    <tr><td class="acc">PV524918</td><td>SAT1, the genome NanoFMDV publishes for that run</td><td>Compare the tool's consensus with theirs</td></tr>
+    <tr><td class="acc">KM268899</td><td>SAT1 topotype I</td><td>The library's SAT1-I reference itself</td></tr>
+    <tr><td class="acc">EU448369</td><td>O1/BFS 1860/UK/67</td><td>A second serotype, so the project holds more than one reference</td></tr>
+  </tbody>
+</table>
+<div class="copybar">
+  <button class="copy" type="button" data-done="Copied 4 ✓" data-copy="MT602086&#10;PV524918&#10;KM268899&#10;EU448369">⧉ Copy these 4</button>
+</div>
+
+<h2>If something goes wrong</h2>
+<table>
+  <thead><tr><th>What you see</th><th>What to do</th></tr></thead>
+  <tbody>
+    <tr><td>The reference list has no <b>FMDV mode</b> choice</td><td>vSNP3 is older than v0.4.154. Run <code>bin/bdtools update vsnp_gui</code>, then ↻ Restart.</td></tr>
+    <tr><td>Step 1 says <b>FMDV reference library not found</b></td><td>Run <code>bin/bdtools setup-databases fmdv</code>, then ↻ Restart and reload the page.</td></tr>
+    <tr><td>The Inputs panel has no <b>Sequences</b> tab</td><td>vSNP3 predates v0.4.155, where that tab was FMDV-only. Run <code>bin/bdtools update vsnp_gui</code>, then ↻ Restart.</td></tr>
+    <tr><td>The preview says <b>NCBI is unreachable</b></td><td>The machine is offline. Download the record elsewhere (Send to → File → GenBank full) and drop that file on the same tab.</td></tr>
+    <tr><td>A download says <b>Failed</b> for some accessions</td><td>Paste the whole list again and click Download. Only the missing ones are fetched.</td></tr>
+    <tr><td>A sample says <b>Error</b> in Step 1</td><td>Click <span class="ui">View log</span> beside it. To try again, tick <span class="ui">Force re-run</span> and Run.</td></tr>
+    <tr><td>Anything else</td><td>In the tools folder, <code>bin/bdtools doctor vsnp_gui</code> lists what is wrong and the command that fixes it.</td></tr>
+  </tbody>
+</table>
+
+<footer>
+  <p><b>Step-by-step version:</b> the
+  <a href="https://kapurlab.github.io/bioinformatic_diagnostic_tools/vsnp3_gui_fmdv_training.html">FMDV mode training guide</a>
+  walks the starter set one click per page, with a screenshot of each screen.
+  The design and the measurements are in <code>docs/FMDV_MODE.md</code> in the vsnp_gui repository.</p>
+  <p>Sources: NCBI SRA and GenBank; the lineage genomes come from NanoFMDV
+  (Shaw et al., <i>BMC Genomics</i> 2025). Every accession on this page is public.</p>
+  <p>vSNP3 · FMDV mode · Kapur Lab · Penn State</p>
+</footer>
+
+</div>
+<script>
+(function () {
+  function flash(btn, label) {
+    var old = btn.textContent;
+    btn.textContent = label || "Copied ✓";
+    btn.classList.add("done");
+    setTimeout(function () { btn.textContent = old; btn.classList.remove("done"); }, 1600);
+  }
+  function put(text, btn, label) {
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).then(function () { flash(btn, label); }, function () { legacy(text, btn, label); });
+    } else { legacy(text, btn, label); }
+  }
+  function legacy(text, btn, label) {
+    var ta = document.createElement("textarea");
+    ta.value = text; ta.setAttribute("readonly", ""); ta.style.position = "fixed"; ta.style.opacity = "0";
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand("copy"); flash(btn, label); } catch (e) { /* nothing to do */ }
+    document.body.removeChild(ta);
+  }
+  Array.prototype.forEach.call(document.querySelectorAll("button.copy"), function (b) {
+    b.addEventListener("click", function () { put(b.getAttribute("data-copy") || "", b, b.getAttribute("data-done")); });
+  });
+  Array.prototype.forEach.call(document.querySelectorAll(".cmd button"), function (b) {
+    b.addEventListener("click", function () {
+      var code = b.parentElement.querySelector("code");
+      put(code ? code.textContent : "", b, "Copied ✓");
+    });
+  });
+})();
+</script>
+</body>
+</html>

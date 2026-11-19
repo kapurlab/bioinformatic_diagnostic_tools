@@ -43,6 +43,10 @@
   tbody tr:nth-child(even){background:var(--surface)}
   code,.acc{font-family:var(--mono); font-size:.92em}
   .acc{white-space:nowrap}
+  .scroll{overflow-x:auto; margin:0 0 14px}
+  .scroll table{margin:0}
+  table.wide{font-size:13px}
+  table.wide th,table.wide td{padding:6px 7px}
   .ui{display:inline-block; background:var(--surface); border:1px solid var(--hair); border-radius:4px;
     padding:0 5px; font-size:.9em; font-weight:600; white-space:nowrap}
   .copybar{display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:0 0 14px}
@@ -83,8 +87,9 @@
   tell whether your install is working.</p>
   <div class="facts">
     <div class="fact"><b>Starter set</b><span>4 samples · 80 MB · about 25 minutes, most of it a tree building</span></div>
-    <div class="fact"><b>Full set</b><span>13 samples · 6.8 GB · a few hours</span></div>
-    <div class="fact"><b>Checked</b><span>19 November 2026 · vSNP GUI v0.4.155 · vsnp3 3.37</span></div>
+    <div class="fact"><b>All-serotype set</b><span>32 samples · 600 MB · all seven serotypes · about 10 minutes to Step 1 results</span></div>
+    <div class="fact"><b>Pirbright set</b><span>12 runs · 6.8 GB · a few hours</span></div>
+    <div class="fact"><b>Checked</b><span>19 November 2026 · vSNP GUI v0.4.156 · vsnp3 3.37</span></div>
   </div>
 </header>
 
@@ -93,8 +98,18 @@
 tools folder:</p>
 <div class="cmd"><code>bin/bdtools setup-databases fmdv</code><button class="copy-cmd" type="button">Copy</button></div>
 <p>It takes about five minutes and ends with <code>FMDV reference library ready</code>. Then click
-<span class="ui">↻ Restart</span> on the vSNP3 card so it finds the library. If the command says the
-environment lacks <code>blastn</code>, run <code>bin/bdtools update vsnp_gui</code> first and try again.</p>
+<span class="ui">↻ Restart</span> on the vSNP3 card so it finds the library.</p>
+
+<div class="note warn">
+  <b class="lbl">If BLAST+ is missing</b>
+  FMDV mode needs two programs in vSNP3's environment that an install made before v0.4.154 does not
+  have: BLAST+ (<code>blastn</code>) and <code>mafft</code>. Without <code>blastn</code> the command above
+  stops, and the <span class="ui">Sequences</span> tab says <b>Nothing can be imported yet</b>. Add them
+  with <code>bin/bdtools update vsnp_gui</code> on your own computer. On a shared install an
+  administrator runs these two instead, which add only the missing programs:
+  <div class="cmd" style="margin:8px 0 6px"><code>bin/bdtools update-packages vsnp_gui --to blast=2.17.0</code><button class="copy-cmd" type="button">Copy</button></div>
+  <div class="cmd" style="margin:0"><code>bin/bdtools update-packages vsnp_gui --to mafft=7.526</code><button class="copy-cmd" type="button">Copy</button></div>
+</div>
 
 <div class="note">
   <b class="lbl">Make the project first</b>
@@ -127,7 +142,17 @@ Illumina reads, and two finished genomes from GenBank, so one run exercises ever
 <ol class="steps">
   <li><b>The two read sets.</b> In <b>Inputs</b>, click the <span class="ui">SRA</span> tab. Paste the two
   SRA numbers, one per line, and click <span class="ui">Download</span>. It takes under a minute on a
-  good connection and ends with <b>2 downloaded</b>.</li>
+  good connection and ends with <b>2 downloaded</b>.
+  <div class="note" style="margin-top:8px">
+    <b class="lbl">While it downloads</b>
+    A counter beside <b>Downloading…</b> runs from the moment you clicked. A file still arriving is kept
+    out of <b>Ready to run</b> until it is whole, so the list fills one sample at a time. Since v0.4.156
+    a transfer that stops moving is picked up again from where it stopped, with no action from you, and
+    <span class="ui">Stop</span> ends the download; pressing <span class="ui">Download</span> again
+    carries on with whatever is missing. On a machine without <code>sra-tools</code> the reads come from
+    the European archive (ENA) instead of NCBI, which can be several times slower.
+  </div>
+  </li>
 
   <li><b>The two genomes.</b> Click the <span class="ui">Sequences</span> tab. Paste the two GenBank
   numbers and click <span class="ui">Preview</span>. Each row should say <b>genome</b> with its length,
@@ -196,7 +221,123 @@ Illumina reads, and two finished genomes from GenBank, so one run exercises ever
 <b>0 SNPs</b> from MT602086.1 and 6 from the reference, with the next genome more than 380 away.
 Without them the table holds your two samples only, and the steps are the same.</p>
 
-<h2>The full set — Pirbright's twelve runs</h2>
+<h2 id="all-serotypes">The all-serotype set — 32 samples, every serotype</h2>
+<p>The starter set proves the install. This one exercises the reference chooser and the typing across
+all seven serotypes: O, A, Asia1, C, SAT1, SAT2 and SAT3. The 32 samples land on 21 different
+lineage references. It is built the same
+way as the starter set, reads from the archive beside finished genomes from GenBank, so it goes in
+through the same two tabs. Use a new FMDV project for it (for example <code>FMDV_all_serotypes</code>).</p>
+
+<div class="note">
+  <b class="lbl">Where the samples come from</b>
+  Public read sets exist for O, A, Asia1, SAT1 and SAT2. The archives hold no run labelled serotype C,
+  and the only SAT3 reads are from a mixed SAT1/2/3 experiment, so those two serotypes are covered by
+  GenBank genomes only. None of the fifteen genomes is one of the
+  library's own 79 lineage genomes, so the chooser has to find the nearest one, not itself.
+</div>
+
+<h3>Seventeen read sets — the SRA tab</h3>
+<p>Fifteen Illumina pairs and two nanopore runs, 600 MB in all. On this page's test machine the download
+took 2 minutes. Each row gives the label the submitter put in the archive, then the answer the tool
+gave. The label is an independent answer key: the tool never sees it.</p>
+<div class="scroll"><table class="wide">
+  <thead><tr><th>Run</th><th>Submitter's label</th><th>Size</th><th>Reads</th><th>QC</th><th>Reference chosen</th><th>Serotype · lineage</th><th>Nearest GenBank VP1</th></tr></thead>
+  <tbody>
+    <tr><td class="acc">SRR9901252</td><td>O/VIT/17-19073/2017 · O/CATHAY</td><td>31&nbsp;MB</td><td>Paired</td><td>PASS</td><td class="acc">O-CATHAY_AY593835</td><td>O · CATHAY</td><td>ON868623.1, O/VIT/17-19073/2017, at 100%</td></tr>
+    <tr><td class="acc">SRR11004874</td><td>O/IND/442/2005 · O/ME-SA/Ind2001b</td><td>27&nbsp;MB</td><td>Paired</td><td>PASS</td><td class="acc">O-ME-SA-Ind-2001-b_MN983155</td><td>O · ME-SA/IND-2001/B</td><td>MN983154, IND/442/2005, at 99.8%</td></tr>
+    <tr><td class="acc">SRR9335110</td><td>O/IND/C421/2014 · O/ME-SA/Ind2001d</td><td>32&nbsp;MB</td><td>Paired</td><td>REVIEW</td><td class="acc">O-ME-SA-Ind-2001-e_MG983720</td><td>O · ME-SA/IND-2001/D</td><td>MN095371, IND/C12230/2014, at 100%</td></tr>
+    <tr><td class="acc">SRR13498117</td><td>O/UKG/34/2001 · cell culture, MiSeq amplicons</td><td>61&nbsp;MB</td><td>Paired</td><td>REVIEW</td><td class="acc">O-ME-SA-PanAsia_HM008917</td><td>O · ME-SA/PANASIA</td><td>KR265075, United Kingdom, at 100%</td></tr>
+    <tr><td class="acc">SRR19450040</td><td>A/VIT/RAHO6F3/2013 · Type A, lineage Sea-97</td><td>12&nbsp;MB</td><td>Paired</td><td>REVIEW</td><td class="acc">A-ASIA-Sea-97_KJ933864</td><td>A · ASIA/SEA-97</td><td>OK205906.1, A/VIT/RAHO6F3/2013, at 100%</td></tr>
+    <tr><td class="acc">SRR13498126</td><td>A/TAI/17/2016 · cell culture, MiSeq amplicons</td><td>17&nbsp;MB</td><td>Paired</td><td>FAIL</td><td class="acc">A-ASIA-Sea-97_KJ933864</td><td>A · ASIA/SEA-97</td><td>LC564922.1, A/TAI/56/2016, at 98.9%</td></tr>
+    <tr><td class="acc">SRR17960074</td><td>Asia1/PAK/ICT/184-2/2012 · Asia 1</td><td>25&nbsp;MB</td><td>Paired</td><td>REVIEW</td><td class="acc">ASIA1-ASIA-Sindh-08_KM268898</td><td>Asia1 · ASIA/SINDH-08</td><td>OM471657.1, ASIA1/PAK/ICT/284-3/2012, at 100%</td></tr>
+    <tr><td class="acc">SRR13498125</td><td>ASIA1/IRN/49/2011 · cell culture, MiSeq amplicons</td><td>4&nbsp;MB</td><td>Paired</td><td>REVIEW</td><td class="acc">ASIA1-ASIA-Sindh-08_KM268898</td><td>Asia1 · ASIA/SINDH-08</td><td>OM471676.1, ASIA1/PAK/SGD/25/2011, at 100%</td></tr>
+    <tr><td class="acc">SRR13498118</td><td>ASIA1/IRN/49/2011 · MinION amplicons</td><td>187&nbsp;MB</td><td>ONT</td><td>PASS</td><td class="acc">ASIA1-ASIA-Sindh-08_KM268898</td><td>Asia1 · ASIA/SINDH-08</td><td>OM471676.1, ASIA1/PAK/SGD/25/2011, at 98.7%</td></tr>
+    <tr><td class="acc">SRR34371563</td><td>TAN/27/2012 · nanopore</td><td>53&nbsp;MB</td><td>ONT</td><td>PASS</td><td class="acc">SAT1-I_KM268899</td><td>SAT1 · I</td><td>MT602086.1, TAN/27/2012, at 100%</td></tr>
+    <tr><td class="acc">SRR18685705</td><td>8/Kenya/8Jan2016 · SAT1</td><td>26&nbsp;MB</td><td>Paired</td><td>PASS</td><td class="acc">SAT1-I_KM268899</td><td>SAT1 · I</td><td>MH882609, KEN/PRB8/2016, at 98.9%</td></tr>
+    <tr><td class="acc">SRR18685700</td><td>28/Kenya/11Jan2016 · SAT1</td><td>23&nbsp;MB</td><td>Paired</td><td>PASS</td><td class="acc">SAT1-I_KM268899</td><td>SAT1 · I</td><td>MH882588, KEN/PRB28/2016, at 99.1%</td></tr>
+    <tr><td class="acc">SRR18687404</td><td>36/Kenya/12Jan2016 · SAT1</td><td>4&nbsp;MB</td><td>Paired</td><td>PASS</td><td class="acc">SAT1-I_KM268899</td><td>SAT1 · I</td><td>MH882595, KEN/PRB38/2016, at 97.0%</td></tr>
+    <tr><td class="acc">SRR9939015</td><td>SAT1/CAR/2186/2016 · SAT1/X</td><td>16&nbsp;MB</td><td>Paired</td><td>PASS</td><td class="acc">SAT1-X_MN275121</td><td>SAT1 · X</td><td>MN275121, the library's SAT1-X genome, at 100%</td></tr>
+    <tr><td class="acc">SRR9939016</td><td>SAT1/CAR/2101/2016 · SAT1/X</td><td>4&nbsp;MB</td><td>Paired</td><td>PASS</td><td class="acc">SAT1-X_MN275121</td><td>SAT1 · X</td><td>MN275121, the library's SAT1-X genome, at 100%</td></tr>
+    <tr><td class="acc">SRR14585686</td><td>SAT2/NIG/PL/PKN/01/2017</td><td>32&nbsp;MB</td><td>Paired</td><td>PASS</td><td class="acc">SAT2-VII-Lib-12_MN103523</td><td>SAT2 · VII/LIB-12</td><td>MW715627.1, SAT2/NIG/PL/PKN/02/2017, at 100%</td></tr>
+    <tr><td class="acc">SRR9328470</td><td>BA/MG/8/14, Nigeria 2014 · SAT2</td><td>0.4&nbsp;MB</td><td>Paired</td><td>PASS</td><td class="acc">SAT2-VII-Lib-12_MN103523</td><td>SAT2 · VII-Lib-12</td><td>MN103523, the library's SAT2-VII/Lib-12 genome, at 100%</td></tr>
+  </tbody>
+</table></div>
+
+<div class="copybar">
+  <button class="copy" type="button" data-done="Copied 17 ✓" data-copy="SRR9901252&#10;SRR11004874&#10;SRR9335110&#10;SRR13498117&#10;SRR19450040&#10;SRR13498126&#10;SRR17960074&#10;SRR13498125&#10;SRR13498118&#10;SRR34371563&#10;SRR18685705&#10;SRR18685700&#10;SRR18687404&#10;SRR9939015&#10;SRR9939016&#10;SRR14585686&#10;SRR9328470">⧉ Copy the 17 SRA numbers</button>
+</div>
+
+<h3>Fifteen genomes — the Sequences tab</h3>
+<p>Two or three per serotype. Paste the numbers, click <span class="ui">Preview</span>, check that every
+row says <b>genome</b> with VP1 located, then <span class="ui">Import 15 records</span>. Every one is
+badged <b>Simulated</b> and its quality check reads <b>N/A</b>.</p>
+<div class="scroll"><table class="wide">
+  <thead><tr><th>Accession</th><th>What it is</th><th>Reference chosen</th><th>Serotype · lineage</th><th>VP1 called</th><th>VP1 identity to its own record</th></tr></thead>
+  <tbody>
+    <tr><td class="acc">AJ539141</td><td>O/UKG/35/2001, the 2001 United Kingdom outbreak</td><td class="acc">O-ME-SA-PanAsia_HM008917</td><td>O · ME-SA/PANASIA</td><td>100%</td><td>nearest is KR265075, United Kingdom, at 100%</td></tr>
+    <tr><td class="acc">KU821591</td><td>O/ZAM14/2010, Zambia</td><td class="acc">O-EA-2_MH053318</td><td>O · EA-2</td><td>100%</td><td>100%</td></tr>
+    <tr><td class="acc">AY593751</td><td>A10 Holland, Netherlands 1942</td><td class="acc">A-EURO-SA-A12_AY593752</td><td>A · EURO-SA/A12</td><td>99.5%</td><td>99.5%</td></tr>
+    <tr><td class="acc">KC588943</td><td>A/Pocheon/001/KOR/2010, South Korea</td><td class="acc">A-ASIA-Sea-97_KJ933864</td><td>A · ASIA/SEA-97</td><td>100%</td><td>100%</td></tr>
+    <tr><td class="acc">AY593795</td><td>Asia1 PAK/1/54, Pakistan 1954</td><td class="acc">ASIA1-ASIA-G-IX_MN366244</td><td>Asia1 · ASIA</td><td>67.9%</td><td>89.1%</td></tr>
+    <tr><td class="acc">HQ631363</td><td>Asia1/1/YZ/CHA/06, China 2006</td><td class="acc">ASIA1-ASIA-G-IX_MN366244</td><td>Asia1 · ASIA</td><td>97%</td><td>97%</td></tr>
+    <tr><td class="acc">AY593805</td><td>C1 Oberbayern, Germany 1960</td><td class="acc">C-EURO-SA-C1_AY593804</td><td>C · EURO-SA/C1</td><td>100%</td><td>100%</td></tr>
+    <tr><td class="acc">AY593809</td><td>C5 Argentina 1969</td><td class="acc">C-EURO-SA-C3R_AY593807</td><td>C · EURO-SA/C3R</td><td>100%</td><td>100%</td></tr>
+    <tr><td class="acc">AJ133357</td><td>C-S8c1, Santa Pau, Spain 1970</td><td class="acc">C-NA_AM503966</td><td>C · EURO-SA/C1</td><td>100%</td><td>100%</td></tr>
+    <tr><td class="acc">AY593838</td><td>SAT1 BEC/1/48, Bechuanaland 1948</td><td class="acc">SAT1-III_AY593843</td><td>SAT1 · III</td><td>100%</td><td>100%</td></tr>
+    <tr><td class="acc">AY593847</td><td>SAT2 RHO/1/48, 1948</td><td class="acc">SAT2-III_MH053334</td><td>SAT2 · III</td><td>99.4%</td><td>98.3%</td></tr>
+    <tr><td class="acc">JX014256</td><td>SAT2 PAT/1/2012, Palestine 2012</td><td class="acc">SAT2-VII-Ghb-12_JX014255</td><td>SAT2 · VII/GHB-12</td><td>100%</td><td>100%</td></tr>
+    <tr><td class="acc">AY593853</td><td>SAT3 BEC/1/65, Bechuanaland 1965</td><td class="acc">SAT3-II_AY593851</td><td>SAT3 · II</td><td>100%</td><td>100%</td></tr>
+    <tr><td class="acc">KX375417</td><td>SAT3/ZIM/4/1981, Zimbabwe</td><td class="acc">SAT3-I_KM268901</td><td>SAT3 · I</td><td>100%</td><td>100%</td></tr>
+    <tr><td class="acc">MH053340</td><td>SAT3 MAL/3/76, Malawi 1976</td><td class="acc">SAT3-III_MH053352</td><td>SAT3 · III</td><td>50%</td><td>97.9%</td></tr>
+  </tbody>
+</table></div>
+
+<div class="copybar">
+  <button class="copy" type="button" data-done="Copied 15 ✓" data-copy="AJ539141&#10;KU821591&#10;AY593751&#10;KC588943&#10;AY593795&#10;HQ631363&#10;AY593805&#10;AY593809&#10;AJ133357&#10;AY593838&#10;AY593847&#10;JX014256&#10;AY593853&#10;KX375417&#10;MH053340">⧉ Copy the 15 GenBank numbers</button>
+</div>
+
+<h3>Run it and read the result</h3>
+<ol class="steps">
+  <li><span class="ui">Grab into Step 1</span>, leave the three scope lists on <b>Auto</b>, and click
+  <span class="ui">Run</span>. The 32 samples took a little over 4 minutes on a laptop.</li>
+  <li>In <b>Step 1 Results</b> click <span class="ui">Refresh</span>. You should count
+  <b>O 6, A 4, Asia1 5, C 3, SAT1 7, SAT2 4, SAT3 3</b>, and for the seventeen read sets
+  <b>11 PASS, 5 REVIEW, 1 FAIL</b>.</li>
+  <li>In <b>Step 2</b>, the <span class="ui">VP1</span> tab now lists all seven serotypes with those
+  counts. Build a tree for any of them, one serotype at a time, as in the starter set.</li>
+</ol>
+
+<div class="note see">
+  <b class="lbl">The ones to look at</b>
+  <b>Every lineage a submitter named is the lineage the tool calls:</b> CATHAY, Ind-2001b, Ind-2001d,
+  Sea-97 and SAT1 topotype X.<br>
+  <b>Three read sets land at 100% on the published genome of the same isolate:</b>
+  <span class="acc">SRR34371563</span> on TAN/27/2012, <span class="acc">SRR19450040</span> on
+  A/VIT/RAHO6F3/2013 and <span class="acc">SRR9901252</span> on O/VIT/17-19073/2017. A fourth,
+  <span class="acc">SRR11004874</span>, is 99.8% to its own, IND/442/2005.<br>
+  <b>Two samples that came in by
+  different routes meet:</b> the Pirbright O reads (<span class="acc">SRR13498117</span>) and the genome of
+  O/UKG/35/2001 (<span class="acc">AJ539141</span>) are both nearest the same United Kingdom record,
+  KR265075, at 100%.
+</div>
+
+<div class="note warn">
+  <b class="lbl">Results that are not a fault</b>
+  <b>The REVIEW and FAIL verdicts are real.</b> The three Pirbright MiSeq runs are amplicons that do not
+  span the whole genome (53 to 82% covered), and <span class="acc">SRR19450040</span> stops at 89%; two
+  runs are mostly host reads (<span class="acc">SRR9335110</span> maps 4%,
+  <span class="acc">SRR17960074</span> 14%). All of them are still typed correctly.<br>
+  <b>Four genomes read under 100% against their own record.</b>
+  <span class="acc">AY593795</span>, <span class="acc">HQ631363</span>, <span class="acc">AY593847</span>
+  and <span class="acc">MH053340</span> are far from every genome in the library.
+  Their reads align poorly to the nearest reference, part of VP1 is left uncalled, and the consensus no
+  longer matches the record it was made from. That shows where the library's reach ends. The serotype
+  is right in every case.<br>
+  <b>One archive label is wrong.</b> The archive's strain field for <span class="acc">SRR34371563</span>
+  reads SAT2. The tool calls it SAT1, and so does the published genome of that isolate, MT602086.
+</div>
+
+<h2>The Pirbright set — twelve field-like runs</h2>
 <p>For a harder test, BioProject <span class="acc">PRJNA693428</span> holds twelve runs over six
 biological samples: serotypes A, O and Asia1 from cell culture (CC), epithelium (EPI) and oral swab (OS).
 These behave like field samples — their reads sit 15% or more from the nearest library genome, only 15
@@ -267,7 +408,10 @@ reference chooser on three of the same biological samples.</p>
     <tr><td>Step 1 says <b>FMDV reference library not found</b></td><td>Run <code>bin/bdtools setup-databases fmdv</code>, then ↻ Restart and reload the page.</td></tr>
     <tr><td>The Inputs panel has no <b>Sequences</b> tab</td><td>vSNP3 predates v0.4.155, where that tab was FMDV-only. Run <code>bin/bdtools update vsnp_gui</code>, then ↻ Restart.</td></tr>
     <tr><td>The preview says <b>NCBI is unreachable</b></td><td>The machine is offline. Download the record elsewhere (Send to → File → GenBank full) and drop that file on the same tab.</td></tr>
+    <tr><td>The preview lists the records but the boxes cannot be ticked and the button says <b>Import 0 records</b></td><td>The reason is in red under each name. If it names <code>blastn</code>, BLAST+ is missing from vSNP3's environment: see <b>If BLAST+ is missing</b> at the top of this page, then click <span class="ui">Preview</span> again. No restart is needed.</td></tr>
     <tr><td>A download says <b>Failed</b> for some accessions</td><td>Paste the whole list again and click Download. Only the missing ones are fetched.</td></tr>
+    <tr><td><b>Downloading…</b> for many minutes and the sizes under <b>Ready to run</b> have stopped growing</td><td>vSNP3 is older than v0.4.156, where a stalled transfer was waited on for ever and the partial file was listed as ready. Do not grab that sample. Update vSNP3 and restart it, then paste the list again and click Download: complete samples are skipped and the partial one is fetched again.</td></tr>
+    <tr><td>A nanopore run downloads but is reported <b>Failed</b>, on a machine without <code>sra-tools</code></td><td>The same: fixed in v0.4.156. Update, then Download again.</td></tr>
     <tr><td>A sample says <b>Error</b> in Step 1</td><td>Click <span class="ui">View log</span> beside it. To try again, tick <span class="ui">Force re-run</span> and Run.</td></tr>
     <tr><td>Anything else</td><td>In the tools folder, <code>bin/bdtools doctor vsnp_gui</code> lists what is wrong and the command that fixes it.</td></tr>
   </tbody>

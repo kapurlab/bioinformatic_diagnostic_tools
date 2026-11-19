@@ -1234,8 +1234,10 @@ HM625673</textarea>
     <tbody>
       <tr><td>The reference list has no <b>FMDV mode</b> choice</td><td>vSNP3 is older than v0.4.154. Do A1.</td></tr>
       <tr><td>Step 1 says <b>FMDV reference library not found</b></td><td>Do A2, then restart vSNP3 from the dashboard and reload the page.</td></tr>
-      <tr><td><code>setup-databases fmdv</code> says the environment lacks <b>blastn</b></td><td>Run <code>bin/bdtools install vsnp_gui</code>, then the same command again.</td></tr>
-      <tr><td>The Inputs panel has only three tabs</td><td>The open project is not an FMDV project. The <b>Sequences</b> tab is only in FMDV projects. Open <b>FMDV_training_FMDV</b>.</td></tr>
+      <tr><td><code>setup-databases fmdv</code> says the environment lacks <b>blastn</b></td><td>Run <code>bin/bdtools install vsnp_gui</code>, then the same command again. On a shared install, ask the administrator: the <a href="fmdv_test_data.html" style="color:inherit">test data page</a> has the two commands.</td></tr>
+      <tr><td>The Sequences preview says <b>Nothing can be imported yet</b>, and the button says <b>Import 0 records</b></td><td>The same cause: BLAST+ is missing. Fix it as in the row above, then click <span class="ui">Preview</span> again.</td></tr>
+      <tr><td><b>Downloading…</b> for many minutes and nothing new under <b>Ready to run</b></td><td>vSNP3 is older than v0.4.156. Do A1, then paste the SRA numbers again and click <span class="ui">Download</span>. From v0.4.156 a stalled download carries on by itself, and <span class="ui">Stop</span> ends it.</td></tr>
+      <tr><td>The Sequences preview has no <b>Serotype</b> or <b>VP1</b> columns</td><td>The open project is not an FMDV project. Open <b>FMDV_training_FMDV</b>.</td></tr>
       <tr><td>The Sequences preview says <b>NCBI is unreachable</b></td><td>The computer is offline. Records already fetched once still work. Otherwise drop the FASTA or GenBank file.</td></tr>
       <tr><td>A record is refused as <b>too short</b> or <b>no VP1</b></td><td>It is a fragment. A sample needs a genome, or at least a whole VP1.</td></tr>
       <tr><td><span class="ui">Build VP1 tree</span> is pale</td><td>Another job is running, or no sample of that serotype has VP1. Wait, or check the VP1 typing table.</td></tr>

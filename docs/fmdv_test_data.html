@@ -374,8 +374,9 @@ laptop, where <code>raxmlHPC</code> is single-threaded:</p>
     <tr><td>C</td><td>6</td><td>197</td><td>148</td><td>154</td><td>6 min</td></tr>
     <tr><td>Asia1</td><td>10</td><td>678</td><td>171</td><td>181</td><td>8 min</td></tr>
     <tr><td>SAT2</td><td>9</td><td>557</td><td>199</td><td>208</td><td>10 min</td></tr>
+    <tr><td>SAT1</td><td>13 of 15</td><td>394</td><td>175</td><td>188</td><td><b>2 hours</b></td></tr>
     <tr><td>A</td><td>11 of 12</td><td>2,247</td><td>713</td><td>724</td><td><b>13 hours</b></td></tr>
-    <tr><td>SAT1, O</td><td>15, 18</td><td>394, the largest set</td><td colspan="3" class="muted">still building when this was written</td></tr>
+    <tr><td>O</td><td>18</td><td>the largest set</td><td colspan="3" class="muted">still building when this was written</td></tr>
   </tbody>
 </table></div>
 <p>Every typed sample of the serotype appears in its tree: the SAT3 tree carries all seven SAT3
@@ -384,22 +385,25 @@ the A tree holds 11 of the 12 samples called A, and the one missing is <span cla
 one of the three crosses above. That absence is the second way to notice them.</p>
 
 <div class="note warn">
-  <b class="lbl">Why the A tree here takes hours, and why yours probably will not</b>
-  A tree surrounds your samples with GenBank records from the same serotype, and it keeps the full
-  backbone for <b>the topotype groups your samples were typed to</b>. So the cost is set by how widely
-  your samples are spread, not by how many you have. Serotype A has only three groups &mdash; AFRICA,
-  ASIA and EURO-SA &mdash; covering about forty lineages, and this set deliberately puts samples in all
-  three. That opened <b>39 of the 40</b> lineage buckets, 536 backbone records, <b>724 leaves</b> and
-  <b>13 hours</b>, for eleven samples. SAT2's samples sat in three of about twenty buckets: 208 leaves,
-  ten minutes.<br>
-  <b>Your own samples will not look like this.</b> An outbreak sits in one lineage or two, the backbone
-  closes down with it, and the tree builds in minutes. This set is the worst case on purpose &mdash; it
-  was chosen to cover every corner of every serotype, which is what makes it a test set and not a
+  <b class="lbl">Tree time is not predictable from the size of the tree</b>
+  How big a tree gets is the part you influence. A tree surrounds your samples with GenBank records
+  from the same serotype and keeps the full backbone for <b>the topotype groups your samples were
+  typed to</b>, so a widely spread set costs more than a tight one. Serotype A has only three groups
+  &mdash; AFRICA, ASIA and EURO-SA &mdash; over about forty lineages, and this set deliberately puts
+  samples in all three: <b>39 of the 40</b> buckets opened, giving 724 leaves for eleven samples.<br>
+  <b>How long RAxML then takes does not follow from that.</b> SAT1 and SAT2 are almost the same size
+  &mdash; 188 and 208 leaves &mdash; and took <b>two hours</b> and <b>ten minutes</b>. The time went to
+  different places: SAT1 spent nearly all of its two hours on the 100 bootstrap replicates and five
+  minutes on the tree search, while A spent 26 minutes bootstrapping and <b>12.9 hours</b> searching.
+  A long run is not evidence that anything is wrong.<br>
+  <b>Your own samples will usually be quick.</b> An outbreak sits in one lineage or two, the backbone
+  closes down with it, and these trees build in minutes. This set is the worst case on purpose &mdash;
+  chosen to cover every corner of every serotype, which is what makes it a test set rather than a
   workload.<br>
-  If you do want the whole set: do the small serotypes first, and start A or O when you can leave them.
-  Nearly all the time is <code>raxmlHPC</code>, which has no multi-threaded build for Apple silicon and
-  uses one core however many you give it, so a threaded RAxML on a Linux server is much quicker. Only
-  one tree builds at a time; the rest of the app stays usable while it runs.
+  Practically: do the small serotypes first, and start A or O when you can leave them. Nearly all the
+  time is <code>raxmlHPC</code>, which has no multi-threaded build for Apple silicon and uses one core
+  however many you give it, so a threaded RAxML on a Linux server is much quicker. Only one tree builds
+  at a time; the rest of the app stays usable while it runs.
 </div>
 
 <h3>The genome SNP tables</h3>

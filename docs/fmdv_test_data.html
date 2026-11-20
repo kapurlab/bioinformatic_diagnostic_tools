@@ -114,7 +114,7 @@ tools folder:</p>
   <div class="cmd" style="margin:0 0 6px"><code>bin/bdtools update-packages vsnp_gui</code><button class="copy-cmd" type="button">Copy</button></div>
   It should list <code>blast none -&gt; 2.17.0</code>, <code>mafft none -&gt; 7.526</code> and
   <code>sra-tools none -&gt; 3.4.1</code>, then install them. Nothing needs restarting for the
-  <span class="ui">Sequences</span> tab: click <span class="ui">Preview</span> again.
+  <span class="ui">Sequences</span> tab: click <span class="ui">Import</span> again.
 </div>
 
 <div class="note">
@@ -161,20 +161,22 @@ Illumina reads, and two finished genomes from GenBank, so one run exercises ever
   </li>
 
   <li><b>The two genomes.</b> Click the <span class="ui">Sequences</span> tab. Paste the two GenBank
-  numbers and click <span class="ui">Preview</span>. Each row should say <b>genome</b> with its length,
-  and VP1 located inside it. Click <span class="ui">Import 2 records</span>.
+  numbers and click <span class="ui">Import</span>. In a few seconds it should say <b>Imported.</b>
+  and both genomes appear under <b>Ready to run</b>. (Before v0.4.159 this was two clicks:
+  <span class="ui">Preview</span>, then <span class="ui">Import 2 records</span>.)
   <div class="note" style="margin-top:8px">
     <b class="lbl">A genome becomes reads</b>
     vSNP3 writes perfect paired reads from the sequence so it can go through Step 1 like any sample.
     The depth is <b>100×</b> by default, and the <span class="ui">Read depth</span> box beside the
-    preview changes it. The sample is badged <b>Simulated</b> everywhere afterwards and its quality
+    button changes it. The sample is badged <b>Simulated</b> everywhere afterwards and its quality
     check reads <b>N/A</b>, because depth and coverage would only describe the simulation.
   </div>
   </li>
 
   <li><b>A file instead of an accession.</b> A FASTA or GenBank file from a colleague works the same
   way: drop it on the same tab, or use <span class="ui">Choose Files</span>, then
-  <span class="ui">Preview</span>. You can change the name before importing.
+  <span class="ui">Import</span>. To change the name before importing, click
+  <span class="ui">Review first</span> instead.
   <div class="note see" style="margin-top:8px">
     <b class="lbl">Not only FMDV</b>
     Since v0.4.155 the <span class="ui">Sequences</span> tab is in every project. A published genome
@@ -309,8 +311,8 @@ verified against GenBank or the SRA without running anything.</p>
 </div>
 
 <h3>32 genomes &mdash; the Sequences tab</h3>
-<p>Between two and seven per serotype. Paste the numbers, click <span class="ui">Preview</span>, check that
-every row says <b>genome</b> with VP1 located, then <span class="ui">Import 32 records</span>. Every one is
+<p>Between two and seven per serotype. Paste the numbers and click <span class="ui">Import</span>; anything
+that could not be imported is listed under the button with its reason. Every one is
 badged <b>Simulated</b> afterwards and its quality check reads <b>N/A</b>. <b>Expected</b> is the serotype
 GenBank gives the record.</p>
 <div class="scroll"><table class="wide">
@@ -529,8 +531,8 @@ reference chooser on three of the same biological samples.</p>
     <tr><td>The reference list has no <b>FMDV mode</b> choice</td><td>vSNP3 is older than v0.4.154. Run <code>bin/bdtools update vsnp_gui</code>, then ↻ Restart.</td></tr>
     <tr><td>Step 1 says <b>FMDV reference library not found</b></td><td>Run <code>bin/bdtools setup-databases fmdv</code>, then ↻ Restart and reload the page.</td></tr>
     <tr><td>The Inputs panel has no <b>Sequences</b> tab</td><td>vSNP3 predates v0.4.155, where that tab was FMDV-only. Run <code>bin/bdtools update vsnp_gui</code>, then ↻ Restart.</td></tr>
-    <tr><td>The preview says <b>NCBI is unreachable</b></td><td>The machine is offline. Download the record elsewhere (Send to → File → GenBank full) and drop that file on the same tab.</td></tr>
-    <tr><td>The preview lists the records but the boxes cannot be ticked and the button says <b>Import 0 records</b></td><td>The reason is in red under each name. If it names <code>blastn</code>, BLAST+ is missing from vSNP3's environment: see <b>If BLAST+ is missing</b> at the top of this page, then click <span class="ui">Preview</span> again. No restart is needed.</td></tr>
+    <tr><td>The Sequences tab says <b>NCBI is unreachable</b></td><td>The machine is offline. Download the record elsewhere (Send to → File → GenBank full) and drop that file on the same tab.</td></tr>
+    <tr><td>Import says <b>Nothing was imported</b></td><td>The reason is beside each name. If the notice names <code>blastn</code>, BLAST+ is missing from vSNP3's environment: see <b>If BLAST+ is missing</b> at the top of this page, then click <span class="ui">Import</span> again. No restart is needed. (Before v0.4.159 the same state showed as a preview whose boxes could not be ticked and a button reading <b>Import 0 records</b>.)</td></tr>
     <tr><td>A download says <b>Failed</b> for some accessions</td><td>Paste the whole list again and click Download. Only the missing ones are fetched.</td></tr>
     <tr><td>Downloads crawl, and the log's first lines say <b>[MISSING] fasterq-dump</b></td><td><code>sra-tools</code> is not in the environment, so the reads are coming from the European archive rather than NCBI's S3 copy. In the tools folder: <code>bin/bdtools pull &amp;&amp; bin/bdtools update-packages vsnp_gui</code>, then Download again. What is already downloaded is kept.</td></tr>
     <tr><td>The log says a file got <b>no data for 60s &mdash; resuming</b></td><td>Normal on a slow link, and not a failure: the transfer is picked up from the byte it stopped on. It only gives up after three tries that add nothing, and then says so.</td></tr>

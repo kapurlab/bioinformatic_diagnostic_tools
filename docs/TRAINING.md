@@ -1107,9 +1107,10 @@ HM625673	GenBank genome, serotype O (O/K/48/2005, Kenya)	Sequences tab
    click **Download**. Wait for **2 downloaded** (under a minute on a good
    connection).
 4. Click the **Sequences** tab. Type the two GenBank accessions, one per line,
-   and click **Preview**. The preview shows what was found: each record is a
-   genome, VP1 has been located in it, and a note says the library already holds
-   it. Click **Import 2 records**.
+   and click **Import**. In a few seconds it says **Imported.** and both
+   genomes are under **Ready to run**. (**Review first** shows what was found
+   before anything is written: each record is a genome, VP1 has been located in
+   it, and a note says the library already holds it.)
    - A genome is turned into **simulated reads** so that it can go through
      Step 1 like any sample. It is badged **Simulated** from here on, so nobody
      mistakes its numbers for a sequenced sample's.

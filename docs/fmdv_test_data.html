@@ -89,7 +89,7 @@
   tell whether your install is working.</p>
   <div class="facts">
     <div class="fact"><b>Starter set</b><span>4 samples · 80 MB · about 25 minutes, most of it a tree building</span></div>
-    <div class="fact"><b>Full set</b><span>77 samples · 939 MB · all seven serotypes · about 20 minutes to Step 1 results</span></div>
+    <div class="fact"><b>Full set</b><span>77 samples · 939 MB · all seven serotypes · about 20 minutes to Step 1 results; the A and O trees take hours</span></div>
     <div class="fact"><b>Pirbright set</b><span>12 runs · 6.8 GB · a few hours</span></div>
     <div class="fact"><b>Checked</b><span>19 November 2026 · vSNP GUI v0.4.156 · vsnp3 3.37</span></div>
   </div>
@@ -368,27 +368,33 @@ that serotype's GenBank VP1 set &mdash; the backbone lineages plus the nearest n
 themselves. Build them one at a time; the panel is pale while another job runs. Measured here on a
 laptop, where <code>raxmlHPC</code> is single-threaded:</p>
 <div class="scroll"><table>
-  <thead><tr><th>Serotype</th><th>Samples</th><th>Context from GenBank</th><th>Leaves in the tree</th><th>Time</th></tr></thead>
+  <thead><tr><th>Serotype</th><th>Samples in the tree</th><th>VP1 records that serotype has in GenBank</th><th>Context used</th><th>Leaves</th><th>Time</th></tr></thead>
   <tbody>
-    <tr><td>SAT3</td><td>7</td><td>89</td><td>96</td><td>4 min</td></tr>
-    <tr><td>C</td><td>6</td><td>148</td><td>154</td><td>6 min</td></tr>
-    <tr><td>Asia1</td><td>10</td><td>171</td><td>181</td><td>8 min</td></tr>
-    <tr><td>SAT2</td><td>9</td><td>199</td><td>208</td><td>10 min</td></tr>
-    <tr><td>A, SAT1, O</td><td>12, 15, 18</td><td colspan="3" class="muted">over an hour each on this laptop &mdash; see the note below</td></tr>
+    <tr><td>SAT3</td><td>7</td><td>95</td><td>89</td><td>96</td><td>4 min</td></tr>
+    <tr><td>C</td><td>6</td><td>197</td><td>148</td><td>154</td><td>6 min</td></tr>
+    <tr><td>Asia1</td><td>10</td><td>678</td><td>171</td><td>181</td><td>8 min</td></tr>
+    <tr><td>SAT2</td><td>9</td><td>557</td><td>199</td><td>208</td><td>10 min</td></tr>
+    <tr><td>A</td><td>11 of 12</td><td>2,247</td><td>713</td><td>724</td><td><b>13 hours</b></td></tr>
+    <tr><td>SAT1, O</td><td>15, 18</td><td>394, the largest set</td><td colspan="3" class="muted">still building when this was written</td></tr>
   </tbody>
 </table></div>
-<p>Every sample of the serotype appears in its tree: the SAT3 tree, for instance, carries all seven
-SAT3 samples among its 96 leaves. A sample reported <b>untyped</b> has no VP1 to place and is left out,
-which is the other way to notice the three crosses above.</p>
+<p>Every typed sample of the serotype appears in its tree: the SAT3 tree carries all seven SAT3
+samples among its 96 leaves. A sample reported <b>untyped</b> has no VP1 to place and is left out &mdash;
+the A tree holds 11 of the 12 samples called A, and the one missing is <span class="acc">PX864600</span>,
+one of the three crosses above. That absence is the second way to notice them.</p>
 
 <div class="note warn">
-  <b class="lbl">The big trees are slow on a Mac</b>
-  A tree grows with the samples it holds and with how many records that serotype has in GenBank, and
-  O and A are the largest sets in the library by far. The three biggest trees here each ran over an
-  hour, almost all of it in <code>raxmlHPC</code>, which has no multi-threaded build for Apple silicon
-  and so uses one core however many you give it. On a Linux server with a threaded RAxML the same
-  trees are much quicker. Start a big tree when you can leave it; the rest of the app stays usable, but
-  only one tree builds at a time.
+  <b class="lbl">Plan for the A and O trees &mdash; they take hours, not minutes</b>
+  What makes a tree slow is not how many samples you put in it but how much of that serotype GenBank
+  holds. A has <b>2,247</b> VP1 records against SAT3's 95, so its backbone alone is 536 lineage
+  representatives and the tree came to <b>724 leaves</b> &mdash; roughly four times SAT2's and, because
+  the work grows faster than the leaf count, <b>13 hours</b> against SAT2's ten minutes. Eleven samples
+  did that; the sample count is almost beside the point. O has the largest set of all, so budget at
+  least as much for it.<br>
+  Nearly all of that time is <code>raxmlHPC</code>, which has no multi-threaded build for Apple
+  silicon and uses one core however many you give it; a threaded RAxML on a Linux server is much
+  quicker. Only one tree builds at a time, and the rest of the app stays usable while it runs &mdash; so
+  start a big one when you can leave it, and do the small serotypes first if you want a result today.
 </div>
 
 <h3>The genome SNP tables</h3>

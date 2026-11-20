@@ -1198,6 +1198,18 @@ under **Reference databases**. With the SAT1 databases ticked, this run places
 SRR34371563 **0 SNPs** from MT602086.1 and 6 from the reference, with the next
 genome more than 380 SNPs away: the same virus, to within sequencing error.
 
+**Defining SNPs, filter positions and the remove list work as in any vSNP3
+project.** Each lineage is an ordinary vSNP3 reference with its own
+`_define_filter.xlsx` and `_remove_from_analysis.xlsx`. Once a lineage is
+chosen in **Compare on reference**, the panel lists what vSNP3 will read for
+it (the defining-SNP groups, the filtered positions, the samples on the remove
+list) with a button, **Edit these in the Reference Editor**. The Reference
+Editor opens on that lineage, names every lineage this project's samples are
+on, and **Add group**, **Filter positions** and **Remove from analysis** work
+exactly as they do for a TB or *Brucella* reference. There is nothing to set
+up: the FMDV library's lineage references are always available (vsnp_gui
+v0.4.167 or later).
+
 ### The run report
 
 At the top of **Step 1 Results** and of the VP1 view, **FMDV run report**

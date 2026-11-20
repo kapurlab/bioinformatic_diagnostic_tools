@@ -82,6 +82,26 @@ if [[ -n "${unmerged}" ]] || [[ -f "$(git rev-parse --git-path MERGE_HEAD 2>/dev
   die "${msg%$'\n'}"
 fi
 
+# A pull that was cut off half way is finished, not refused. A fast-forward
+# writes the new files first and moves the branch last; stopped in between, the
+# checkout holds the new release's files, staged, under the old commit, and
+# every one of them then looked like a local edit to the check below. Ames HPC,
+# 2026-11-20: the three files of one commit, and neither this command nor the
+# dashboard would pull again. suite_common.interrupted_pull_target says what
+# makes that state certain; the same function serves the dashboard.
+finished_pull=0
+if ! git diff --cached --quiet HEAD 2>/dev/null; then
+  _need_python
+  if "${PYBIN}" - "${KT_BIN_DIR}/lib" "${DRY_RUN:-0}" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+import suite_common
+done = suite_common.finish_interrupted_pull(lambda line: print("    " + line), dry_run=sys.argv[2] == "1")
+sys.exit(0 if done else 3)
+PY
+  then finished_pull=1; fi
+fi
+
 # Refuse on anything that is NOT site-localized card config, before touching
 # the tree. Named individually: "you have local changes" is not actionable.
 blocking=""; blocking_paths=()
@@ -90,6 +110,9 @@ while IFS= read -r p; do
   blocking+="       ${p}"$'\n'
   blocking_paths+=("${p}")
 done < <(tool_blocking_edits "${REPO_DIR}")
+# A dry run did not move the branch, so the files it would have accounted for
+# are still listed; they are the unfinished pull, already explained above.
+if [[ ${finished_pull} -eq 1 && ${DRY_RUN:-0} -eq 1 ]]; then blocking=""; blocking_paths=(); fi
 
 # ...except tools.yml changed only in version pins. `bdtools update` and
 # `update-packages` write those lines themselves, the dashboard's own bdtools

@@ -238,6 +238,118 @@ class UmbrellaPull(unittest.TestCase):
         self.assertIn("1 commit(s)", r.stderr)
         self.assertIn("not a", r.stderr)
 
+    # ---- a pull that was cut off half way (Ames HPC, 2026-11-20) -------------
+    def release_suite_code(self, note):
+        """A release that touches what a site never edits: code and the manifest."""
+        (self.seed / "bin/doctor.sh").write_text(f"# suite code, {note}\n", encoding="utf-8")
+        (self.seed / "tools.yml").write_text(MANIFEST.replace("v0.4.130", note), encoding="utf-8")
+        git(self.seed, "commit", "-qam", f"release {note}")
+        git(self.seed, "push", "-q", "origin", "main")
+
+    def cut_off_a_pull(self):
+        """What a fast-forward leaves when it stops between writing the files and
+        moving the branch: the new commit's files, staged, under the old commit."""
+        git(self.site, "fetch", "-q", "origin")
+        git(self.site, "read-tree", "-u", "-m", "HEAD", "origin/main")
+        status = git(self.site, "status", "--porcelain", "--untracked-files=no").stdout
+        self.assertEqual(status, "M  bin/doctor.sh\nM  tools.yml\n")
+        self.assertEqual(git(self.site, "diff", "--stat").stdout, "")
+
+    def assert_level_and_clean(self):
+        self.assertEqual(git(self.site, "rev-parse", "HEAD").stdout,
+                         git(self.site, "rev-parse", "origin/main").stdout)
+        self.assertEqual(git(self.site, "status", "--porcelain", "--untracked-files=no").stdout, "")
+
+    def test_a_pull_cut_off_half_way_is_finished_not_refused(self):
+        self.release_suite_code("v0.4.160")
+        self.cut_off_a_pull()
+        r = self.run_pull()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("a pull that never finished", r.stdout)
+        self.assertIn("bin/doctor.sh", r.stdout)
+        self.assertNotIn("local changes", r.stderr)
+        self.assert_level_and_clean()
+        self.assertIn("v0.4.160", (self.site / "tools.yml").read_text(encoding="utf-8"))
+
+    def test_a_cut_off_pull_is_finished_and_the_newer_release_then_arrives(self):
+        self.release_suite_code("v0.4.160")
+        self.cut_off_a_pull()
+        self.release_suite_code("v0.4.161")      # published after the interruption
+        r = self.run_pull()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assert_level_and_clean()
+        self.assertIn("v0.4.161", (self.site / "tools.yml").read_text(encoding="utf-8"))
+
+    def test_a_cut_off_pull_keeps_the_sites_card_edit(self):
+        (self.site / CARD).write_text(CARD_V1_SITE, encoding="utf-8")
+        self.release_suite_code("v0.4.160")
+        self.cut_off_a_pull_beside_a_card_edit()
+        r = self.run_pull()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(git(self.site, "rev-parse", "HEAD").stdout,
+                         git(self.site, "rev-parse", "origin/main").stdout)
+        self.assertIn("min: 16", (self.site / CARD).read_text(encoding="utf-8"))
+
+    def cut_off_a_pull_beside_a_card_edit(self):
+        git(self.site, "fetch", "-q", "origin")
+        git(self.site, "read-tree", "-u", "-m", "HEAD", "origin/main")
+        status = git(self.site, "status", "--porcelain", "--untracked-files=no").stdout
+        self.assertIn("M  tools.yml\n", status)
+        self.assertIn(f" M {CARD}\n", status)
+
+    def test_a_dry_run_says_it_would_finish_a_cut_off_pull_and_moves_nothing(self):
+        self.release_suite_code("v0.4.160")
+        before = git(self.site, "rev-parse", "HEAD").stdout
+        self.cut_off_a_pull()
+        r = self.run_pull("--dry-run")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("[dry-run] git merge --ff-only", r.stdout)
+        self.assertEqual(git(self.site, "rev-parse", "HEAD").stdout, before)
+
+    def test_a_staged_local_edit_is_still_refused(self):
+        # Staged, but not any commit origin has: somebody's work, and it stays.
+        (self.site / "bin/doctor.sh").write_text("# my experiment\n", encoding="utf-8")
+        git(self.site, "add", "bin/doctor.sh")
+        self.release_suite_code("v0.4.160")
+        git(self.site, "fetch", "-q", "origin")
+        before = git(self.site, "rev-parse", "HEAD").stdout
+        r = self.run_pull()
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("bin/doctor.sh", r.stderr)
+        self.assertNotIn("never finished", r.stdout)
+        self.assertEqual(git(self.site, "rev-parse", "HEAD").stdout, before)
+        self.assertEqual((self.site / "bin/doctor.sh").read_text(encoding="utf-8"), "# my experiment\n")
+
+    def test_a_cut_off_pull_with_a_local_edit_on_top_is_not_mistaken(self):
+        # The release's files are staged AND one of them was then edited and
+        # staged again: the index is no longer that commit, so nothing is assumed.
+        self.release_suite_code("v0.4.160")
+        self.cut_off_a_pull()
+        (self.site / "bin/doctor.sh").write_text("# edited after the interruption\n", encoding="utf-8")
+        git(self.site, "add", "bin/doctor.sh")
+        before = git(self.site, "rev-parse", "HEAD").stdout
+        r = self.run_pull()
+        self.assertNotEqual(r.returncode, 0)
+        self.assertNotIn("never finished", r.stdout)
+        self.assertEqual(git(self.site, "rev-parse", "HEAD").stdout, before)
+
+    def test_the_dashboard_update_finishes_a_cut_off_pull_too(self):
+        # Both update paths share the rule (suite_common.suite_update_command).
+        import importlib.util
+        from unittest import mock
+        spec = importlib.util.spec_from_file_location("bdtools_suite_common_pull", ROOT / "bin/lib/suite_common.py")
+        sc = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sc)
+        self.release_suite_code("v0.4.160")
+        self.cut_off_a_pull()
+        lines = []
+        with mock.patch.object(sc, "REPO_DIR", str(self.site)):
+            cmd = sc.suite_update_command(lines.append)
+        self.assertEqual(cmd, ["git", "-C", str(self.site), "pull", "--ff-only"], "\n".join(lines))
+        self.assertTrue(any("a pull that never finished" in ln for ln in lines), lines)
+        self.assertFalse(any("refusing to pull" in ln for ln in lines), lines)
+        self.assert_level_and_clean()
+
 
 if __name__ == "__main__":
     unittest.main()

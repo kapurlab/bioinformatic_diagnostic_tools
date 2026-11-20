@@ -808,6 +808,93 @@ def clean_log_line(line):
     return line
 
 
+def _repo_git(*args, timeout=60):
+    return subprocess.run(["git", "-C", REPO_DIR, *args],
+                          capture_output=True, text=True, timeout=timeout)
+
+
+def interrupted_pull_target():
+    """The commit a cut-off fast-forward was moving this checkout to, or None.
+
+    A fast-forward writes the new files and the index first and moves the
+    branch last. Stopped in between (a killed job, a ref that could not be
+    locked or written on a shared tree), the checkout is left holding the new
+    release's files, STAGED, under a branch that still names the old commit.
+    `git status` then lists every file of that release as modified, and both
+    update paths read that as somebody's local edits and refused to pull --
+    for good, since nothing a user is offered clears it (Ames HPC, 2026-11-20:
+    'M  docs/fmdv_test_data.html / M  docs/vsnp3_gui_fmdv_training.html /
+    M  tools.yml', exactly the three files of the commit it was moving to).
+
+    That state is recognised by what it is, not by which files: the index is
+    byte for byte the tree of a commit this checkout already fetched (its
+    upstream branch, or FETCH_HEAD) that the current commit is an ancestor of.
+    Nothing staged can then be a local edit, because all of it is that commit.
+    """
+    try:
+        if _repo_git("diff", "--cached", "--quiet", "HEAD").returncode != 1:
+            return None                      # nothing staged (or no HEAD to compare)
+        if _repo_git("rev-parse", "-q", "--verify", "MERGE_HEAD").returncode == 0:
+            return None                      # a real merge in progress is not this
+        head = _repo_git("rev-parse", "-q", "--verify", "HEAD^{commit}").stdout.strip()
+        if not head:
+            return None
+        for cand in ("@{upstream}", "FETCH_HEAD"):
+            target = _repo_git("rev-parse", "-q", "--verify", cand + "^{commit}").stdout.strip()
+            if not target or target == head:
+                continue
+            if _repo_git("merge-base", "--is-ancestor", head, target).returncode != 0:
+                continue
+            if _repo_git("diff", "--cached", "--quiet", target).returncode == 0:
+                return target
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return None
+
+
+def finish_interrupted_pull(log, dry_run=False):
+    """Complete a fast-forward that was cut off (interrupted_pull_target).
+
+    True when the checkout was in that state and the branch now names the
+    commit its files already are (or, in a dry run, would). The move is
+    `git merge --ff-only`, which changes no file here and refuses by itself
+    if anything is not as expected. False, with nothing changed, otherwise.
+    """
+    target = interrupted_pull_target()
+    if not target:
+        return False
+    try:
+        short = _repo_git("log", "-1", "--format=%h %s", target).stdout.strip() or target[:9]
+        was = _repo_git("rev-parse", "--short", "HEAD").stdout.strip()
+        files = [f for f in _repo_git("diff", "--cached", "--name-only", "HEAD").stdout.splitlines() if f]
+    except (OSError, subprocess.SubprocessError):
+        return False
+    log("This checkout holds a pull that never finished: the files below are already")
+    log(f"those of {short}")
+    log(f"but the branch still points at {was}. They are not local edits; what is")
+    log("staged is exactly that commit.")
+    for f in files[:20]:
+        log(f"  {f}")
+    if len(files) > 20:
+        log(f"  ... and {len(files) - 20} more")
+    if dry_run:
+        log(f"[dry-run] git merge --ff-only {target[:9]}   (moves the branch; changes no file)")
+        return True
+    try:
+        done = _repo_git("merge", "--ff-only", target)
+    except (OSError, subprocess.SubprocessError) as exc:
+        log(f"ERROR: could not finish it: {exc}")
+        return False
+    if done.returncode != 0:
+        why = (done.stderr or done.stdout or "").strip().splitlines()
+        log("ERROR: could not finish it: " + (why[-1] if why else f"git merge exited {done.returncode}"))
+        log("  If the branch cannot be written here, the account that owns this checkout can run:")
+        log(f"      git -C {REPO_DIR} merge --ff-only {target[:9]}")
+        return False
+    log(f"Finished it: the branch is now at {target[:9]}. No file was changed.")
+    return True
+
+
 def suite_update_command(log):
     """The `bdtools` self-update command, or None when it must be refused.
 
@@ -824,11 +911,21 @@ def suite_update_command(log):
     the two update paths must not disagree about a safety rule. `log` is the
     caller's line-logger.
     """
-    try:
-        dirty = subprocess.run(
+    def _porcelain():
+        return subprocess.run(
             ["git", "-C", REPO_DIR, "status", "--porcelain"],
             capture_output=True, text=True, check=True, timeout=30,
-        ).stdout.strip()
+        ).stdout
+
+    try:
+        raw = _porcelain()
+        # Staged changes that are a pull cut off half way (interrupted_pull_target)
+        # are finished, not refused. Asked only when something IS staged: the
+        # first column of a porcelain line is the index.
+        if any(ln[:1] not in (" ", "?") for ln in raw.splitlines() if ln.strip()) \
+                and finish_interrupted_pull(log):
+            raw = _porcelain()
+        dirty = raw.strip()
     except (OSError, subprocess.SubprocessError) as exc:
         dirty = f"(could not inspect checkout: {exc})"
         log("ERROR: bdtools checkout has local changes; refusing to pull.")

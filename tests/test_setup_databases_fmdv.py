@@ -19,6 +19,7 @@ The builder, the env and its tools are stand-ins: no network, no conda.
 import os
 import stat
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -146,6 +147,129 @@ class SetupDatabasesFmdv(unittest.TestCase):
         self.assertIn("ln -sfn " + str(self.lib), out)
         self.assertFalse(self.lib.exists())
         self.assertFalse(self.link.exists())
+
+
+class SetupDatabasesFmdvOnASharedSite(unittest.TestCase):
+    """The same command on a shared site, run by someone whose home still holds
+    a personal vsnp site from an older install.
+
+    Ames HPC, 2026-11-20. `setup-databases fmdv --shared` built the library
+    under the site's database root and then linked it into the running user's
+    own ~/.local/share/bdtools/vsnp3-site/refs, because "a personal site folder
+    exists" was taken to mean "this is a personal install". It ended "ok". The
+    GUI, deployed in the site and reading <site>/refs, went on reporting that
+    no library had been built.
+
+    A site is recognised the way the launcher recognises one (the tool is a
+    sibling of the umbrella under the site's tools folder), so the umbrella's
+    bin/ is copied into a site layout here rather than run from the repo.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        t = Path(self.tmp.name).resolve()
+        self.site = t / "site"
+        self.umbrella = self.site / "tools" / "bioinformatic_diagnostic_tools"
+        self.umbrella.mkdir(parents=True)
+        subprocess.run(["cp", "-R", str(ROOT / "bin"), str(self.umbrella / "bin")], check=True)
+        subprocess.run(["cp", str(ROOT / "tools.yml"), str(self.umbrella / "tools.yml")], check=True)
+        (self.umbrella / "sites").mkdir()
+        (self.umbrella / "sites" / "site.conf").write_text(f"SITE_ROOT={self.site}\n")
+        self.gui = self.site / "tools" / "vsnp_gui"
+        (self.gui / ".git").mkdir(parents=True)
+        _exe(self.gui / "bin" / "fmdv_library_build.sh", BUILDER_OK)
+        _exe(self.gui / "env" / "bin" / "python")
+        for name in ("blastn", "makeblastdb", "sourmash"):
+            _exe(self.gui / "env" / "bin" / name)
+        self.root = self.site / "databases"
+        self.lib = self.root / "fmdv" / "fmdv_refs"
+        self.site_link = self.site / "refs" / "fmdv"
+        # The leftover: this user's own site tree, from a personal install.
+        self.home = t / "home" / ".local" / "share" / "bdtools"
+        (self.home / "vsnp3-site" / "refs").mkdir(parents=True)
+        self.personal_link = self.home / "vsnp3-site" / "refs" / "fmdv"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def run_setup(self, *args):
+        env = dict(os.environ, BDTOOLS_HOME=str(self.home), HOME=str(Path(self.tmp.name) / "home"))
+        for k in ("DRY_RUN", "BDTOOLS_TOOLSDIR", "VSNP_GUI_SITE_ROOT", "BDTOOLS_SITE_ROOT", "BDTOOLS_DB_ROOT"):
+            env.pop(k, None)
+        return subprocess.run(["bash", str(self.umbrella / "bin" / "setup-databases.sh"),
+                               "--root", str(self.root), *args],
+                              capture_output=True, text=True, env=env, timeout=180)
+
+    def test_the_library_is_linked_into_the_site_not_the_runners_home(self):
+        r = self.run_setup("fmdv")
+        out = r.stdout + r.stderr
+        self.assertEqual(r.returncode, 0, out)
+        self.assertTrue(self.site_link.is_symlink(), out)
+        self.assertEqual(self.site_link.resolve(), self.lib.resolve())
+        self.assertFalse(self.personal_link.exists(), out)
+        self.assertIn("the vSNP GUI finds the library", out)
+        self.assertIn("Database setup complete", out)
+
+    def test_a_second_run_says_the_same_and_changes_nothing(self):
+        self.assertEqual(self.run_setup("fmdv").returncode, 0)
+        r = self.run_setup("fmdv")
+        out = r.stdout + r.stderr
+        self.assertEqual(r.returncode, 0, out)
+        self.assertEqual(self.site_link.resolve(), self.lib.resolve())
+        self.assertIn("the vSNP GUI finds the library", out)
+
+    @unittest.skipIf(hasattr(os, "geteuid") and os.geteuid() == 0, "root writes anywhere")
+    def test_a_site_the_runner_cannot_write_ends_on_the_problem_not_on_ok(self):
+        # Built, but not where the GUI can see it, and this account cannot put
+        # it there: the run must not end "Database setup complete".
+        refs = self.site / "refs"
+        refs.mkdir()
+        refs.chmod(0o555)
+        try:
+            r = self.run_setup("fmdv")
+        finally:
+            refs.chmod(0o755)
+        out = r.stdout + r.stderr
+        self.assertNotEqual(r.returncode, 0, out)
+        self.assertTrue((self.lib / "lineages.json").is_file(), out)
+        self.assertIn("CANNOT SEE IT", out)
+        self.assertIn(f"ln -sfn {self.lib} {self.site_link}", out)
+        self.assertIn("finished with problems", out)
+        self.assertNotIn("Database setup complete", out)
+        self.assertFalse(self.personal_link.exists(), out)
+
+    def findings(self):
+        """What `doctor` (and so the dashboard card) reports about FMDV mode."""
+        env = dict(os.environ, BDTOOLS_HOME=str(self.home), HOME=str(Path(self.tmp.name) / "home"))
+        for k in ("BDTOOLS_TOOLSDIR", "VSNP_GUI_SITE_ROOT", "BDTOOLS_SITE_ROOT", "BDTOOLS_DB_ROOT"):
+            env.pop(k, None)
+        code = ("import sys; sys.path.insert(0, sys.argv[1]); import tool_launch\n"
+                "for label, fix in tool_launch.vsnp_gui_fmdv_findings(): print(label + ' ## ' + fix)\n")
+        r = subprocess.run([sys.executable, "-c", code, str(self.umbrella / "bin" / "lib")],
+                           capture_output=True, text=True, env=env, timeout=120)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return r.stdout
+
+    def test_doctor_is_silent_until_a_library_is_built_then_grades_it(self):
+        # Opt-in: with nothing built there is nothing to report.
+        self.assertEqual(self.findings(), "")
+        self.assertEqual(self.run_setup("fmdv").returncode, 0)
+        self.assertEqual(self.findings(), "")            # built and visible
+        # Built, and then not where the GUI looks: the Ames state, reported
+        # before anyone presses Import, with the command that repairs it.
+        self.site_link.unlink()
+        out = self.findings()
+        self.assertIn("cannot see it", out)
+        self.assertIn(str(self.site_link), out)
+        self.assertIn(f"setup-databases fmdv --root {self.root}", out)
+
+    def test_dry_run_names_the_site_link(self):
+        r = self.run_setup("fmdv", "--dry-run")
+        out = r.stdout + r.stderr
+        self.assertEqual(r.returncode, 0, out)
+        self.assertIn(f"ln -sfn {self.lib} {self.site_link}", out)
+        self.assertFalse(self.site_link.exists())
+        self.assertFalse(self.lib.exists())
 
 
 if __name__ == "__main__":

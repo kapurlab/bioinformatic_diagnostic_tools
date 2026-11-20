@@ -27,6 +27,7 @@ import json
 import os
 import platform
 import shlex
+import subprocess
 import sys
 import time
 try:
@@ -830,6 +831,120 @@ def resolve(tool, port, host="127.0.0.1"):
         "warnings": warnings,
         "notices": notices,
     }
+
+
+def vsnp_gui_site_root():
+    """The site root the vSNP GUI on THIS machine reads <root>/refs from, or "".
+
+    One answer, the launcher's, for everything that puts a file where the GUI
+    will look for it. `setup-databases` used to decide for itself, by "does
+    <BDTOOLS_HOME>/vsnp3-site exist" -- the rule resolve() dropped for launches
+    because an old personal install leaves that folder behind on a machine
+    whose GUI now runs from a shared site. Ames HPC, 2026-11-20:
+    `setup-databases fmdv --shared` built the FMDV library under the site's
+    database root, linked it into the RUNNING USER'S OWN
+    ~/.local/share/bdtools/vsnp3-site/refs, and ended "ok". The GUI, a site
+    tool reading /project/shared/bdtools/refs, went on saying there was no
+    library.
+
+    The plan a launch would get decides (resolve), so a card's or a wrapper's
+    own export counts too. When no launch can be planned yet (no env built),
+    the same rule is applied to the checkout. With VSNP_GUI_SITE_ROOT left
+    unset the backend falls back on its own position (config.py
+    _resolve_site_root), which is repeated here. "" only when vsnp_gui is not
+    on this machine at all.
+    """
+    root = ""
+    try:
+        plan = resolve("vsnp_gui", 0)
+        d = plan["dir"]
+        root = (plan["env"].get("VSNP_GUI_SITE_ROOT") or "").strip()
+    except (RuntimeError, OSError):
+        d = tool_dir("vsnp_gui")
+        if not os.path.isdir(d):
+            return ""
+        root = os.environ.get("VSNP_GUI_SITE_ROOT", "").strip()
+        if not root:
+            personal = os.path.join(_bdtools_home(), "vsnp3-site")
+            managed = os.path.join(_bdtools_home(), "checkouts", "vsnp_gui")
+            declared = site_paths.site_root(_REPO_DIR)
+            if (not _site_tools_root("vsnp_gui", d) and os.path.isdir(personal)
+                    and (os.path.realpath(d) == os.path.realpath(managed) or not declared)):
+                root = personal
+            elif declared:
+                root = str(declared)
+    if root:
+        return root
+    real = os.path.realpath(d)
+    if os.path.basename(os.path.dirname(real)) == "tools":
+        return os.path.dirname(os.path.dirname(real))
+    return os.path.join(os.path.expanduser("~"), ".local", "share", "vsnp_gui", "site")
+
+
+def vsnp_gui_fmdv_library():
+    """(path, ready, how) -- the FMDV library the vSNP GUI here will read.
+
+    Asked of the GUI's own code, in the env and with the environment a launch
+    would give it, so this cannot drift from what the tool does: `how` is
+    "gui". When the tool cannot be asked (no env yet, an older vsnp_gui), the
+    lookup it is known to do is repeated and `how` is "rule". ready is whether
+    the library is really there (its lineages.json).
+    """
+    code = ("import sys\n"
+            "from app import config\n"
+            "lib = config.fmdv_reflib_default()\n"
+            "sys.stdout.write(str(lib) + chr(10) + str((lib / 'lineages.json').is_file()))\n")
+    try:
+        plan = resolve("vsnp_gui", 0)
+        r = subprocess.run([plan["python"], "-c", code], cwd=plan["cwd"], env=plan["env"],
+                           capture_output=True, text=True, timeout=120)
+        lines = r.stdout.strip().splitlines()
+        if r.returncode == 0 and len(lines) == 2:
+            return lines[0], lines[1] == "True", "gui"
+    except (RuntimeError, OSError, subprocess.SubprocessError):
+        pass
+    site = vsnp_gui_site_root()
+    candidates = [os.path.join(site, "refs", "fmdv")] if site else []
+    candidates.append(os.path.join(os.path.expanduser("~"), "fmdv_refs"))
+    for c in candidates:
+        if os.path.isfile(os.path.join(c, "lineages.json")):
+            return c, True, "rule"
+    return candidates[-1], False, "rule"
+
+
+def vsnp_gui_fmdv_findings():
+    """[(what is wrong, the bdtools arguments that fix it)] for FMDV mode here.
+
+    FMDV mode is opt-in, so nothing is graded until a library has been built
+    under this machine's database root. Once one has, two things decide
+    whether the mode works, and neither showed anywhere until a user pressed
+    Import and was refused (Ames HPC, 2026-11-19 and -20, one at a time):
+    the GUI has to be able to SEE the library, and the env it runs in has to
+    hold BLAST+ and mafft. `doctor` reports both, so the dashboard card does.
+    """
+    db_root = str(site_paths.db_root(_REPO_DIR))
+    built = os.path.join(db_root, "fmdv", "fmdv_refs")
+    if not os.path.isfile(os.path.join(built, "lineages.json")):
+        return []
+    out = []
+    _path, ready, _how = vsnp_gui_fmdv_library()
+    if not ready:
+        looks = os.path.join(vsnp_gui_site_root() or "<site>", "refs", "fmdv")
+        out.append(("FMDV mode: the reference library is built (%s) but the vSNP GUI here "
+                    "cannot see it; it looks at %s" % (built, looks),
+                    "setup-databases fmdv --root %s" % shlex.quote(db_root)))
+    try:
+        env_dir = resolve("vsnp_gui", 0).get("env_dir") or ""
+    except (RuntimeError, OSError):
+        env_dir = ""
+    if env_dir and env_dir != "(base)":
+        missing = [t for t in ("blastn", "makeblastdb", "mafft")
+                   if not os.path.exists(os.path.join(env_dir, "bin", t))]
+        if missing:
+            out.append(("FMDV mode: the environment vSNP runs in (%s) lacks %s"
+                        % (env_dir, ", ".join(missing)),
+                        "update-packages vsnp_gui"))
+    return out
 
 
 # How many open files a tool gets. Every analysis subprocess inherits this

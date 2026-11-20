@@ -55,6 +55,22 @@ cd "${REPO_DIR}"
        This command updates the umbrella repository. A tarball/copy install has
        nothing to pull — re-download it, or clone it with git."
 
+# A lock a dead git process left behind comes before everything: it fails every
+# git command below, and a pull half way through, between writing the files and
+# moving the branch (suite_common.clear_stale_git_locks; Ames HPC, 2026-11-20,
+# "Unable to create '.../refs/heads/main.lock': File exists"). An old one is
+# removed and named; a fresh one means somebody is updating right now.
+if compgen -G ".git/*.lock" >/dev/null 2>&1 || [[ -n "$(find .git/refs -name '*.lock' 2>/dev/null | head -1)" ]]; then
+  _need_python
+  "${PYBIN}" - "${KT_BIN_DIR}/lib" "${DRY_RUN:-0}" <<'PY' || die "this checkout cannot be updated while that lock is there (see above)."
+import sys
+sys.path.insert(0, sys.argv[1])
+import suite_common
+ok = suite_common.clear_stale_git_locks(lambda line: print("    " + line), dry_run=sys.argv[2] == "1")
+sys.exit(0 if ok else 3)
+PY
+fi
+
 # An interrupted merge comes FIRST, before anything else is judged. This is the
 # state a person is most likely to be in when they reach for this command — they
 # tried the manual stash/pull/pop, it conflicted, and now they are looking for

@@ -55,6 +55,21 @@ suggest_tool() {
   return 1
 }
 
+# What stands between this machine and a working FMDV mode, one finding a line
+# as "<what>\037<bdtools arguments that fix it>" (tool_launch.
+# vsnp_gui_fmdv_findings). Empty where no FMDV library has been built: the mode
+# is opt-in. A function, called below, because /bin/bash 3.2 cannot parse a
+# heredoc inside <( ).
+fmdv_findings() {
+  "${PYBIN}" - "${KT_BIN_DIR}/lib" <<'PY' 2>/dev/null || true
+import sys
+sys.path.insert(0, sys.argv[1])
+import tool_launch
+for label, fix in tool_launch.vsnp_gui_fmdv_findings():
+    print(label + "\x1f" + fix)
+PY
+}
+
 issues=0; checked=0; unknown=0; json_items=()
 while read -r name; do
   [[ -n "$name" ]] || continue
@@ -91,7 +106,7 @@ while read -r name; do
   # human report, so the dashboard card — where people actually look — could not
   # show them. A card that says "missing modules" while saying nothing about the
   # env being half one architecture is describing the symptom and hiding the cause.
-  extra_labels=(); extra_fixes=()
+  extra_labels=(); extra_fixes=(); extra_hints=()
   # 1. Packages built for another architecture, linked in by a solve that ran for
   #    the wrong platform. They fail only when the analysis calls them.
   envdir="${py%/bin/python}"
@@ -99,6 +114,7 @@ while read -r name; do
   if [[ -n "${foreign}" ]]; then
     extra_labels+=("mixed-architecture env: $(printf '%s' "${foreign}" | tr '\n' ';') package(s) are not $(env_conda_subdir "${envdir}") — they cannot run here")
     extra_fixes+=("${KT_BIN_DIR}/bdtools install ${name} --fresh")
+    extra_hints+=("an update cannot repair this; --fresh rebuilds the env")
   fi
   # 2. The WRONG env: if the last build didn't finish, this code is newer than the
   #    environment running it (conda rolls a failed transaction back, so the
@@ -107,6 +123,18 @@ while read -r name; do
   if build_failed_for "$name" "${ref}"; then
     extra_labels+=("the last environment build did not finish — this checkout (${ref:-?}) may be running the previous env")
     extra_fixes+=("${KT_BIN_DIR}/bdtools install ${name} --fresh")
+    extra_hints+=("an update cannot repair this; --fresh rebuilds the env")
+  fi
+  # 3. FMDV mode, once a library has been built: the GUI has to see it, and the
+  #    env has to hold BLAST+ and mafft. Both used to show only as a refused
+  #    Import, to whoever pressed it (fmdv_findings above).
+  if [[ "${name}" == "vsnp_gui" ]]; then
+    while IFS=$'\037' read -r _lbl _fix; do
+      [[ -n "${_lbl}" ]] || continue
+      extra_labels+=("${_lbl}")
+      extra_fixes+=("${KT_BIN_DIR}/bdtools ${_fix}")
+      extra_hints+=("")
+    done < <(fmdv_findings)
   fi
 
   if [[ ${JSON} -eq 1 ]]; then
@@ -143,7 +171,7 @@ MERGE
     fi
     for i in "${!extra_labels[@]}"; do
       warn "${name}: ${extra_labels[$i]}"
-      info "  FIX: ${extra_fixes[$i]}   (an update cannot repair either of these; --fresh rebuilds the env)"
+      info "  FIX: ${extra_fixes[$i]}${extra_hints[$i]:+   (${extra_hints[$i]})}"
       issues=$((issues + 1))
     done
     echo

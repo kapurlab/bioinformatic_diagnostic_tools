@@ -557,48 +557,125 @@ fetch_fmdv() {
   fi
 }
 
+# Where the vSNP GUI on THIS machine reads <root>/refs from: the launcher's own
+# answer (tool_launch.vsnp_gui_site_root), never "does a personal site folder
+# exist". That was the rule here, three times over, and it is the rule the
+# launcher dropped: an old personal install leaves <BDTOOLS_HOME>/vsnp3-site
+# behind on a machine whose GUI now runs from a shared site. On the Ames HPC
+# (2026-11-20) `setup-databases fmdv --shared` built the library under the
+# site's database root, linked it into the running user's own
+# ~/.local/share/bdtools/vsnp3-site/refs, said "ok", and the GUI, which reads
+# /project/shared/bdtools/refs, still had no library. Empty when vsnp_gui is
+# not on this machine.
+VSNP_GUI_SITE=""; VSNP_GUI_SITE_ASKED=0
+vsnp_gui_site() {
+  if [[ ${VSNP_GUI_SITE_ASKED} -eq 0 ]]; then
+    VSNP_GUI_SITE_ASKED=1
+    VSNP_GUI_SITE="$("${PYBIN:-python3}" - "${KT_BIN_DIR}/lib" <<'PY' 2>/dev/null || true
+import sys
+sys.path.insert(0, sys.argv[1])
+import tool_launch
+print(tool_launch.vsnp_gui_site_root() or "")
+PY
+)"
+  fi
+  printf '%s' "${VSNP_GUI_SITE}"
+}
+# True when the GUI here runs off the personal site tree install-local.sh builds.
+vsnp_gui_is_local_site() {
+  local site="${BDTOOLS_HOME}/vsnp3-site" gui
+  gui="$(vsnp_gui_site)"
+  [[ -d "${site}" && -n "${gui}" && "$(cd "${gui}" 2>/dev/null && pwd -P)" == "$(cd "${site}" && pwd -P)" ]]
+}
+
+# Problems that leave a database unusable by the tool it was set up for. The
+# run ends on them instead of on "Database setup complete".
+SETUP_PROBLEMS=()
+
 # vsnp_gui reads the library from <site>/refs/fmdv (config.py fmdv_reflib_default),
-# beside the vsnp3 references: the local site tree when there is one, else the
-# declared SITE_ROOT. A link, like reference_options, so the launch context
-# finds it and no path is frozen into anyone's config.json.
+# beside the vsnp3 references, and since v0.4.161 from <database root>/fmdv/
+# fmdv_refs as well. A link at the site, like reference_options, so the launch
+# context finds it and no path is frozen into anyone's config.json.
+#
+# The link is a means. What this step answers for is the end: THE GUI FINDS THE
+# LIBRARY. So after linking, the GUI's own code is asked where it will look
+# (tool_launch.vsnp_gui_fmdv_library, in the env and environment a launch
+# gets), and the run says "ok" only if that is the library just built.
 wire_fmdv() {
   want fmdv || return 0
   # Only a library the build finished is linked: a half-built one linked into
   # the site would have the GUI offer FMDV mode and fail inside it.
   [[ "${FMDV_READY}" == "yes" ]] || return 0
-  local site="${BDTOOLS_HOME}/vsnp3-site" refs=""
-  if [[ -d "${site}" ]]; then
-    refs="${site}/refs"
-  else
-    local sroot; sroot="$("${PYBIN:-python3}" - "${KT_BIN_DIR}/lib" "${REPO_DIR}" <<'PY' 2>/dev/null || true
-import sys
-sys.path.insert(0, sys.argv[1])
-import site_paths
-root = site_paths.site_root(sys.argv[2])
-print(root or "")
-PY
-)"
-    [[ -n "${sroot}" ]] && refs="${sroot}/refs"
-  fi
-  if [[ -z "${refs}" ]]; then
-    warn "FMDV library: no local vsnp site and no SITE_ROOT declared, so nothing links it into the GUI."
-    info "  Point the GUI at it by hand: \"fmdv_reflib\": \"${FMDV_DEST}\" in ~/.config/vsnp_gui/config.json"
+  local site refs link linked="no" why=""
+  site="$(vsnp_gui_site)"
+  if [[ -z "${site}" ]]; then
+    warn "FMDV library: vsnp_gui is not installed on this machine, so nothing links the library into it."
+    info "  Its install will find it under the database root (${FMDV_DEST})."
     return 0
   fi
-  local link="${refs}/fmdv"
-  if [[ ${DRY_RUN} -eq 1 ]]; then echo "  [dry-run] ln -sfn ${FMDV_DEST} ${link}"; return 0; fi
+  refs="${site}/refs"; link="${refs}/fmdv"
+  if [[ ${DRY_RUN} -eq 1 ]]; then
+    echo "  [dry-run] ln -sfn ${FMDV_DEST} ${link}"
+    echo "  [dry-run] then ask the vSNP GUI where it will read the library from"
+    return 0
+  fi
   if [[ -d "${link}" && ! -L "${link}" ]]; then
     if [[ "$(cd "${link}" && pwd -P)" == "$(cd "${FMDV_DEST}" && pwd -P)" ]]; then
-      ok "vsnp_gui: FMDV library is ${link}"
+      linked="yes"
     else
-      warn "FMDV library: ${link} is a folder of its own, not a link, and was left alone."
-      info "  The GUI reads that folder. The library just built is at ${FMDV_DEST}."
+      why="${link} is a folder of its own, not a link, and was left alone"
+    fi
+  elif ! mkdir -p "${refs}" 2>/dev/null; then
+    why="$(id -un) cannot create ${refs}"
+  elif ! ln -sfn "${FMDV_DEST}" "${link}" 2>/dev/null; then
+    why="$(id -un) cannot write ${link}"
+  else
+    linked="yes"
+  fi
+
+  # The end, checked from the consumer's side.
+  local answer seen ready how
+  answer="$("${PYBIN:-python3}" - "${KT_BIN_DIR}/lib" <<'PY' 2>/dev/null || true
+import sys
+sys.path.insert(0, sys.argv[1])
+import tool_launch
+path, ready, how = tool_launch.vsnp_gui_fmdv_library()
+print(path)
+print("yes" if ready else "no")
+print(how)
+PY
+)"
+  seen="$(printf '%s\n' "${answer}" | sed -n 1p)"
+  ready="$(printf '%s\n' "${answer}" | sed -n 2p)"
+  how="$(printf '%s\n' "${answer}" | sed -n 3p)"
+  if [[ "${ready}" == "yes" && -n "${seen}" \
+        && "$(cd "${seen}" 2>/dev/null && pwd -P)" == "$(cd "${FMDV_DEST}" && pwd -P)" ]]; then
+    [[ "${linked}" == "yes" ]] && ok "vsnp_gui: ${link} -> ${FMDV_DEST}"
+    ok "the vSNP GUI finds the library: ${seen}"
+    info "  Checked by asking $([[ "${how}" == "gui" ]] && echo "the GUI's own code, as a launch from here runs it" || echo "the lookup the GUI is known to do")."
+    info "  No restart is needed for the Sequences tab: press Import again."
+    if [[ "${linked}" != "yes" ]]; then
+      info "  (No link at ${link}: ${why}. The GUI finds it under the database root instead.)"
     fi
     return 0
   fi
-  mkdir -p "${refs}" 2>/dev/null || { warn "FMDV library: cannot create ${refs} (re-run as the account that owns the site)"; return 0; }
-  ln -sfn "${FMDV_DEST}" "${link}" || { warn "FMDV library: cannot write ${link} (re-run as the account that owns the site)"; return 0; }
-  ok "vsnp_gui: ${link} -> ${FMDV_DEST}"
+  if [[ "${ready}" == "yes" ]]; then
+    warn "FMDV library: the vSNP GUI reads a DIFFERENT library, ${seen}, not the one just built at ${FMDV_DEST}."
+    info "  That one comes first in its lookup. Nothing was removed. To use the new one, the owner of ${site} runs:"
+    info "      ln -sfn ${FMDV_DEST} ${link}"
+    SETUP_PROBLEMS+=("FMDV library: built at ${FMDV_DEST}, but the vSNP GUI reads another at ${seen}")
+    return 0
+  fi
+  warn "FMDV library: built, but the vSNP GUI on this machine CANNOT SEE IT yet."
+  info "  It is at        ${FMDV_DEST}"
+  info "  The GUI looks at ${link}"
+  [[ -n "${why}" ]] && info "  The link was not made: ${why}."
+  info "  Either of these fixes it:"
+  info "    • the account that owns ${site} runs, once:"
+  info "          mkdir -p ${refs} && ln -sfn ${FMDV_DEST} ${link}"
+  info "    • or move vsnp_gui to v0.4.161 or later, which also looks under the database root:"
+  info "          bin/bdtools update vsnp_gui        (a shared site: its usual tool update)"
+  SETUP_PROBLEMS+=("FMDV library: built at ${FMDV_DEST}, but the vSNP GUI cannot see it (${why:-no link at ${link}})")
 }
 
 # ---- wire the GUIs --------------------------------------------------------
@@ -647,7 +724,10 @@ wire_vsnp() {
   want vsnp-refs || want vsnp-deps || return 0
   local site="${BDTOOLS_HOME}/vsnp3-site"
   local deps_reg="${site}/tools/vsnp3/dependencies/reference_options_paths.txt"
-  if [[ -d "${site}" ]]; then
+  # The personal tree only when the GUI here really runs off it (vsnp_gui_site).
+  # A personal tree left behind beside a shared site is nobody's reference set,
+  # and repointing it changed nothing the GUI reads.
+  if [[ -d "${site}" ]] && { vsnp_gui_is_local_site || [[ -z "$(vsnp_gui_site)" ]]; }; then
     if [[ ${DRY_RUN} -eq 1 ]]; then
       echo "  [dry-run] repoint ${site}/refs/vsnp3/reference_options -> ${VSNP_REFS}; register refs+deps"
       return
@@ -663,7 +743,11 @@ wire_vsnp() {
   else
     if [[ ${DRY_RUN} -eq 1 ]]; then echo "  [dry-run] db_config.py vsnp --refs-root ${VSNP_REFS}"; return; fi
     [[ -d "${VSNP_REFS}" ]] && "${PYBIN}" "${KT_BIN_DIR}/lib/db_config.py" vsnp --refs-root "${VSNP_REFS}"
-    info "  vsnp_gui not installed locally yet — its install will adopt these databases (${BDTOOLS_HOME}/db-root)."
+    if [[ -n "$(vsnp_gui_site)" ]]; then
+      info "  vsnp_gui here runs from a shared site ($(vsnp_gui_site)); the site's own reference sets were left as they are."
+    else
+      info "  vsnp_gui not installed locally yet — its install will adopt these databases (${BDTOOLS_HOME}/db-root)."
+    fi
   fi
 }
 
@@ -673,20 +757,11 @@ wire_vsnp() {
 # else the declared SITE_ROOT layout.
 wire_vcf_dbs() {
   want vcf-dbs || return 0
-  local site="${BDTOOLS_HOME}/vsnp3-site" target=""
-  if [[ -d "${site}" ]]; then
-    target="${site}/refs/vsnp3/vcf_db_folders"
-  else
-    local sroot; sroot="$("${PYBIN:-python3}" - "${KT_BIN_DIR}/lib" "${REPO_DIR}" <<'PY' 2>/dev/null || true
-import sys
-sys.path.insert(0, sys.argv[1])
-import site_paths
-root = site_paths.site_root(sys.argv[2])
-print(root or "")
-PY
-)"
-    [[ -n "${sroot}" ]] && target="${sroot}/refs/vsnp3/vcf_db_folders"
-  fi
+  # Where the GUI on this machine reads them from (vsnp_gui_site): the personal
+  # tree only when the GUI really runs off it, else the site it is deployed in.
+  local target="" gui_site
+  gui_site="$(vsnp_gui_site)"
+  [[ -n "${gui_site}" ]] && target="${gui_site}/refs/vsnp3/vcf_db_folders"
   if [[ -z "${target}" ]]; then
     target="${ROOT}/vsnp3/vcf_db_folders"
     warn "no local vsnp site or SITE_ROOT declared — VCF DBs land at ${target};"
@@ -709,6 +784,12 @@ wire_vcf_dbs
 wire_fmdv
 
 echo
+if [[ ${#SETUP_PROBLEMS[@]} -gt 0 ]]; then
+  warn "finished with problems that need attention (root: ${ROOT}):"
+  for _p in "${SETUP_PROBLEMS[@]}"; do info "  • ${_p}"; done
+  info "The fix for each is in its own message above."
+  exit 1
+fi
 ok "Database setup complete (root: ${ROOT})."
 info "Installed GUIs now point at these databases. Restart a running tool to pick up new paths:"
 info "    bin/bdtools dashboard --restart"

@@ -333,6 +333,116 @@ class UmbrellaPull(unittest.TestCase):
         self.assertNotIn("never finished", r.stdout)
         self.assertEqual(git(self.site, "rev-parse", "HEAD").stdout, before)
 
+    # ---- a lock a dead git process left behind (what cut the Ames pull off) ---
+    def leave_a_lock(self, age_s, name="refs/heads/main.lock"):
+        import time
+        lock = self.site / ".git" / name
+        lock.write_text("")
+        then = time.time() - age_s
+        os.utime(lock, (then, then))
+        return lock
+
+    def test_git_itself_cannot_pull_past_a_leftover_lock(self):
+        # The premise, checked: this is the state plain git stops in, with the
+        # files written and the branch not moved.
+        self.release_suite_code("v0.4.160")
+        self.leave_a_lock(3600)
+        r = git(self.site, "pull", "--ff-only", check=False)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("main.lock", r.stderr)
+        self.assertEqual(git(self.site, "status", "--porcelain", "--untracked-files=no").stdout,
+                         "M  bin/doctor.sh\nM  tools.yml\n")
+
+    def test_an_old_lock_is_removed_and_the_pull_goes_through(self):
+        self.release_suite_code("v0.4.160")
+        lock = self.leave_a_lock(3600)
+        r = self.run_pull()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertFalse(lock.exists())
+        self.assertIn("Removed a lock a git process left behind", r.stdout)
+        self.assertIn("refs/heads/main.lock", r.stdout)
+        self.assert_level_and_clean()
+
+    def test_the_ames_state_whole_a_lock_and_the_pull_it_cut_off(self):
+        # Both at once, as found: the lock is still there AND the earlier pull
+        # it stopped has left the release staged under the old commit.
+        self.release_suite_code("v0.4.160")
+        lock = self.leave_a_lock(3600)
+        self.assertNotEqual(git(self.site, "pull", "--ff-only", check=False).returncode, 0)
+        r = self.run_pull()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertFalse(lock.exists())
+        self.assertIn("Removed a lock", r.stdout)
+        self.assertIn("a pull that never finished", r.stdout)
+        self.assert_level_and_clean()
+
+    def test_a_fresh_lock_means_someone_is_updating_and_nothing_is_touched(self):
+        self.release_suite_code("v0.4.160")
+        lock = self.leave_a_lock(5)
+        before = git(self.site, "rev-parse", "HEAD").stdout
+        r = self.run_pull()
+        self.assertNotEqual(r.returncode, 0)
+        self.assertTrue(lock.exists())
+        self.assertIn("Another update may be running", r.stdout)
+        self.assertEqual(git(self.site, "rev-parse", "HEAD").stdout, before)
+
+    def test_an_old_index_lock_is_cleared_too(self):
+        self.release_suite_code("v0.4.160")
+        lock = self.leave_a_lock(3600, "index.lock")
+        r = self.run_pull()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertFalse(lock.exists())
+        self.assert_level_and_clean()
+
+    def test_a_dry_run_names_an_old_lock_and_leaves_it(self):
+        lock = self.leave_a_lock(3600)
+        r = self.run_pull("--dry-run")
+        self.assertIn("would remove .git/refs/heads/main.lock", r.stdout)
+        self.assertTrue(lock.exists())
+
+    @unittest.skipIf(hasattr(os, "geteuid") and os.geteuid() == 0, "root removes anything")
+    def test_a_lock_that_cannot_be_removed_is_named_with_the_one_command(self):
+        lock = self.leave_a_lock(3600)
+        heads = lock.parent
+        heads.chmod(0o555)
+        self.addCleanup(heads.chmod, 0o755)
+        r = self.run_pull()
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("cannot be removed here", r.stdout)
+        self.assertIn(f"rm {lock}", r.stdout.replace(str(self.site.resolve()), str(self.site)))
+
+    def test_the_dashboard_update_clears_the_lock_and_finishes_the_pull(self):
+        import importlib.util
+        from unittest import mock
+        spec = importlib.util.spec_from_file_location("bdtools_suite_common_lock", ROOT / "bin/lib/suite_common.py")
+        sc = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sc)
+        self.release_suite_code("v0.4.160")
+        lock = self.leave_a_lock(3600)
+        self.assertNotEqual(git(self.site, "pull", "--ff-only", check=False).returncode, 0)
+        lines = []
+        with mock.patch.object(sc, "REPO_DIR", str(self.site)):
+            cmd = sc.suite_update_command(lines.append)
+        self.assertEqual(cmd, ["git", "-C", str(self.site), "pull", "--ff-only"], "\n".join(lines))
+        self.assertFalse(lock.exists())
+        self.assertTrue(any("Removed a lock" in ln for ln in lines), lines)
+        self.assertFalse(any("refusing to pull" in ln for ln in lines), lines)
+        self.assert_level_and_clean()
+
+    def test_the_dashboard_update_waits_on_a_fresh_lock(self):
+        import importlib.util
+        from unittest import mock
+        spec = importlib.util.spec_from_file_location("bdtools_suite_common_lock2", ROOT / "bin/lib/suite_common.py")
+        sc = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sc)
+        lock = self.leave_a_lock(5)
+        lines = []
+        with mock.patch.object(sc, "REPO_DIR", str(self.site)):
+            cmd = sc.suite_update_command(lines.append)
+        self.assertIsNone(cmd)
+        self.assertTrue(lock.exists())
+        self.assertTrue(any("Another update may be running" in ln for ln in lines), lines)
+
     def test_the_dashboard_update_finishes_a_cut_off_pull_too(self):
         # Both update paths share the rule (suite_common.suite_update_command).
         import importlib.util

@@ -813,6 +813,88 @@ def _repo_git(*args, timeout=60):
                           capture_output=True, text=True, timeout=timeout)
 
 
+# A lock git left behind. git takes <ref>.lock for the instant it rewrites a
+# ref, and index.lock for as long as one command rewrites the index; a process
+# that is killed in that instant (a session that ends, a node that drops an
+# NFS mount) leaves the file, and from then on EVERY git command that needs it
+# fails: "Unable to create '.../refs/heads/main.lock': File exists". On the
+# Ames HPC (2026-11-20) one such file stopped every pull after the files had
+# been written and before the branch moved, which is how that checkout came to
+# look "locally modified" and could not be updated from the dashboard at all.
+#
+# Older than this, no git command is still holding it: the longest thing this
+# repository asks of git is a fetch of a few megabytes. The margin is wide
+# because the file's time is the file server's clock, not this machine's.
+GIT_LOCK_STALE_SECONDS = 600
+
+
+def _git_lock_files():
+    git_dir = os.path.join(REPO_DIR, ".git")
+    if not os.path.isdir(git_dir):
+        return []
+    found = [os.path.join(git_dir, n) for n in sorted(os.listdir(git_dir)) if n.endswith(".lock")]
+    for base, _dirs, names in os.walk(os.path.join(git_dir, "refs")):
+        found += [os.path.join(base, n) for n in sorted(names) if n.endswith(".lock")]
+    return found
+
+
+def _owner_name(st):
+    try:
+        import pwd
+        return pwd.getpwuid(st.st_uid).pw_name
+    except (ImportError, KeyError):
+        return str(st.st_uid)
+
+
+def clear_stale_git_locks(log, dry_run=False, now=None):
+    """Remove locks a dead git process left in this checkout. False = do not pull.
+
+    A lock older than GIT_LOCK_STALE_SECONDS is removed and the run says so:
+    which file, whose, how old. A younger one means another update may be
+    running right now, so nothing is touched and the caller stops with that
+    said. One that cannot be removed (another account's, in a folder this one
+    cannot write) is named with the one command that clears it. True when
+    nothing stands in the way.
+    """
+    now = time.time() if now is None else now
+    clear = True
+    for path in _git_lock_files():
+        try:
+            st = os.stat(path)
+        except OSError:
+            continue                      # released while we looked
+        rel = os.path.relpath(path, REPO_DIR)
+        age = max(0, int(now - st.st_mtime))
+        who = _owner_name(st)
+        when = time.strftime("%Y-%m-%d %H:%M", time.localtime(st.st_mtime))
+        if age < GIT_LOCK_STALE_SECONDS:
+            log(f"Another update may be running in this checkout right now: {rel} was made "
+                f"{age} second(s) ago by {who}.")
+            log("  Nothing was changed. Wait a minute and run this again. If nobody is updating, "
+                f"it clears itself once the file is {GIT_LOCK_STALE_SECONDS // 60} minutes old.")
+            clear = False
+            continue
+        mins = age // 60
+        old = f"{mins // 60} h {mins % 60} min" if mins >= 60 else f"{mins} min"
+        if dry_run:
+            log(f"[dry-run] would remove {rel}: a lock a git process left behind ({who}, {when}, {old} old)")
+            continue
+        try:
+            os.unlink(path)
+        except OSError as exc:
+            log(f"ERROR: {rel} is a lock a git process left behind ({who}, {when}, {old} old),")
+            log(f"and it cannot be removed here: {exc.strerror or exc}.")
+            log("Until it is gone no update of this checkout can finish. The account that owns")
+            log("the checkout removes it with:")
+            log(f"    rm {path}")
+            clear = False
+            continue
+        log(f"Removed a lock a git process left behind and never released: {rel}")
+        log(f"  made by {who} at {when}, {old} ago. git holds that file for an instant; nothing")
+        log("  was using it, and while it was there no update of this checkout could finish.")
+    return clear
+
+
 def interrupted_pull_target():
     """The commit a cut-off fast-forward was moving this checkout to, or None.
 
@@ -916,6 +998,11 @@ def suite_update_command(log):
             ["git", "-C", REPO_DIR, "status", "--porcelain"],
             capture_output=True, text=True, check=True, timeout=30,
         ).stdout
+
+    # A lock a dead git process left behind fails every git command below, and
+    # the pull itself half way through (clear_stale_git_locks). First of all.
+    if not clear_stale_git_locks(log):
+        return None
 
     try:
         raw = _porcelain()

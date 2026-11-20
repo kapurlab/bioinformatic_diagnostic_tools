@@ -96,6 +96,43 @@ class SetupDatabasesFmdv(unittest.TestCase):
         self.assertEqual((self.lib / "blastn_seen_at").read_text().strip(),
                          str(self.gui / "env" / "bin" / "blastn"))
 
+    def test_a_run_that_names_no_location_goes_where_the_databases_are(self):
+        """`setup-databases fmdv`, exactly as the GUI words it, on a machine
+        whose databases are not in ~/databases. It used to build the library
+        under the caller's home and then record THAT as the machine's database
+        root, repointing every tool."""
+        self.gui_with()
+        self.assertEqual(self.run_setup("--dry-run").returncode, 0)       # nothing recorded by a dry run
+        self.assertFalse((self.home / "db-root").exists())
+        self.assertEqual(self.run_setup("fmdv").returncode, 0)            # records self.root
+        self.assertEqual((self.home / "db-root").read_text().strip(), str(self.root))
+        (self.lib / "lineages.json").unlink()
+        fake_home = Path(self.tmp.name) / "userhome"
+        fake_home.mkdir()
+        env = dict(os.environ, BDTOOLS_HOME=str(self.home), BDTOOLS_TOOLSDIR=str(self.tools),
+                   HOME=str(fake_home))
+        env.pop("DRY_RUN", None)
+        r = subprocess.run(["bash", str(SCRIPT), "fmdv"], capture_output=True, text=True,
+                           env=env, timeout=120, stdin=subprocess.DEVNULL)
+        out = r.stdout + r.stderr
+        self.assertEqual(r.returncode, 0, out)
+        self.assertIn("recorded on this machine", out)
+        self.assertTrue((self.lib / "lineages.json").is_file(), out)       # built where the databases are
+        self.assertFalse((fake_home / "databases").exists(), out)           # not under the caller's home
+        self.assertEqual((self.home / "db-root").read_text().strip(), str(self.root))   # and the record stands
+
+    def test_a_named_location_still_wins_over_the_recorded_one(self):
+        self.gui_with()
+        self.assertEqual(self.run_setup("fmdv").returncode, 0)
+        other = Path(self.tmp.name) / "other_databases"
+        env = dict(os.environ, BDTOOLS_HOME=str(self.home), BDTOOLS_TOOLSDIR=str(self.tools))
+        env.pop("DRY_RUN", None)
+        r = subprocess.run(["bash", str(SCRIPT), "--root", str(other), "fmdv"], capture_output=True,
+                           text=True, env=env, timeout=120, stdin=subprocess.DEVNULL)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertTrue((other / "fmdv" / "fmdv_refs" / "lineages.json").is_file())
+        self.assertEqual((self.home / "db-root").read_text().strip(), str(other))
+
     def test_a_second_run_keeps_the_link(self):
         self.gui_with()
         self.assertEqual(self.run_setup("fmdv").returncode, 0)

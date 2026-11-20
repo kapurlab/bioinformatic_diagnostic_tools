@@ -74,6 +74,16 @@ else:
 PY
 )"
 HOME_ROOT_DEFAULT="${HOME}/databases"
+# The root an earlier run recorded (written below, every run). A run that names
+# no location goes there again. It used to fall back to Home instead and then
+# RECORD Home, so `setup-databases fmdv`, which is what the GUI tells a user to
+# type, on a machine whose databases live anywhere else, built the library in
+# ~/databases and repointed every tool's database root to it.
+RECORDED_ROOT=""
+if [[ -f "${BDTOOLS_HOME}/db-root" ]]; then
+  RECORDED_ROOT="$(head -n 1 "${BDTOOLS_HOME}/db-root" 2>/dev/null || true)"
+  RECORDED_ROOT="${RECORDED_ROOT%/}"
+fi
 
 ROOT=""; LOC=""; WANT=()
 while [[ $# -gt 0 ]]; do
@@ -94,6 +104,18 @@ done
 [[ ${#WANT[@]} -gt 0 ]] || WANT=(kraken blast amrfinder vsnp-refs vsnp-deps vcf-dbs)
 
 # ---- resolve the install root ---------------------------------------------
+if [[ -z "${ROOT}" ]]; then
+  if [[ -z "${LOC}" && -n "${RECORDED_ROOT}" ]]; then
+    if [[ -t 0 && -t 1 ]]; then
+      echo "This machine's databases are in ${RECORDED_ROOT}."
+      read -r -p "Press Enter to use it again, or type c to choose another location: " ans
+      case "${ans}" in c|C) ;; *) ROOT="${RECORDED_ROOT}";; esac
+    else
+      ROOT="${RECORDED_ROOT}"
+    fi
+    [[ -z "${ROOT}" ]] || log "using the database root recorded on this machine (--home, --shared or --root DIR changes it)"
+  fi
+fi
 if [[ -z "${ROOT}" ]]; then
   if [[ -z "${LOC}" ]]; then
     if [[ -t 0 && -t 1 ]]; then

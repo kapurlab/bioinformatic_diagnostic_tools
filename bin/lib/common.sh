@@ -1187,8 +1187,49 @@ _env_config_same() {   # A B — same bytes?
   [[ "$(cat "$1" 2>/dev/null)" == "$(cat "$2" 2>/dev/null)" ]]
 }
 
+# _env_config_copy SRC DST — DST becomes a copy of SRC: its bytes always, and
+# its mode, times and ACLs when they can be carried. 1, with cp's own words in
+# ENV_CONFIG_COPY_ERR, only when the BYTES could not be copied.
+#
+# This was `cp -p SRC DST 2>/dev/null`, and it refused an update for two
+# reasons that are not "the file cannot be read", while the message said
+# exactly that (Ames HPC, 2026-11-20: `update-packages vsnp_gui` ran its
+# eight-minute solve and stopped at "cannot copy ... Make it readable to
+# tstuber", for a file tstuber could read):
+#   * DST already there and read-only. cp -p gives the saved copy the
+#     source's mode, so a read-only source left a copy the NEXT run could not
+#     write over: the first save worked and every one after it failed. The
+#     copy now goes to a new file that is renamed over the old one.
+#   * the attributes would not travel. -p makes a mode or ACL that cannot be
+#     set on the destination a failure, and the saved copy lives in a home
+#     directory on another filesystem than the env. What the save exists for
+#     is the bytes; the file's own attributes stay on the original, which is
+#     what goes back (the hard link in _env_config_save_files).
+ENV_CONFIG_COPY_ERR=""
+ENV_CONFIG_COPY_ATTRS=1
+_env_config_copy() {
+  local src="$1" dst="$2" tmp err
+  ENV_CONFIG_COPY_ERR=""; ENV_CONFIG_COPY_ATTRS=1
+  if ! tmp="$(mktemp "${dst}.XXXXXX" 2>&1)"; then
+    ENV_CONFIG_COPY_ERR="${tmp:-mktemp failed beside ${dst}}"; return 1
+  fi
+  if ! err="$(cp -p "${src}" "${tmp}" 2>&1)"; then
+    # Bytes only, into a file nobody else can read: an update does not get
+    # to widen who can read the site's file by way of its saved copy.
+    ENV_CONFIG_COPY_ATTRS=0
+    rm -f "${tmp}"
+    if ! err="$(umask 077; cp "${src}" "${tmp}" 2>&1)"; then
+      rm -f "${tmp}"; ENV_CONFIG_COPY_ERR="${err:-cp failed}"; return 1
+    fi
+  fi
+  if ! err="$(mv -f "${tmp}" "${dst}" 2>&1)"; then
+    rm -f "${tmp}"; ENV_CONFIG_COPY_ERR="${err:-mv failed}"; return 1
+  fi
+  return 0
+}
+
 _env_config_save_files() {   # TOOL ENVDIR — 1 when a declared file exists but cannot be copied
-  local tool="$1" envdir="$2" rel src stash run kept
+  local tool="$1" envdir="$2" rel src stash run kept why attrs
   [[ "${DRY_RUN:-0}" -eq 1 || -z "${tool}" || -z "${envdir}" ]] && return 0
   run="${BDTOOLS_RUN_ID}"
   for rel in $(manifest_get "${tool}" env_config 2>/dev/null || true); do
@@ -1201,24 +1242,40 @@ _env_config_save_files() {   # TOOL ENVDIR — 1 when a declared file exists but
       rm -f "${stash}.pending"
     fi
     [[ -f "${src}" ]] || continue
-    if ! mkdir -p "$(dirname "${stash}")" 2>/dev/null \
-       || { [[ -f "${stash}" ]] && ! cp -p "${stash}" "${stash}.prev" 2>/dev/null; } \
-       || ! cp -p "${src}" "${stash}" 2>/dev/null; then
+    why=""
+    if ! why="$(mkdir -p "$(dirname "${stash}")" 2>&1)"; then
+      why="${why:-could not make $(dirname "${stash}")}"
+    else
+      why=""
+      # The generation before is a courtesy, never a reason to refuse.
+      if [[ -f "${stash}" ]] && ! _env_config_copy "${stash}" "${stash}.prev"; then
+        info "  (the previous saved copy of ${rel} was not kept as .prev: ${ENV_CONFIG_COPY_ERR})"
+      fi
+      _env_config_copy "${src}" "${stash}" || why="${ENV_CONFIG_COPY_ERR}"
+    fi
+    if [[ -n "${why}" ]]; then
       warn "${tool}: cannot copy ${src} to ${stash} — not changing the env without a copy of it."
-      info "  The update would replace it with the package's own copy. Make it readable to $(id -un), or"
-      info "  save it yourself, then run this again."
+      info "  The update would replace it with the package's own copy."
+      info "  What stopped the copy:  ${why}"
+      if [[ ! -r "${src}" ]]; then
+        info "  $(id -un) cannot read that file. Make it readable to $(id -un), or save it yourself, then run this again."
+      else
+        info "  $(id -un) can read that file, so the trouble is where the copy goes: $(dirname "${stash}")"
+        info "  Check that folder can be written and has room, then run this again."
+      fi
       return 1
     fi
+    attrs="${ENV_CONFIG_COPY_ATTRS}"
     kept="$(_env_config_kept "${src}")"
     ln -f "${src}" "${kept}" 2>/dev/null || kept=""
-    printf 'run=%s\nenv=%s\nkept=%s\nowner=%s\nwhen=%s\n' "${run}" "${envdir}" "${kept}" \
-      "$(_env_config_owner "${src}")" "$(date '+%Y-%m-%d %H:%M:%S')" > "${stash}.pending"
+    printf 'run=%s\nenv=%s\nkept=%s\nowner=%s\nwhen=%s\nattrs=%s\n' "${run}" "${envdir}" "${kept}" \
+      "$(_env_config_owner "${src}")" "$(date '+%Y-%m-%d %H:%M:%S')" "${attrs}" > "${stash}.pending"
   done
   return 0
 }
 
 _env_config_restore_files() {   # TOOL ENVDIR — put back what a transaction replaced
-  local tool="$1" envdir="$2" rel dst stash tmp kept owner now
+  local tool="$1" envdir="$2" rel dst stash kept owner now attrs
   [[ "${DRY_RUN:-0}" -eq 1 || -z "${tool}" || -z "${envdir}" ]] && return 0
   for rel in $(manifest_get "${tool}" env_config 2>/dev/null || true); do
     dst="${envdir}/${rel}"; stash="$(_env_config_stash "${tool}" "${rel}")"
@@ -1228,6 +1285,7 @@ _env_config_restore_files() {   # TOOL ENVDIR — put back what a transaction re
     [[ -x "${envdir}/bin/python" ]] || continue
     kept="$(_env_config_field "${stash}.pending" kept)"
     owner="$(_env_config_field "${stash}.pending" owner)"
+    attrs="$(_env_config_field "${stash}.pending" attrs)"
     # --fresh: the link went aside with the old env (discard_env_for_fresh).
     if [[ -n "${kept}" && ! -e "${kept}" && -n "${FRESH_ORIG:-}" && -n "${FRESH_ASIDE:-}" \
           && "${kept}" == "${FRESH_ORIG}/"* ]]; then
@@ -1248,19 +1306,27 @@ _env_config_restore_files() {   # TOOL ENVDIR — put back what a transaction re
       info "  put back as it was: same file, owner, group and permissions ($(grep -c . "${dst}" 2>/dev/null || echo 0) line(s))"
       continue
     fi
-    tmp=""
-    if tmp="$(mktemp "${dst}.XXXXXX")" && cp -p "${stash}" "${tmp}" && mv -f "${tmp}" "${dst}"; then
+    if _env_config_copy "${stash}" "${dst}"; then
       rm -f "${stash}.pending"
       ok "${tool}: kept this machine's ${rel} — the conda transaction had replaced it with the package's own copy"
-      info "  $(grep -c . "${dst}" 2>/dev/null || echo 0) line(s) carried over, with the same permissions; a copy stays at ${stash}"
+      if [[ "${attrs}" == "0" || "${ENV_CONFIG_COPY_ATTRS}" != "1" ]]; then
+        # The original is gone and its permissions could not be saved with the
+        # copy (or put on this one): the contents are back, readable by whoever
+        # ran this. The access check that follows gives a shared env's file the
+        # access its neighbours have; say so, since a person may need to look.
+        info "  $(grep -c . "${dst}" 2>/dev/null || echo 0) line(s) carried over; a copy stays at ${stash}"
+        warn "${tool}: its permissions could not be carried over, so ${dst} is readable by $(id -un) only until the access check below widens it."
+        info "  Check afterwards with:  bin/bdtools access ${tool}"
+      else
+        info "  $(grep -c . "${dst}" 2>/dev/null || echo 0) line(s) carried over, with the same permissions; a copy stays at ${stash}"
+      fi
       now="$(_env_config_owner "${dst}")"
       if [[ -n "${owner}" && "${now}" != "${owner}" ]]; then
         warn "${tool}: ${dst} is now owned by ${now} (it was ${owner}) — only root can give a file back to another account."
         info "  Restore the owner with:  sudo chown ${owner} ${dst}"
       fi
     else
-      [[ -n "${tmp}" ]] && rm -f "${tmp}"
-      warn "${tool}: could not put back ${dst} — the package's own copy is in place."
+      warn "${tool}: could not put back ${dst} (${ENV_CONFIG_COPY_ERR}) — the package's own copy is in place."
       info "  This machine's copy is saved at ${stash}. Put it back with:"
       info "      cp ${stash} ${dst}"
     fi

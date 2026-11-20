@@ -210,6 +210,91 @@ class EnvConfigHelpers(unittest.TestCase):
         out = self.sh(f'env_config_save vsnp_gui "{self.env}" || echo REFUSED\n')
         self.assertIn("REFUSED", out.stdout)
         self.assertIn("not changing the env without a copy", out.stderr)
+        # cp's own words, and the right advice for THIS cause.
+        self.assertIn("What stopped the copy:", out.stdout)
+        self.assertIn("Permission denied", out.stdout)
+        self.assertIn("cannot read that file", out.stdout)
+
+    @unittest.skipIf(hasattr(os, "geteuid") and os.geteuid() == 0, "root writes anything")
+    def test_a_read_only_file_is_saved_run_after_run(self):
+        # Ames HPC, 2026-11-20. cp -p gave the saved copy the source's mode, so
+        # a read-only file was saved once and never again: the next run could
+        # not write over its own copy, refused the update after an eight-minute
+        # solve, and blamed the file ("Make it readable to tstuber").
+        (self.env / REL).chmod(0o444)
+        for run in ("run-1", "run-2", "run-3"):
+            out = self.sh(f'env_config_save vsnp_gui "{self.env}"\n'
+                          + self._replace_with_package_copy(self.env)
+                          + f'env_config_restore vsnp_gui "{self.env}"\n', run_id=run)
+            self.assertEqual(out.returncode, 0, f"{run}: {out.stdout}{out.stderr}")
+            self.assertNotIn("cannot copy", out.stderr)
+            self.assertEqual((self.env / REL).read_text(), SITE)
+            self.assertEqual(stat.S_IMODE((self.env / REL).stat().st_mode), 0o444)
+        self.assertEqual(self.stash().read_text(), SITE)
+        self.assertEqual(self.stash().with_name(self.stash().name + ".prev").read_text(), SITE)
+
+    def _cp_that_cannot_preserve(self):
+        """A cp that fails whenever it is asked to preserve attributes, as GNU
+        cp -p does when an ACL cannot be set on the destination filesystem."""
+        shim = Path(self.tmp.name) / "shim"
+        shim.mkdir()
+        real = shutil.which("cp")
+        (shim / "cp").write_text(
+            "#!/bin/sh\n"
+            'for a in "$@"; do case "$a" in -p) '
+            "echo \"cp: preserving permissions for '$3': Operation not permitted\" >&2; exit 1;; esac; done\n"
+            f'exec {real} "$@"\n')
+        (shim / "cp").chmod(0o755)
+        return f"{shim}{os.pathsep}{os.environ['PATH']}"
+
+    def test_attributes_that_cannot_be_carried_do_not_stop_the_change(self):
+        # The saved copy lives in a home directory, on another filesystem than
+        # a shared env: an ACL that cannot be set there must not refuse the
+        # update. The bytes are saved, privately, and the ORIGINAL file is what
+        # goes back, attributes and all.
+        original = (self.env / REL).stat()
+        out = self.sh(f'env_config_save vsnp_gui "{self.env}"\n'
+                      + self._replace_with_package_copy(self.env)
+                      + f'env_config_restore vsnp_gui "{self.env}"\n',
+                      PATH=self._cp_that_cannot_preserve())
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        self.assertNotIn("cannot copy", out.stderr)
+        f = self.env / REL
+        self.assertEqual(f.read_text(), SITE)
+        self.assertEqual((f.stat().st_ino, stat.S_IMODE(f.stat().st_mode)), (original.st_ino, 0o664))
+        self.assertEqual(self.stash().read_text(), SITE)
+        # Never wider than the source: the fallback copy is the runner's alone.
+        self.assertEqual(stat.S_IMODE(self.stash().stat().st_mode), 0o600)
+
+    def test_a_copy_without_its_attributes_says_so_when_it_has_to_go_back(self):
+        # No hard link AND no attributes: the contents come back, and the run
+        # says the permissions did not, instead of "with the same permissions".
+        kept = self.env / "dependencies" / ".reference_options_paths.txt.bdtools-kept"
+        out = self.sh(f'env_config_save vsnp_gui "{self.env}"\n'
+                      f'rm -f "{kept}"\n'
+                      + self._replace_with_package_copy(self.env)
+                      + f'env_config_restore vsnp_gui "{self.env}"\n',
+                      PATH=self._cp_that_cannot_preserve())
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        self.assertEqual((self.env / REL).read_text(), SITE)
+        self.assertEqual((self.cache / "reference_options_paths.txt").read_text(), SHIPPED)
+        self.assertNotIn("with the same permissions", out.stdout)
+        self.assertIn("permissions could not be carried over", out.stderr)
+
+    @unittest.skipIf(hasattr(os, "geteuid") and os.geteuid() == 0, "root writes anything")
+    def test_a_copy_that_has_nowhere_to_go_names_the_folder_not_the_file(self):
+        # The file is readable; the state folder is not writable. The old
+        # message said "Make it readable to <user>" for this too.
+        self.sh(f'env_config_save vsnp_gui "{self.env}"\nenv_config_restore vsnp_gui "{self.env}"\n', run_id="run-0")
+        d = self.stash().parent
+        d.chmod(0o555)
+        self.addCleanup(d.chmod, 0o755)
+        out = self.sh(f'env_config_save vsnp_gui "{self.env}" || echo REFUSED\n')
+        self.assertIn("REFUSED", out.stdout)
+        self.assertIn("What stopped the copy:", out.stdout)
+        self.assertIn("can read that file", out.stdout)
+        self.assertIn(str(d), out.stdout)
+        self.assertNotIn("cannot read that file", out.stdout)
 
     def test_a_tool_that_declares_nothing_is_untouched(self):
         out = self.sh(f'env_config_save mlst_gui "{self.env}"\n'

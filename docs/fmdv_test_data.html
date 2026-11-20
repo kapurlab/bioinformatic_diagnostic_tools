@@ -384,17 +384,22 @@ the A tree holds 11 of the 12 samples called A, and the one missing is <span cla
 one of the three crosses above. That absence is the second way to notice them.</p>
 
 <div class="note warn">
-  <b class="lbl">Plan for the A and O trees &mdash; they take hours, not minutes</b>
-  What makes a tree slow is not how many samples you put in it but how much of that serotype GenBank
-  holds. A has <b>2,247</b> VP1 records against SAT3's 95, so its backbone alone is 536 lineage
-  representatives and the tree came to <b>724 leaves</b> &mdash; roughly four times SAT2's and, because
-  the work grows faster than the leaf count, <b>13 hours</b> against SAT2's ten minutes. Eleven samples
-  did that; the sample count is almost beside the point. O has the largest set of all, so budget at
-  least as much for it.<br>
-  Nearly all of that time is <code>raxmlHPC</code>, which has no multi-threaded build for Apple
-  silicon and uses one core however many you give it; a threaded RAxML on a Linux server is much
-  quicker. Only one tree builds at a time, and the rest of the app stays usable while it runs &mdash; so
-  start a big one when you can leave it, and do the small serotypes first if you want a result today.
+  <b class="lbl">Why the A tree here takes hours, and why yours probably will not</b>
+  A tree surrounds your samples with GenBank records from the same serotype, and it keeps the full
+  backbone for <b>the topotype groups your samples were typed to</b>. So the cost is set by how widely
+  your samples are spread, not by how many you have. Serotype A has only three groups &mdash; AFRICA,
+  ASIA and EURO-SA &mdash; covering about forty lineages, and this set deliberately puts samples in all
+  three. That opened <b>39 of the 40</b> lineage buckets, 536 backbone records, <b>724 leaves</b> and
+  <b>13 hours</b>, for eleven samples. SAT2's samples sat in three of about twenty buckets: 208 leaves,
+  ten minutes.<br>
+  <b>Your own samples will not look like this.</b> An outbreak sits in one lineage or two, the backbone
+  closes down with it, and the tree builds in minutes. This set is the worst case on purpose &mdash; it
+  was chosen to cover every corner of every serotype, which is what makes it a test set and not a
+  workload.<br>
+  If you do want the whole set: do the small serotypes first, and start A or O when you can leave them.
+  Nearly all the time is <code>raxmlHPC</code>, which has no multi-threaded build for Apple silicon and
+  uses one core however many you give it, so a threaded RAxML on a Linux server is much quicker. Only
+  one tree builds at a time; the rest of the app stays usable while it runs.
 </div>
 
 <h3>The genome SNP tables</h3>

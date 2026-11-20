@@ -347,7 +347,16 @@ update_one_tool() {
       continue
     fi
     if [[ -z "${env}" ]]; then
-      warn "${tool}: not installed here — skipping ${pkg} (run: bdtools install ${tool})"
+      # "not installed here" was the only thing this said, and on Ames it said it
+      # about blast, mafft and sra-tools while vsnp_gui was installed and running
+      # -- the record line had dropped the env (fixed 2026-11-20, a6f40ad). If a
+      # run still reaches here for a tool that IS installed, the code is older
+      # than that fix, so say how to tell.
+      warn "${tool}: no environment resolved — skipping ${pkg}."
+      info "  If ${tool} is not installed on this machine:  bdtools install ${tool}"
+      info "  If it IS installed, this suite checkout predates the 2026-11-20 fix."
+      info "  Check, in the suite folder:"
+      info "      grep -c REC_SEP bin/update-packages.sh     # 0 = too old, then: bin/bdtools pull"
       continue
     fi
     if [[ -z "${want}" ]]; then

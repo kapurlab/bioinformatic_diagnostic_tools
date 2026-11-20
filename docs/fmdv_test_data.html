@@ -244,7 +244,11 @@ the same two tabs as the starter set, so nothing new has to be learned. Use a ne
 
 <h3>45 read sets &mdash; the SRA tab</h3>
 <p>939 MB in all: Illumina pairs, two nanopore runs and two Ion Torrent runs. On this page's test
-machine they downloaded in about three minutes. Each row gives the label the submitter put in the
+machine they downloaded in about three minutes &mdash; <b>with <code>sra-tools</code> installed</b>, which
+lets vSNP3 take NCBI's S3 copy. Without it the reads come from the European archive over
+<code>curl</code> instead, which on a slow link is many times slower; the download log says which route
+it is using on its first lines. <code>bin/bdtools update-packages vsnp_gui</code> installs
+<code>sra-tools</code>, which <code>tools.yml</code> pins. Each row gives the label the submitter put in the
 archive, then what the tool made of the reads. The tool never sees the label, so it is an independent
 answer key: <b>Expected</b> is the submitter&rsquo;s serotype, <b>Called</b> is the tool&rsquo;s, and the tick
 between them is the check. Every accession is listed with its serotype and isolate, so a row can be
@@ -528,6 +532,8 @@ reference chooser on three of the same biological samples.</p>
     <tr><td>The preview says <b>NCBI is unreachable</b></td><td>The machine is offline. Download the record elsewhere (Send to → File → GenBank full) and drop that file on the same tab.</td></tr>
     <tr><td>The preview lists the records but the boxes cannot be ticked and the button says <b>Import 0 records</b></td><td>The reason is in red under each name. If it names <code>blastn</code>, BLAST+ is missing from vSNP3's environment: see <b>If BLAST+ is missing</b> at the top of this page, then click <span class="ui">Preview</span> again. No restart is needed.</td></tr>
     <tr><td>A download says <b>Failed</b> for some accessions</td><td>Paste the whole list again and click Download. Only the missing ones are fetched.</td></tr>
+    <tr><td>Downloads crawl, and the log's first lines say <b>[MISSING] fasterq-dump</b></td><td><code>sra-tools</code> is not in the environment, so the reads are coming from the European archive rather than NCBI's S3 copy. In the tools folder: <code>bin/bdtools pull &amp;&amp; bin/bdtools update-packages vsnp_gui</code>, then Download again. What is already downloaded is kept.</td></tr>
+    <tr><td>The log says a file got <b>no data for 60s &mdash; resuming</b></td><td>Normal on a slow link, and not a failure: the transfer is picked up from the byte it stopped on. It only gives up after three tries that add nothing, and then says so.</td></tr>
     <tr><td><b>Downloading…</b> for many minutes and the sizes under <b>Ready to run</b> have stopped growing</td><td>vSNP3 is older than v0.4.156, where a stalled transfer was waited on for ever and the partial file was listed as ready. Do not grab that sample. Update vSNP3 and restart it, then paste the list again and click Download: complete samples are skipped and the partial one is fetched again.</td></tr>
     <tr><td>A nanopore run downloads but is reported <b>Failed</b>, on a machine without <code>sra-tools</code></td><td>The same: fixed in v0.4.156. Update, then Download again.</td></tr>
     <tr><td>A sample says <b>Error</b> in Step 1</td><td>Click <span class="ui">View log</span> beside it. To try again, tick <span class="ui">Force re-run</span> and Run.</td></tr>

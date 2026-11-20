@@ -530,8 +530,14 @@ fetch_fmdv() {
   done
   if [[ ${#missing[@]} -gt 0 ]]; then
     warn "FMDV library: ${envp} lacks ${missing[*]} (tools.yml pins mafft and blast for vsnp_gui since v0.4.154)."
-    info "  Bring the env to its pins, then run this again:"
-    info "      bin/bdtools install vsnp_gui && bin/bdtools setup-databases fmdv"
+    # update-packages, not install: it adds exactly the declared packages this
+    # env lacks with everything else frozen, which is what a shared site wants
+    # (install rebuilds more and launches the tool). `pull` first because the
+    # command only learned to add a MISSING package on 2026-11-19 -- before
+    # that it skipped them and said "nothing to install" (Ames).
+    info "  Add them to that env, then run this again:"
+    info "      bin/bdtools pull && bin/bdtools update-packages vsnp_gui && bin/bdtools setup-databases fmdv"
+    info "  On a personal install, bin/bdtools install vsnp_gui does the same and launches the tool."
     return 0
   fi
   log "building the FMDV reference library -> ${FMDV_DEST}"
